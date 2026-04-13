@@ -1,1 +1,0 @@
-{"pathname":"B/BR/BRTASTIC/Alien-libsecp256k1-0.060001.tar.gz","provides":{"Alien::libsecp256k1":{"file":"lib/Alien/libsecp256k1.pm","version":"0.060001"}},"version":"0.060001","target":"Alien::libsecp256k1","name":"Alien::libsecp256k1","dist":"Alien-libsecp256k1-0.060001"}

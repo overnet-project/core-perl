@@ -1,1 +1,0 @@
-{"version":"0.003","pathname":"P/PE/PERLANCAR/Bitcoin-BIP39-0.003.tar.gz","provides":{"Bitcoin::BIP39":{"file":"lib/Bitcoin/BIP39.pm","version":"0.003"},"Bitcoin::Mnemonic":{"file":"lib/Bitcoin/Mnemonic.pm","version":"0.003"}},"name":"Bitcoin::BIP39","dist":"Bitcoin-BIP39-0.003","target":"Bitcoin::BIP39"}
