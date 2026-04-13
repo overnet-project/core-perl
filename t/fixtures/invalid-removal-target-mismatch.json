@@ -4,10 +4,10 @@
       "target_event" : {
          "content" : "{\"provenance\":{\"type\":\"native\"},\"body\":{\"text\":\"Hello, world!\"}}",
          "created_at" : 1744300800,
-         "id" : "0486202c24b5f2c576b0c7ff534feabc42c1a73d5e3f4b77effbd7eff73e3a8f",
+         "id" : "1703a5505c787f79222eebf66a09356525adef9fbb54ac0d1ec56eaa458434a1",
          "kind" : 7800,
-         "pubkey" : "4628f2b4d75246b899bc0acf64ee9d1bd8f396ee411fca165d62e2c4af68b28e",
-         "sig" : "44003bb9368a7788d16f648f00aac321dd034b6a9aa386a2988f081c2816a3982ab95891a37df1573be4411a542496e3100a734508634e0b779fb0b830995c20",
+         "pubkey" : "2afc97c5af6cea9d8b03c792cee59788dc46c2ed3a0257755cb5390b7d0b6784",
+         "sig" : "5cc3874a3bddb9c4653bc7fc07660176bfc027a2586cd6477c86993c85d3c99b2eb160f035b0948c81ee7117c1aa7eae8fe8931309ca1e53536a87e22fc2e1cb",
          "tags" : [
             [
                "overnet_v",

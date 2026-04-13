@@ -1,0 +1,36 @@
+{
+   "description" : "A valid adapted aggregate Overnet State Event (kind 37800) with external_scope instead of external_identity.",
+   "expected" : {
+      "overnet_valid" : true
+   },
+   "input" : {
+      "content" : "{\"provenance\":{\"type\":\"adapted\",\"protocol\":\"irc\",\"origin\":\"irc.libera.chat/#overnet\",\"external_scope\":\"channel_membership\",\"limitations\":[\"unsigned\",\"irc.partial_membership\"]},\"body\":{\"members\":[{\"nick\":\"alice\"}],\"partial\":true,\"as_of\":1744300865}}",
+      "created_at" : 1744300865,
+      "id" : "11a863c86f8946906dcc4844f77f7a50b98dd862e8e93641fc77f6bca71d69ec",
+      "kind" : 37800,
+      "pubkey" : "0e206c9dd3d3a8f6ab4e0d23143ea9c3da7308c975a9c484b5950a5eb435ddc1",
+      "sig" : "7784b54170e11603a650fa800370d0e046f649ad15d458ab660efa9becddc62e7e19e6448ffac6827a5ec5047045627e7abbdf7493214ba6c328a28352580ef9",
+      "tags" : [
+         [
+            "overnet_v",
+            "0.1.0"
+         ],
+         [
+            "overnet_et",
+            "irc.channel_presence"
+         ],
+         [
+            "overnet_ot",
+            "chat.channel"
+         ],
+         [
+            "overnet_oid",
+            "0e206c9dd3d3a8f6ab4e0d23143ea9c3da7308c975a9c484b5950a5eb435ddc1"
+         ],
+         [
+            "d",
+            "0e206c9dd3d3a8f6ab4e0d23143ea9c3da7308c975a9c484b5950a5eb435ddc1"
+         ]
+      ]
+   }
+}

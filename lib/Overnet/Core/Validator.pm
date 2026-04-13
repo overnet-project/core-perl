@@ -116,6 +116,8 @@ sub validate {
           unless defined $provenance->{origin};
         push @errors, "Adapted provenance missing required limitations field"
           unless defined $provenance->{limitations} && ref $provenance->{limitations} eq 'ARRAY';
+        push @errors, "Adapted provenance must include external_identity or external_scope"
+          unless defined $provenance->{external_identity} || defined $provenance->{external_scope};
       }
     }
 
