@@ -19,7 +19,9 @@ sub validate {
   if ($@) {
     (my $err = $@) =~ s/ at .+ line \d+.*//s;
     # Can't proceed without a parseable event
-    return _result("Invalid Nostr event: $err");
+    return _result(
+      errors => ["Invalid Nostr event: $err"],
+    );
   }
 
   # Overnet kind check
@@ -57,13 +59,15 @@ sub validate {
 
   # Kind 37800 requires d tag matching overnet_oid
   if ($kind == 37800) {
+    my $d_tag = $event->d_tag;
+
     if (($tag_counts{d} // 0) > 1) {
       push @errors, "Duplicate d tag";
     }
 
-    if (!defined $tag_values{d}) {
+    if ($d_tag eq '') {
       push @errors, "Kind 37800 requires a d tag set to the object identifier";
-    } elsif (defined $tag_values{overnet_oid} && $tag_values{d} ne $tag_values{overnet_oid}) {
+    } elsif (defined $tag_values{overnet_oid} && $d_tag ne $tag_values{overnet_oid}) {
       push @errors, "Kind 37800 d tag must match overnet_oid";
     }
   }
@@ -218,7 +222,10 @@ sub validate {
     push @errors, "Nostr validation failed: $err";
   }
 
-  return _result(@errors);
+  return _result(
+    event  => $event,
+    errors => \@errors,
+  );
 }
 
 sub _validate_delegated_removal {
@@ -275,10 +282,12 @@ sub _validate_delegated_removal {
 }
 
 sub _result {
-  my @errors = @_;
-  return @errors
-    ? { valid => 0, errors => \@errors, reason => $errors[0] }
-    : { valid => 1, errors => [] };
+  my (%args) = @_;
+  my $event = $args{event};
+  my $errors = $args{errors} || [];
+  return @{$errors}
+    ? { valid => 0, errors => $errors, reason => $errors->[0], (defined $event ? (event => $event) : ()) }
+    : { valid => 1, errors => [], (defined $event ? (event => $event) : ()) };
 }
 
 1;

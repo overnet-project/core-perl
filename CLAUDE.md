@@ -83,6 +83,7 @@ Rules:
 - Parsing of untrusted Nostr events must reject malformed input as early as possible.
 - Structural checks belong as early as they can be performed reliably.
 - Semantic Overnet checks belong in `validate`.
+- Always leverage `Net::Nostr` when it already provides the needed Nostr-level parsing, serialization, event-object, kind-classification, hashing, signing, or validation behavior. Do not re-implement Nostr primitives locally unless Overnet has a concrete requirement that `Net::Nostr` does not cover.
 - Do not silently accept malformed protocol-critical data.
 - Do not treat missing or malformed required core fields as profile-specific concerns.
 - Error messages should be specific enough that fixture failures clearly identify the rejected rule.
