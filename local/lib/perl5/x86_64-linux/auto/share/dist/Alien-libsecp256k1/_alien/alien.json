@@ -1,0 +1,18 @@
+{
+   "alien_build_version" : "2.84",
+   "cflags" : "-I/home/_73/p/Overnet/local/lib/perl5/x86_64-linux/auto/share/dist/Alien-libsecp256k1/include ",
+   "cflags_static" : "-I/home/_73/p/Overnet/local/lib/perl5/x86_64-linux/auto/share/dist/Alien-libsecp256k1/include ",
+   "install_type" : "share",
+   "legacy" : {
+      "finished_installing" : 1,
+      "install_type" : "share",
+      "name" : "libsecp256k1",
+      "original_prefix" : "/home/_73/p/Overnet/local/lib/perl5/x86_64-linux/auto/share/dist/Alien-libsecp256k1",
+      "version" : "0.6.0"
+   },
+   "libs" : "-L/home/_73/p/Overnet/local/lib/perl5/x86_64-linux/auto/share/dist/Alien-libsecp256k1/lib -lsecp256k1 ",
+   "libs_static" : "-L/home/_73/p/Overnet/local/lib/perl5/x86_64-linux/auto/share/dist/Alien-libsecp256k1/lib -lsecp256k1 ",
+   "perl_module_version" : "0.060001",
+   "prefix" : "/home/_73/p/Overnet/local/lib/perl5/x86_64-linux/auto/share/dist/Alien-libsecp256k1",
+   "version" : "0.6.0"
+}

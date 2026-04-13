@@ -1,0 +1,1 @@
+{"dist":"AnyEvent-Connector-0.04","name":"AnyEvent::Connector","target":"AnyEvent::Connector","provides":{"AnyEvent::Connector::Proxy::http":{"file":"lib/AnyEvent/Connector/Proxy/http.pm"},"AnyEvent::Connector":{"file":"lib/AnyEvent/Connector.pm","version":"0.04"}},"pathname":"T/TO/TOSHIOITO/AnyEvent-Connector-0.04.tar.gz","version":"0.04"}

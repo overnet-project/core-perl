@@ -1,0 +1,66 @@
+{
+   "context" : {
+      "allow_e_mismatch" : true,
+      "target_event" : {
+         "content" : "{\"provenance\":{\"type\":\"native\"},\"body\":{\"text\":\"Hello, world!\"}}",
+         "created_at" : 1744300800,
+         "id" : "0486202c24b5f2c576b0c7ff534feabc42c1a73d5e3f4b77effbd7eff73e3a8f",
+         "kind" : 7800,
+         "pubkey" : "4628f2b4d75246b899bc0acf64ee9d1bd8f396ee411fca165d62e2c4af68b28e",
+         "sig" : "44003bb9368a7788d16f648f00aac321dd034b6a9aa386a2988f081c2816a3982ab95891a37df1573be4411a542496e3100a734508634e0b779fb0b830995c20",
+         "tags" : [
+            [
+               "overnet_v",
+               "0.1.0"
+            ],
+            [
+               "overnet_et",
+               "chat.message"
+            ],
+            [
+               "overnet_ot",
+               "chat.channel"
+            ],
+            [
+               "overnet_oid",
+               "f47ac10b-58cc-4372-a567-0e02b2c3d479"
+            ]
+         ]
+      }
+   },
+   "description" : "Invalid: kind 7801 removal event is authorized against target event context that does not match the e tag. A removal MUST be authorized against the exact target event identified by the e tag.",
+   "expected" : {
+      "overnet_valid" : false,
+      "reason" : "Kind 7801 target event context does not match e tag"
+   },
+   "input" : {
+      "content" : "{\"provenance\":{\"type\":\"native\"},\"body\":{}}",
+      "created_at" : 1744301000,
+      "id" : "ddee0099ddee0099ddee0099ddee0099ddee0099ddee0099ddee0099ddee0099",
+      "kind" : 7801,
+      "pubkey" : "b4c5d6b4c5d6b4c5d6b4c5d6b4c5d6b4c5d6b4c5d6b4c5d6b4c5d6b4c5d6b4c5",
+      "sig" : "ddee0099ddee0099ddee0099ddee0099ddee0099ddee0099ddee0099ddee0099ddee0099ddee0099ddee0099ddee0099ddee0099ddee0099ddee0099ddee0099",
+      "tags" : [
+         [
+            "overnet_v",
+            "0.1.0"
+         ],
+         [
+            "overnet_et",
+            "core.removal"
+         ],
+         [
+            "overnet_ot",
+            "chat.channel"
+         ],
+         [
+            "overnet_oid",
+            "f47ac10b-58cc-4372-a567-0e02b2c3d479"
+         ],
+         [
+            "e",
+            "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+         ]
+      ]
+   }
+}

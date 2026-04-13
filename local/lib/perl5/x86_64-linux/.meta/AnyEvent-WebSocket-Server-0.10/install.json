@@ -1,0 +1,1 @@
+{"target":"AnyEvent::WebSocket::Server","name":"AnyEvent::WebSocket::Server","dist":"AnyEvent-WebSocket-Server-0.10","version":"0.10","provides":{"AnyEvent::WebSocket::Server":{"file":"lib/AnyEvent/WebSocket/Server.pm","version":"0.10"}},"pathname":"T/TO/TOSHIOITO/AnyEvent-WebSocket-Server-0.10.tar.gz"}

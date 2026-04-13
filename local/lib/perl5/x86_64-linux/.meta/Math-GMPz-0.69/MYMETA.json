@@ -1,0 +1,51 @@
+{
+   "abstract" : "Perl interface to the GMP integer functions",
+   "author" : [
+      "Sisyphus (sisyphus at (@) cpan dot (.) org)"
+   ],
+   "dynamic_config" : 0,
+   "generated_by" : "ExtUtils::MakeMaker version 7.78, CPAN::Meta::Converter version 2.150013, CPAN::Meta::Converter version 2.150010",
+   "license" : [
+      "perl_5"
+   ],
+   "meta-spec" : {
+      "url" : "http://search.cpan.org/perldoc?CPAN::Meta::Spec",
+      "version" : 2
+   },
+   "name" : "Math-GMPz",
+   "no_index" : {
+      "directory" : [
+         "t",
+         "inc"
+      ]
+   },
+   "prereqs" : {
+      "build" : {
+         "requires" : {
+            "ExtUtils::MakeMaker" : "0"
+         }
+      },
+      "configure" : {
+         "requires" : {
+            "ExtUtils::MakeMaker" : "0"
+         }
+      },
+      "test" : {
+         "requires" : {
+            "Exporter" : "5.58",
+            "Test::More" : "0.88",
+            "Test::Warn" : "0.36"
+         }
+      }
+   },
+   "release_status" : "stable",
+   "resources" : {
+      "repository" : {
+         "type" : "git",
+         "url" : "https://github.com/sisyphus/math-gmpz.git",
+         "web" : "https://github.com/sisyphus/math-gmpz"
+      }
+   },
+   "version" : "0.69",
+   "x_serialization_backend" : "JSON::PP version 4.16"
+}

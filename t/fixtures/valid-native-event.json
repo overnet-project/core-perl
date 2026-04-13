@@ -1,0 +1,32 @@
+{
+   "description" : "A valid native Overnet Event (kind 7800) with all required tags and content fields.",
+   "expected" : {
+      "overnet_valid" : true
+   },
+   "input" : {
+      "content" : "{\"provenance\":{\"type\":\"native\"},\"body\":{\"text\":\"Hello, world!\"}}",
+      "created_at" : 1744300800,
+      "id" : "0486202c24b5f2c576b0c7ff534feabc42c1a73d5e3f4b77effbd7eff73e3a8f",
+      "kind" : 7800,
+      "pubkey" : "4628f2b4d75246b899bc0acf64ee9d1bd8f396ee411fca165d62e2c4af68b28e",
+      "sig" : "f17bece9da801cfe69f2eba2d6b22c41ab7a842c4fae1a80b1f20c6e16201b171c9a2bfdc7588ad8e4fc54cb7ddc20e28d58dfde0d68ecd665cf66b9c42923bd",
+      "tags" : [
+         [
+            "overnet_v",
+            "0.1.0"
+         ],
+         [
+            "overnet_et",
+            "chat.message"
+         ],
+         [
+            "overnet_ot",
+            "chat.channel"
+         ],
+         [
+            "overnet_oid",
+            "f47ac10b-58cc-4372-a567-0e02b2c3d479"
+         ]
+      ]
+   }
+}

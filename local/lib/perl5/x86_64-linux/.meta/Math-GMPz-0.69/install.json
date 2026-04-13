@@ -1,0 +1,1 @@
+{"version":"0.69","provides":{"Math::GMPz::Random":{"version":"0.69","file":"Random/Random.pm"},"Math::GMPz":{"file":"GMPz.pm","version":"0.69"},"Math::GMPz::V":{"file":"V/V.pm","version":"0.69"}},"pathname":"S/SI/SISYPHUS/Math-GMPz-0.69.tar.gz","name":"Math::GMPz","dist":"Math-GMPz-0.69","target":"Math::GMPz"}

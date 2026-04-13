@@ -1,0 +1,39 @@
+use alienfile;
+
+plugin 'PkgConfig' => 'libsecp256k1';
+
+share {
+	my $run_tests = $ENV{ALIEN_LIBSECP256K1_RUN_TESTS};
+
+	start_url 'libsecp256k1';
+	plugin 'Fetch::LocalDir';
+	plugin 'Extract::Directory';
+
+	plugin 'Build::CMake';
+	plugin 'Gather::IsolateDynamic';
+
+	build [
+		[
+			'%{cmake}',
+			@{meta->prop->{plugin_build_cmake}->{args}},
+			'-DBUILD_SHARED_LIBS=OFF',
+			'-DSECP256K1_ENABLE_MODULE_RECOVERY=ON',
+			'-DSECP256K1_VALGRIND=' . ($run_tests ? 'ON' : 'OFF'),
+			'-DSECP256K1_BUILD_TESTS=' . ($run_tests ? 'ON' : 'OFF'),
+			'-DSECP256K1_BUILD_EXHAUSTIVE_TESTS=' . ($run_tests ? 'ON' : 'OFF'),
+			'-DSECP256K1_BUILD_CTIME_TESTS=' . ($run_tests ? 'ON' : 'OFF'),
+			'-DSECP256K1_BUILD_BENCHMARK=OFF',
+			'-DCMAKE_BUILD_TYPE=Release',
+			'%{.install.extract}'
+		],
+		'%{make}',
+		'%{make} install',
+	];
+
+	test [
+		'%{make} test',
+	] if $run_tests;
+};
+
+# vim: ft=perl
+

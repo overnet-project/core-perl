@@ -1,0 +1,15 @@
+{
+   "alien_build_version" : "2.84",
+   "command" : "cmake",
+   "install_type" : "share",
+   "legacy" : {
+      "finished_installing" : 1,
+      "install_type" : "share",
+      "original_prefix" : "/home/_73/p/Overnet/local/lib/perl5/x86_64-linux/auto/share/dist/Alien-cmake3",
+      "version" : "3.31.11"
+   },
+   "perl_module_version" : "0.10",
+   "prefix" : "/home/_73/p/Overnet/local/lib/perl5/x86_64-linux/auto/share/dist/Alien-cmake3",
+   "style" : "binary",
+   "version" : "3.31.11"
+}

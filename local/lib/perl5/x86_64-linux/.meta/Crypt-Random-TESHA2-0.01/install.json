@@ -1,0 +1,1 @@
+{"target":"Crypt::Random::TESHA2","dist":"Crypt-Random-TESHA2-0.01","name":"Crypt::Random::TESHA2","provides":{"Crypt::Random::TESHA2::Config":{"file":"lib/Crypt/Random/TESHA2/Config.pm","version":"0.01"},"Crypt::Random::TESHA2":{"file":"lib/Crypt/Random/TESHA2.pm","version":"0.01"}},"pathname":"D/DA/DANAJ/Crypt-Random-TESHA2-0.01.tar.gz","version":"0.01"}

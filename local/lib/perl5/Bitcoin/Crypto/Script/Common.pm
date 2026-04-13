@@ -1,0 +1,83 @@
+package Bitcoin::Crypto::Script::Common;
+$Bitcoin::Crypto::Script::Common::VERSION = '4.004';
+use v5.14;
+use warnings;
+
+use namespace::autoclean;
+
+use Bitcoin::Crypto qw(btc_script btc_tapscript);
+use Bitcoin::Crypto::Types -types;
+use Bitcoin::Crypto::Exception;
+
+sub _make_PKH
+{
+	my ($class, $script, $hash) = @_;
+	$script //= btc_script->new;
+
+	return $script
+		->add('OP_DUP')
+		->add('OP_HASH160')
+		->push($hash)
+		->add('OP_EQUALVERIFY')
+		->add('OP_CHECKSIG');
+}
+
+sub _make_SH
+{
+	my ($class, $script, $hash) = @_;
+	$script //= btc_script->new;
+
+	return $script
+		->add('OP_HASH160')
+		->push($hash)
+		->add('OP_EQUAL');
+}
+
+sub _make_WSH
+{
+	my ($class, $script, $hash) = @_;
+	$script //= btc_script->new;
+
+	return $script
+		->add('OP_SHA256')
+		->push($hash)
+		->add('OP_EQUAL');
+}
+
+sub _make_TR
+{
+	my ($class, $script, $pubkey) = @_;
+	$script //= btc_tapscript->new;
+
+	return $script
+		->push($pubkey)
+		->add('OP_CHECKSIG');
+}
+
+sub new
+{
+	my ($class, $type, $data) = @_;
+
+	return $class->fill($type, undef, $data);
+}
+
+sub fill
+{
+	my ($class, $type, $script, $data) = @_;
+
+	state $methods = {
+		PKH => '_make_PKH',
+		SH => '_make_SH',
+		WSH => '_make_WSH',
+		TR => '_make_TR',
+	};
+
+	my $method = $methods->{$type} // Bitcoin::Crypto::Exception::ScriptType->raise(
+		"cannot create common script of type $type"
+	);
+
+	return $class->$method($script, $data);
+}
+
+1;
+

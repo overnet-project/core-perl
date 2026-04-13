@@ -1,0 +1,368 @@
+=pod
+
+=encoding utf-8
+
+=head1 NAME
+
+Type::Tiny::Manual::Params - advanced information on Type::Params
+  
+=head1 MANUAL
+
+To get started with Type::Params, please read
+L<Type::Tiny::Manual::UsingWithMoo> which will cover a lot of the basics,
+even if you're not using Moo.
+
+=head2 C<multiple>
+
+The C<multiple> option allows you to specify multiple ways of calling
+a sub.
+
+  signature_for repeat_string => (
+    multiple => [
+      { positional => [ Str, Int ] },
+      { named => [ string => Str, count => Int ], named_to_list => true },
+    ],
+  );
+  
+  sub repeat_string ( $string, $count ) {
+    return $string x $count;
+  }
+  
+  repeat_string(            "Hello",          42  );    # works
+  repeat_string(  string => "Hello", count => 42  );    # works
+  repeat_string({ string => "Hello", count => 42 });    # works
+  repeat_string( qr/hiya/ );                            # dies
+
+It combines multiple checks and tries each until one works.
+
+=head2 C<list_to_named>
+
+In many cases, the multiple call conventions offered by C<multiple>
+can be implemented more easily using C<list_to_named>.
+
+  signature_for repeat_string => (
+    list_to_named => true,
+    named         => [ string => Str, count => Int ],
+    named_to_list => true,
+  );
+  
+  sub repeat_string ( $string, $count ) {
+    return $string x $count;
+  }
+  
+  # Standard ways to call the function:
+  repeat_string(  string => "Hello", count => 42  );
+  repeat_string({ string => "Hello", count => 42 });
+  
+  # These should also work:
+  repeat_string( "Hello", count => 42 );
+  repeat_string( "Hello", { count => 42 } );
+  repeat_string( 42, string => "Hello" );
+  repeat_string( 42, { string => "Hello" } );
+  repeat_string( "Hello", 42 );
+  
+  # This currently won't work though, because "42" appears first so is taken
+  # to be the string, but "Hello" isn't a valid integer!
+  repeat_string( 42, "Hello" );
+
+The C<list_to_named> option works in three stages. When looking for the hash
+or hashref of named parameters, if there are other parameters first, these
+are kept to one side in a list of "sneaky" positional parameters.
+
+Later when validating the named parameters, if any of them seem to be missing,
+the list of sneaky positional parameters is examined and if possible the
+parameter is taken from there.
+
+Finally after all the named parameters have been processed, if there are still
+any positional parameters which weren't needed, an error is thrown.
+
+=head2 C<signature>
+
+C<signature> allows the signature to be defined within the sub itself,
+potentially on-the-fly, which is occasionally useful.
+
+Instead of this:
+
+  signature_for foobar => (
+    positional => [ Int, Str ],
+  );
+  
+  sub foobar ( $foo, $bar ) {
+    ...;
+  }
+
+You do this:
+
+  sub foobar {
+    my $check = signature( positional => [ Int, Str ] );
+    my ( $foo, $bar ) = $check->( @_ );
+    ...;
+  }
+
+Or use C<< state $check >> if you know the check will be the same every time.
+
+=head2 Functions versus Methods
+
+For subs which are intended to be called as functions:
+
+  signature_for my_sub => ( method => false, ... );
+  
+  signature_for my_sub => ( ... ); # this is the default anyway
+
+For subs which are intended to be called as methods on a blessed object:
+
+  signature_for my_method => ( method => Object, ... );
+
+And for subs which are intended to be called as methods on a class:
+
+  signature_for my_method => ( method => ClassName, ... );
+  
+  signature_for my_method => ( method => Str, ... );  # faster, less readable
+
+The following are also allowed, which indicates that the sub is intended
+to be called as a method, but you don't want to do type checks on the
+invocant:
+
+  signature_for my_method => ( method => builtin::true, ... );
+  
+  signature_for my_method => ( method => 1, ... );
+
+Shortcuts are available:
+
+  use Type::Params qw( signature_for_func signature_for_method );
+  
+  signature_for_func my_function => ( ... );
+  
+  signature_for_method my_method => ( ... );
+
+=head2 Mixed Named and Positional Parameters
+
+The C<head> and C<tail> options allow required positional parameters at the
+start or end of a named parameter list:
+
+  signature_for my_func => (
+    head  => [ Int ],
+    named => [
+      foo => Int,
+      bar => Optional[Int],
+      baz => Optional[Int],
+    ],
+  );
+  
+  my_func( 42, foo => 21 );                 # ok
+  my_func( 42, foo => 21, bar  => 84 );     # ok
+  my_func( 42, foo => 21, bar  => 10.5 );   # not ok
+  my_func( 42, foo => 21, quux => 84 );     # not ok
+
+Alternatively, C<list_to_named> (see above) may be of use.
+
+=head2 Proper Signatures
+
+Don't you wish your subs could look like this?
+
+  sub set_name ( Object $self, Str $name ) {
+    $self->{name} = $name;
+  }
+
+Well; here are a few solutions for sub signatures that work with
+L<Type::Tiny>...
+
+=head3 Zydeco
+
+L<Zydeco> is a Perl OO syntax toolkit with Type::Tiny support baked in
+throughout.
+
+  package MyApp {
+    use Zydeco;
+    
+    class Person {
+      has name ( type => Str );
+      
+      method rename ( Str $new_name ) {
+        printf( "%s will now be called %s\n", $self->name, $new_name );
+        $self->name( $new_name );
+      }
+      
+      coerce from Str via {
+        $class->new( name => $_ )
+      }
+    }
+    
+    class Company {
+      has owner ( type => 'Person' );
+    }
+  }
+  
+  my $acme = MyApp->new_company( owner => "Robert" );
+  $acme->owner->rename( "Bob" );
+
+=head3 Kavorka
+
+L<Kavorka> is a sub signatures implementation written to natively use
+L<Type::Utils>' C<dwim_type> for type constraints, and take advantage
+of Type::Tiny's features such as inlining, and coercions.
+
+  method set_name ( Str $name ) {
+    $self->{name} = $name;
+  }
+
+Kavorka's signatures provide a lot more flexibility, and slightly more
+speed than Type::Params. (The speed comes from inlining almost all type
+checks into the body of the sub being declared.)
+
+Kavorka also includes support for type checking of the returned value.
+
+Kavorka can also be used as part of L<Moops>, a larger framework for
+object oriented programming in Perl.
+
+=head3 Function::Parameters
+
+Function::Parameters offers support for Type::Tiny and MooseX::Types.
+
+  use Types::Standard qw( Str );
+  use Function::Parameters;
+  
+  method set_name ( Str $name ) {
+      $self->{name} = $name;
+  }
+
+=head3 Attribute::Contract
+
+Both Kavorka and Function::Parameters require a relatively recent
+version of Perl. L<Attribute::Contract> supports older versions by
+using a lot less magic.
+
+You want Attribute::Contract 0.03 or above.
+
+  use Attribute::Contract -types => [qw/Object Str/];
+  
+  sub set_name :ContractRequires(Object, Str) {
+      my ($self, $name) = @_;
+      $self->{name} = $name;
+  }
+
+Attribute::Contract also includes support for type checking of the
+returned value.
+
+=head2 Type::Params versus X
+
+=head3 Params::Validate
+
+L<Type::Params> is not really a drop-in replacement for L<Params::Validate>;
+the API differs far too much to claim that. Yet it performs a similar task,
+so it makes sense to compare them.
+
+=over
+
+=item *
+
+Type::Params will tend to be faster if you've got a sub which is called
+repeatedly, but may be a little slower than Params::Validate for subs that
+are only called a few times. This is because it does a bunch of work the
+first time your sub is called to make subsequent calls a lot faster.
+
+=item *
+
+Params::Validate doesn't appear to have a particularly natural way of
+validating a mix of positional and named parameters.
+
+=item *
+
+Type::Utils allows you to coerce parameters. For example, if you expect
+a L<Path::Tiny> object, you could coerce it from a string.
+
+=item *
+
+If you are primarily writing object-oriented code, using Moose or similar,
+and you are using Type::Tiny type constraints for your attributes, then
+using Type::Params allows you to use the same constraints for method calls.
+
+=item *
+
+Type::Params comes bundled with Types::Standard, which provides a much
+richer vocabulary of types than the type validation constants that come
+with Params::Validate. For example, Types::Standard provides constraints
+like C<< ArrayRef[Int] >> (an arrayref of integers), while the closest from
+Params::Validate is C<< ARRAYREF >>, which you'd need to supplement with
+additional callbacks if you wanted to check that the arrayref contained
+integers.
+
+Whatsmore, Type::Params doesn't just work with Types::Standard, but also
+any other Type::Tiny type constraints.
+
+=back
+
+=head3 Params::ValidationCompiler
+
+L<Params::ValidationCompiler> does basically the same thing as
+L<Type::Params>.
+
+=over
+
+=item *
+
+Params::ValidationCompiler and Type::Params are likely to perform fairly
+similarly. In most cases, recent versions of Type::Params seem to be
+I<slightly> faster, but except in very trivial cases, you're unlikely to
+notice the speed difference. Speed probably shouldn't be a factor when
+choosing between them.
+
+=item *
+
+Type::Params's syntax is more compact:
+
+  state $check = signature(
+    pos => [
+      Object,
+      Optional[Int],
+      Slurpy[ArrayRef],
+    ],
+  );
+
+Versus:
+
+  state $check = validation_for(
+    params => [
+      { type => Object },
+      { type => Int,      optional => 1 },
+      { type => ArrayRef, slurpy => 1 },
+    ],
+  );
+
+=item *
+
+L<Params::ValidationCompiler> probably has slightly better exceptions.
+
+=back
+
+=head1 NEXT STEPS
+
+Here's your next step:
+
+=over
+
+=item * L<Type::Tiny::Manual::NonOO>
+
+Type::Tiny in non-object-oriented code.
+
+=back
+
+=head1 AUTHOR
+
+Toby Inkster E<lt>tobyink@cpan.orgE<gt>.
+
+=head1 COPYRIGHT AND LICENCE
+
+This software is copyright (c) 2013-2014, 2017-2025 by Toby Inkster.
+
+This is free software; you can redistribute it and/or modify it under
+the same terms as the Perl 5 programming language system itself.
+
+=head1 DISCLAIMER OF WARRANTIES
+
+THIS PACKAGE IS PROVIDED "AS IS" AND WITHOUT ANY EXPRESS OR IMPLIED
+WARRANTIES, INCLUDING, WITHOUT LIMITATION, THE IMPLIED WARRANTIES OF
+MERCHANTIBILITY AND FITNESS FOR A PARTICULAR PURPOSE.
+
+=cut
+

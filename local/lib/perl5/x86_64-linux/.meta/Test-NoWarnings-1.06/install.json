@@ -1,0 +1,1 @@
+{"pathname":"H/HA/HAARG/Test-NoWarnings-1.06.tar.gz","provides":{"Test::NoWarnings::Warning":{"file":"lib/Test/NoWarnings/Warning.pm","version":"1.06"},"Test::NoWarnings":{"file":"lib/Test/NoWarnings.pm","version":"1.06"}},"version":"1.06","target":"Test::NoWarnings","dist":"Test-NoWarnings-1.06","name":"Test::NoWarnings"}

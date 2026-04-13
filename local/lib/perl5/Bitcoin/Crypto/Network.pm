@@ -1,0 +1,503 @@
+package Bitcoin::Crypto::Network;
+$Bitcoin::Crypto::Network::VERSION = '4.004';
+use v5.14;
+use warnings;
+
+use Mooish::Base -standard;
+
+use Bitcoin::Crypto::Exception;
+use Bitcoin::Crypto::Types -types;
+
+my %networks;
+my $default_network;
+my $single_network = 0;
+
+has param 'id' => (
+	isa => Str,
+);
+
+has param 'name' => (
+	isa => Str,
+);
+
+has param 'p2pkh_byte' => (
+	coerce => ByteStrLen [1],
+);
+
+has param 'wif_byte' => (
+	coerce => ByteStrLen [1],
+);
+
+has param 'p2sh_byte' => (
+	coerce => ByteStrLen [1],
+	required => 0,
+);
+
+has param 'segwit_hrp' => (
+	isa => Str,
+	required => 0,
+);
+
+has param 'extprv_version' => (
+	isa => Int,
+	required => 0,
+);
+
+has param 'extpub_version' => (
+	isa => Int,
+	required => 0,
+);
+
+has param 'extprv_compat_version' => (
+	isa => Int,
+	required => 0,
+);
+
+has param 'extpub_compat_version' => (
+	isa => Int,
+	required => 0,
+);
+
+has param 'extprv_segwit_version' => (
+	isa => Int,
+	required => 0,
+);
+
+has param 'extpub_segwit_version' => (
+	isa => Int,
+	required => 0,
+);
+
+has param 'bip44_coin' => (
+	isa => Int,
+	required => 0,
+);
+
+sub single_network
+{
+	my ($class) = @_;
+
+	return $single_network;
+}
+
+sub register
+{
+	my ($self, %config) = @_;
+
+	if (!ref $self) {
+		$self = $self->new(%config);
+	}
+
+	$networks{$self->id} = $self;
+	return $self;
+}
+
+sub unregister
+{
+	my ($self) = @_;
+
+	Bitcoin::Crypto::Exception::NetworkConfig->raise(
+		'cannot unregister the default network - set another network as default first'
+	) if $default_network eq $self->id;
+
+	delete $networks{$self->id};
+	return $self;
+}
+
+sub set_default
+{
+	my ($self) = @_;
+
+	Bitcoin::Crypto::Exception::NetworkConfig->raise(
+		'the network needs to be registered before becoming the default one'
+	) unless defined $networks{$self->id};
+
+	$default_network = $self->id;
+	$single_network = 0;
+	return $self;
+}
+
+sub set_single
+{
+	my ($self) = @_;
+
+	$self->set_default;
+	$single_network = 1;
+
+	return $self;
+}
+
+sub supports_segwit
+{
+	my ($self) = @_;
+
+	return defined $self->segwit_hrp;
+}
+
+sub find
+{
+	my ($class, $sub) = @_;
+
+	return keys %networks
+		unless defined $sub;
+
+	return grep { $sub->($networks{$_}) } keys %networks;
+}
+
+sub get
+{
+	my $id = $_[1] // $default_network;
+	return $networks{$id}
+		// Bitcoin::Crypto::Exception::NetworkConfig->raise(
+			"network $id is not registered"
+		);
+}
+
+### PREDEFINED NETWORKS SECTION
+# When adding a network, make sure to:
+# - code in valid constants of the network below
+# - provide resources that will confirm these constant values (in the merge request)
+# - add your network to the POD documentation below
+# - add your network to test file 17-predefined-networks.t
+
+### BITCOIN
+
+__PACKAGE__->register(
+	id => 'bitcoin',
+	name => 'Bitcoin Mainnet',
+	p2pkh_byte => "\x00",
+	p2sh_byte => "\x05",
+	wif_byte => "\x80",
+	segwit_hrp => 'bc',
+
+	extprv_version => 0x0488ade4,
+	extpub_version => 0x0488b21e,
+
+	extprv_compat_version => 0x049d7878,
+	extpub_compat_version => 0x049d7cb2,
+
+	extprv_segwit_version => 0x04b2430c,
+	extpub_segwit_version => 0x04b24746,
+
+	bip44_coin => 0,
+)->set_default;
+
+__PACKAGE__->register(
+	id => 'bitcoin_testnet',
+	name => 'Bitcoin Testnet',
+	p2pkh_byte => "\x6f",
+	p2sh_byte => "\xc4",
+	wif_byte => "\xef",
+	segwit_hrp => 'tb',
+
+	extprv_version => 0x04358394,
+	extpub_version => 0x043587cf,
+
+	extprv_compat_version => 0x044a4e28,
+	extpub_compat_version => 0x044a5262,
+
+	extprv_segwit_version => 0x045f18bc,
+	extpub_segwit_version => 0x045f1cf6,
+
+	bip44_coin => 1,
+);
+
+### DOGECOIN
+
+__PACKAGE__->register(
+	id => 'dogecoin',
+	name => 'Dogecoin Mainnet',
+	p2pkh_byte => "\x1e",
+	p2sh_byte => "\x16",
+	wif_byte => "\x9e",
+
+	extprv_version => 0x02fac398,
+	extpub_version => 0x02facafd,
+
+	bip44_coin => 3,
+);
+
+__PACKAGE__->register(
+	id => 'dogecoin_testnet',
+	name => 'Dogecoin Testnet',
+	p2pkh_byte => "\x71",
+	p2sh_byte => "\xc4",
+	wif_byte => "\xf1",
+
+	extprv_version => 0x04358394,
+	extpub_version => 0x043587cf,
+
+	bip44_coin => 1,
+);
+
+### PEPECOIN
+# unfortunately Pepecoin mainnet shares a WIF byte with Dogecoin mainnet
+
+__PACKAGE__->register(
+	id => 'pepecoin',
+	name => 'Pepecoin Mainnet',
+	p2pkh_byte => "\x38",
+	p2sh_byte => "\x16",
+	wif_byte => "\x9e",
+
+	extprv_version => 0x02fac398,
+	extpub_version => 0x02facafd,
+
+	bip44_coin => 3434,
+);
+
+# almost all the same as Dogecoin Testnet
+__PACKAGE__->register(
+	id => 'pepecoin_testnet',
+	name => 'Pepecoin Testnet',
+	p2pkh_byte => "\x71",
+	p2sh_byte => "\xc4",
+	wif_byte => "\xf1",
+
+	extprv_version => 0x04358394,
+	extpub_version => 0x043587cf,
+
+	bip44_coin => 1,
+);
+
+1;
+
+__END__
+
+=head1 NAME
+
+Bitcoin::Crypto::Network - Network management class
+
+=head1 SYNOPSIS
+
+	use Bitcoin::Crypto::Network;
+
+	# the default network is Bitcoin Mainnet
+	# get() without arguments returns default network
+
+	Bitcoin::Crypto::Network->get->name; # 'Bitcoin Mainnet'
+
+	# by default there are two networks specified
+	# find() without arguments returns a list of all network ids
+
+	Bitcoin::Crypto::Network->find; # list of strings
+
+	# you can get full network configuration with get() using network id
+
+	Bitcoin::Crypto::Network->get('bitcoin_testnet')->name; # 'Bitcoin Testnet'
+
+	# search for network and get array of keys in return
+	# there will be multiple results if your search is matched
+	# by multiple networks
+
+	Bitcoin::Crypto::Network->find(sub { shift->name eq 'Bitcoin Mainnet' }); # ('bitcoin')
+	Bitcoin::Crypto::Network->find(sub { shift->p2pkh_byte eq "\x6f" }); # ('bitcoin_testnet')
+
+	# if you're working with cryptocurrency other than Bitcoin you need to add a new network
+
+	# network configuration is important for importing WIF private keys (network
+	# recognition), generating addresses and serializing extended keys.
+	# It may also hold other data specific to a network
+
+	# register() can be used to create a network
+
+	my $litecoin = Bitcoin::Crypto::Network->register(
+		id => 'litecoin',
+		name => 'Litecoin Mainnet',
+		p2pkh_byte => "\x30",
+		wif_byte => "\xb0",
+	);
+
+	# after you've added a new network you can set it as a default. This means that
+	# all extended keys generated by other means than importing serialized key and
+	# all private keys generated by other means than importing WIF / extended keys
+	# will use that configuration.
+
+	$litecoin->set_default;
+
+
+=head1 DESCRIPTION
+
+This package allows you to manage non-bitcoin cryptocurrencies or chains other
+than mainnet. Before you start producing keys and addresses for your favorite
+crypto you have to configure its network first.
+
+=head1 PREDEFINED NETWORKS
+
+Here is a list of networks that are already defined and can be used out of the box.
+
+If you want to see more predefined networks added and you're willing to make
+some research to find out the correct values for the configuration fields,
+consider opening a pull request on Github.
+
+=head2 Bitcoin Mainnet
+
+defined with id: C<bitcoin>
+
+=head2 Bitcoin Testnet
+
+defined with id: C<bitcoin_testnet>
+
+=head2 Dogecoin Mainnet
+
+defined with id: C<dogecoin>
+
+=head2 Dogecoin Testnet
+
+defined with id: C<dogecoin_testnet>
+
+=head2 Pepecoin Mainnet
+
+defined with id: C<pepecoin>
+
+=head2 Pepecoin Testnet
+
+defined with id: C<pepecoin_testnet>
+
+=head1 CONFIGURATION
+
+Configuration fields marked with C<(*)> are required. The rest are optional,
+but some functions of the system will refuse to work without them.
+
+	my %config = (
+		id             => "(*) string identifier for the network, eg. 'bitcoin'",
+		name           => "(*) human-readable network name, eg. 'Bitcoin Mainnet'",
+		p2pkh_byte     => "(*) p2pkh address prefix byte, eg. 0x00",
+		wif_byte       => "(*) WIF private key prefix byte, eg. 0x80",
+		p2sh_byte      => "p2sh address prefix byte, eg. 0x05",
+		segwit_hrp     => "segwit native address human readable part, eg. 'bc'",
+
+		extprv_version        => "version prefix of serialized extended private keys, eg. 0x0488ade4",
+		extpub_version        => "version prefix of serialized extended public keys, eg. 0x0488b21e",
+		extprv_compat_version => "same as extprv_version, but for BIP49",
+		extpub_compat_version => "same as extpub_version, but for BIP49",
+		extprv_segwit_version => "same as extprv_version, but for BIP84",
+		extpub_segwit_version => "same as extpub_version, but for BIP84",
+
+		bip44_coin => "bip44 coin number, eg. 0",
+	);
+
+You can then C<register> this network:
+
+	Bitcoin::Crypto::Network->register(%config);
+
+Your program will now be able to import keys for that network but all keys
+created from other sources will be treated as the default (I<Bitcoin>). You
+need to C<set_default> to make all new keys use it. If your usage is not
+restrained to a single network, it might be better to set a network manually to
+a single key with its C<set_network> method:
+
+	$priv->set_network('network_id');
+
+Remember that if you don't specify network field for some feature you won't be
+able to use it. For example, the module will complain if you try to generate
+segwit address without C<segwit_hrp> field set.
+
+=head1 METHODS
+
+=head2 single_network
+
+	$boolean = $class->single_network()
+
+Returns a boolean indicating whether the module is operating in a
+single-network mode. In this mode, creation of objects with any other network
+than default is disallowed and will raise an exception. If any keys already
+exist and they have a different network set, they will continue to work but it
+will become impossible to alter them or get any kind of derived keys from them.
+
+This mode may be useful to make sure you are not importing keys with unwanted
+networks. By default, the module operates in multi-network mode and allows each
+key and script to set its own network, which can sometimes yield surprising
+results.
+
+See L</set_single>.
+
+=head2 register
+
+	$network_object = $class->register(%config)
+	$network_object = $object->register()
+
+Adds a network instance to a list of known networks.
+
+Calls L</new> with keys present in C<%config> hash when called in class
+context.
+
+Returns the network instance.
+
+=head2 unregister
+
+	my $network_object = $object->unregister()
+
+Does the opposite of L</register>. The network object will no longer be stored
+in the module, so it will be destroyed if you let go of its reference.
+
+Can be useful if some of the default networks are interferring with your use case.
+
+=head2 set_default
+
+	$network_object = $object->set_default()
+
+Sets a network as the default one. All newly created private and public keys
+will be bound to this network.
+
+Returns the network instance.
+
+=head2 set_single
+
+	$network_object = $object->set_single()
+
+Same as L</set_default>, but makes the module go into single-network mode.
+ To go back from this mode, call L</set_default> on any Network
+object.
+
+=head2 supports_segwit
+
+	$bool = $object->supports_segwit()
+
+Returns a boolean which can be used to determine whether a given network has
+SegWit configured.
+
+=head2 new
+
+	$network_object = $class->new(%config)
+
+Creates a new network instance. See L</CONFIGURATION> for a list of possible
+C<%config> keys.
+
+=head2 get
+
+	$network_object = $class->get($id = undef)
+
+Without arguments, returns the default network configuration as the
+C<Bitcoin::Crypto::Network> instance.
+
+With the C<$id> argument (string), returns the instance of a configuration
+matching the id.
+
+Throws an exception if network doesn't exist.
+
+=head2 find
+
+	@network_ids = $class->find($sub = undef)
+
+Without arguments, returns a list of all registered network ids (strings).
+
+With the C<$sub> argument (coderef), searches for all networks that pass the
+criteria and returns their ids. The C<$sub> will be passed all the instances of
+registered networks, one at a time. It must perform required checks and return
+a boolean value. All the networks that pass this test will be returned.
+Example:
+
+	sub {
+		my $instance = shift;
+		return $instance->name eq 'Some name';
+	}
+
+Returns a list of network instance ids (strings).
+
+=head1 SEE ALSO
+
+L<Bitcoin::Crypto::Key::ExtPrivate>
+
+L<Bitcoin::Crypto::Key::Private>
+
