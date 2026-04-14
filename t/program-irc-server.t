@@ -528,6 +528,14 @@ subtest 'IRC server program supports a minimal IRC client compatibility slice' =
   is _read_client_line($alice, 1_000), ':overnet.irc.local 451 * :You have not registered',
     'pre-registration MODE returns 451';
 
+  _write_client_line($alice, 'USERHOST Alice');
+  is _read_client_line($alice, 1_000), ':overnet.irc.local 451 * :You have not registered',
+    'pre-registration USERHOST returns 451';
+
+  _write_client_line($alice, 'WHO #overnet');
+  is _read_client_line($alice, 1_000), ':overnet.irc.local 451 * :You have not registered',
+    'pre-registration WHO returns 451';
+
   _write_client_line($alice, 'NICK');
   is _read_client_line($alice, 1_000), ':overnet.irc.local 431 * :No nickname given',
     'bare NICK returns 431';
@@ -542,6 +550,18 @@ subtest 'IRC server program supports a minimal IRC client compatibility slice' =
     'alice can register after compatibility prelude';
   ok _wait_for_dm_subscription_count($host, 1),
     'alice registration completes its DM subscription open';
+
+  _write_client_line($alice, 'USERHOST');
+  is _read_client_line($alice, 1_000), ':overnet.irc.local 461 Alice USERHOST :Not enough parameters',
+    'USERHOST without a nick returns 461';
+
+  _write_client_line($alice, 'WHO');
+  is _read_client_line($alice, 1_000), ':overnet.irc.local 461 Alice WHO :Not enough parameters',
+    'WHO without a target returns 461';
+
+  _write_client_line($alice, 'USERHOST aLiCe');
+  is _read_client_line($alice, 1_000), ':overnet.irc.local 302 Alice :Alice=+alice@127.0.0.1',
+    'USERHOST uses folded nick lookup and returns a minimal 302 reply';
 
   _write_client_line($alice, 'FROB');
   is _read_client_line($alice, 1_000), ':overnet.irc.local 421 Alice FROB :Unknown command',
@@ -562,6 +582,10 @@ subtest 'IRC server program supports a minimal IRC client compatibility slice' =
   _write_client_line($alice, 'MODE #Elsewhere');
   is _read_client_line($alice, 1_000), ':overnet.irc.local 442 Alice #Elsewhere :You\'re not on that channel',
     'MODE on an unjoined channel returns 442';
+
+  _write_client_line($alice, 'WHO #Elsewhere');
+  is _read_client_line($alice, 1_000), ':overnet.irc.local 442 Alice #Elsewhere :You\'re not on that channel',
+    'WHO on an unjoined channel returns 442';
 
   _write_client_line($alice, 'JOIN alice');
   is _read_client_line($alice, 1_000), ':overnet.irc.local 403 Alice alice :No such channel',
@@ -607,6 +631,14 @@ subtest 'IRC server program supports a minimal IRC client compatibility slice' =
     ':overnet.irc.local 353 Alice = #OverNet :Alice',
     ':overnet.irc.local 366 Alice #OverNet :End of /NAMES list.',
   ], 'explicit NAMES uses the canonical channel spelling after case-folded lookup';
+
+  _write_client_line($alice, 'WHO #oVERnEt');
+  is_deeply [
+    _read_client_lines($alice, 2, 1_000),
+  ], [
+    ':overnet.irc.local 352 Alice #OverNet alice 127.0.0.1 overnet.irc.local Alice H :0 Alice Example',
+    ':overnet.irc.local 315 Alice #OverNet :End of /WHO list.',
+  ], 'WHO query uses folded channel lookup and returns minimal WHO replies';
 
   _write_client_line($alice, 'PRIVMSG #oVERnEt :Casefolded hello');
   ok $host->pump_until(
