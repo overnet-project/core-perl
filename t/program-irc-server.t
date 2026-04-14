@@ -171,6 +171,22 @@ sub _read_client_lines {
   return @lines;
 }
 
+sub _assert_registration_prelude {
+  my (%args) = @_;
+  my $client = $args{client};
+  my $nick = $args{nick};
+  my $network = $args{network};
+  my $server_name = $args{server_name} || 'overnet.irc.local';
+
+  is_deeply [
+    _read_client_lines($client, 3, 1_000),
+  ], [
+    sprintf(':%s 001 %s :Welcome to Overnet IRC', $server_name, $nick),
+    sprintf(':%s 005 %s CASEMAPPING=rfc1459 CHANTYPES=#& NETWORK=%s :are supported by this server', $server_name, $nick, $network),
+    sprintf(':%s 422 %s :MOTD File is missing', $server_name, $nick),
+  ], "$nick receives the minimal registration prelude";
+}
+
 sub _read_client_line_optional {
   my ($client, $timeout_ms) = @_;
   my (undef, $caller_file, $caller_line) = caller;
@@ -352,15 +368,21 @@ subtest 'IRC server program enforces nick uniqueness and emits 433 for collision
     'unregistered nick collision returns 433 with * target';
 
   _write_client_line($alice, 'USER alice 0 * :Alice Example');
-  is _read_client_line($alice, 1_000), ':overnet.irc.local 001 alice :Welcome to Overnet IRC',
-    'alice can complete registration after reserving the nick';
+  _assert_registration_prelude(
+    client  => $alice,
+    nick    => 'alice',
+    network => $privmsg->{input}{network},
+  );
   ok _wait_for_dm_subscription_count($host, 1),
     'alice registration completes the first DM subscription open';
 
   _write_client_line($bob, 'NICK bob');
   _write_client_line($bob, 'USER bob 0 * :Bob Example');
-  is _read_client_line($bob, 1_000), ':overnet.irc.local 001 bob :Welcome to Overnet IRC',
-    'bob can register with a different nick after the collision';
+  _assert_registration_prelude(
+    client  => $bob,
+    nick    => 'bob',
+    network => $privmsg->{input}{network},
+  );
   ok _wait_for_dm_subscription_count($host, 2),
     'bob registration completes the second DM subscription open';
 
@@ -386,8 +408,11 @@ subtest 'IRC server program enforces nick uniqueness and emits 433 for collision
 
   _write_client_line($carol, 'NICK alice');
   _write_client_line($carol, 'USER carol 0 * :Carol Example');
-  is _read_client_line($carol, 1_000), ':overnet.irc.local 001 alice :Welcome to Overnet IRC',
-    'old nick becomes reusable after a successful nick change';
+  _assert_registration_prelude(
+    client  => $carol,
+    nick    => 'alice',
+    network => $privmsg->{input}{network},
+  );
   ok _wait_for_dm_subscription_count($host, 3),
     'carol registration completes its DM subscription open';
 
@@ -412,8 +437,11 @@ subtest 'IRC server program enforces nick uniqueness and emits 433 for collision
 
   _write_client_line($dave, 'NICK bob');
   _write_client_line($dave, 'USER dave 0 * :Dave Example');
-  is _read_client_line($dave, 1_000), ':overnet.irc.local 001 bob :Welcome to Overnet IRC',
-    'nick becomes reusable after disconnect';
+  _assert_registration_prelude(
+    client  => $dave,
+    nick    => 'bob',
+    network => $privmsg->{input}{network},
+  );
   ok _wait_for_dm_subscription_count($host, 5),
     'dave registration completes its DM subscription open';
 
@@ -423,8 +451,11 @@ subtest 'IRC server program enforces nick uniqueness and emits 433 for collision
     'server continues running after an unregistered client disconnects';
   _write_client_line($frank, 'NICK erin');
   _write_client_line($frank, 'USER frank 0 * :Frank Example');
-  is _read_client_line($frank, 1_000), ':overnet.irc.local 001 erin :Welcome to Overnet IRC',
-    'nick reserved by an unregistered client is released on disconnect';
+  _assert_registration_prelude(
+    client  => $frank,
+    nick    => 'erin',
+    network => $privmsg->{input}{network},
+  );
   ok _wait_for_dm_subscription_count($host, 6),
     'frank registration completes its DM subscription open';
 
@@ -536,6 +567,14 @@ subtest 'IRC server program supports a minimal IRC client compatibility slice' =
   is _read_client_line($alice, 1_000), ':overnet.irc.local 451 * :You have not registered',
     'pre-registration WHO returns 451';
 
+  _write_client_line($alice, 'WHOIS Alice');
+  is _read_client_line($alice, 1_000), ':overnet.irc.local 451 * :You have not registered',
+    'pre-registration WHOIS returns 451';
+
+  _write_client_line($alice, 'LUSERS');
+  is _read_client_line($alice, 1_000), ':overnet.irc.local 451 * :You have not registered',
+    'pre-registration LUSERS returns 451';
+
   _write_client_line($alice, 'NICK');
   is _read_client_line($alice, 1_000), ':overnet.irc.local 431 * :No nickname given',
     'bare NICK returns 431';
@@ -546,10 +585,24 @@ subtest 'IRC server program supports a minimal IRC client compatibility slice' =
 
   _write_client_line($alice, 'NICK Alice');
   _write_client_line($alice, 'USER alice 0 * :Alice Example');
-  is _read_client_line($alice, 1_000), ':overnet.irc.local 001 Alice :Welcome to Overnet IRC',
-    'alice can register after compatibility prelude';
+  _assert_registration_prelude(
+    client  => $alice,
+    nick    => 'Alice',
+    network => $network,
+  );
   ok _wait_for_dm_subscription_count($host, 1),
     'alice registration completes its DM subscription open';
+
+  _write_client_line($alice, 'LUSERS');
+  is_deeply [
+    _read_client_lines($alice, 5, 1_000),
+  ], [
+    ':overnet.irc.local 251 Alice :There are 1 users and 0 services on 1 server',
+    ':overnet.irc.local 252 Alice 0 :operator(s) online',
+    ':overnet.irc.local 253 Alice 0 :unknown connection(s)',
+    ':overnet.irc.local 254 Alice 0 :channels formed',
+    ':overnet.irc.local 255 Alice :I have 2 clients and 1 server',
+  ], 'LUSERS returns the minimal reply set';
 
   _write_client_line($alice, 'USERHOST');
   is _read_client_line($alice, 1_000), ':overnet.irc.local 461 Alice USERHOST :Not enough parameters',
@@ -559,9 +612,26 @@ subtest 'IRC server program supports a minimal IRC client compatibility slice' =
   is _read_client_line($alice, 1_000), ':overnet.irc.local 461 Alice WHO :Not enough parameters',
     'WHO without a target returns 461';
 
+  _write_client_line($alice, 'WHOIS');
+  is _read_client_line($alice, 1_000), ':overnet.irc.local 461 Alice WHOIS :Not enough parameters',
+    'WHOIS without a nick returns 461';
+
+  _write_client_line($alice, 'TOPIC');
+  is _read_client_line($alice, 1_000), ':overnet.irc.local 461 Alice TOPIC :Not enough parameters',
+    'TOPIC without a target returns 461';
+
   _write_client_line($alice, 'USERHOST aLiCe');
   is _read_client_line($alice, 1_000), ':overnet.irc.local 302 Alice :Alice=+alice@127.0.0.1',
     'USERHOST uses folded nick lookup and returns a minimal 302 reply';
+
+  _write_client_line($alice, 'WHOIS aLiCe');
+  is_deeply [
+    _read_client_lines($alice, 3, 1_000),
+  ], [
+    ':overnet.irc.local 311 Alice Alice alice 127.0.0.1 * :Alice Example',
+    ':overnet.irc.local 312 Alice Alice overnet.irc.local :Overnet IRC',
+    ':overnet.irc.local 318 Alice Alice :End of /WHOIS list.',
+  ], 'WHOIS uses folded nick lookup and returns minimal WHOIS replies';
 
   _write_client_line($alice, 'FROB');
   is _read_client_line($alice, 1_000), ':overnet.irc.local 421 Alice FROB :Unknown command',
@@ -587,6 +657,10 @@ subtest 'IRC server program supports a minimal IRC client compatibility slice' =
   is _read_client_line($alice, 1_000), ':overnet.irc.local 442 Alice #Elsewhere :You\'re not on that channel',
     'WHO on an unjoined channel returns 442';
 
+  _write_client_line($alice, 'TOPIC #Elsewhere');
+  is _read_client_line($alice, 1_000), ':overnet.irc.local 442 Alice #Elsewhere :You\'re not on that channel',
+    'TOPIC query on an unjoined channel returns 442';
+
   _write_client_line($alice, 'JOIN alice');
   is _read_client_line($alice, 1_000), ':overnet.irc.local 403 Alice alice :No such channel',
     'JOIN on a non-channel target returns 403';
@@ -594,6 +668,10 @@ subtest 'IRC server program supports a minimal IRC client compatibility slice' =
   _write_client_line($alice, 'PRIVMSG MissingNick :hello');
   is _read_client_line($alice, 1_000), ':overnet.irc.local 401 Alice MissingNick :No such nick/channel',
     'PRIVMSG to a missing nick returns 401';
+
+  _write_client_line($alice, 'WHOIS MissingNick');
+  is _read_client_line($alice, 1_000), ':overnet.irc.local 401 Alice MissingNick :No such nick/channel',
+    'WHOIS for a missing nick returns 401';
 
   _write_client_line($bob, 'NICK aLICE');
   is _read_client_line($bob, 1_000), ':overnet.irc.local 433 * aLICE :Nickname is already in use',
@@ -632,6 +710,10 @@ subtest 'IRC server program supports a minimal IRC client compatibility slice' =
     ':overnet.irc.local 366 Alice #OverNet :End of /NAMES list.',
   ], 'explicit NAMES uses the canonical channel spelling after case-folded lookup';
 
+  _write_client_line($alice, 'TOPIC #oVERnEt');
+  is _read_client_line($alice, 1_000), ':overnet.irc.local 331 Alice #OverNet :No topic is set',
+    'TOPIC query returns 331 when no topic is known';
+
   _write_client_line($alice, 'WHO #oVERnEt');
   is_deeply [
     _read_client_lines($alice, 2, 1_000),
@@ -655,6 +737,26 @@ subtest 'IRC server program supports a minimal IRC client compatibility slice' =
   ), 'case-folded channel PRIVMSG is emitted on the canonical channel object';
   is _read_client_line($alice, 1_000), ':Alice PRIVMSG #OverNet :Casefolded hello',
     'case-folded channel PRIVMSG renders back using the canonical channel spelling';
+
+  _write_client_line($alice, 'TOPIC #oVERnEt :Compatibility topic');
+  ok $host->pump_until(
+    timeout_ms => 1_000,
+    condition  => sub {
+      defined _find_emitted_item(
+        $_[0]->runtime->emitted_items,
+        item_type   => 'state',
+        overnet_et  => 'chat.topic',
+        overnet_ot  => 'chat.channel',
+        overnet_oid => $channel_object_id,
+      );
+    },
+  ), 'TOPIC set in compatibility coverage is emitted through the runtime';
+  is _read_client_line($alice, 1_000), ':Alice TOPIC #OverNet :Compatibility topic',
+    'TOPIC set renders back through the subscription path';
+
+  _write_client_line($alice, 'TOPIC #oVERnEt');
+  is _read_client_line($alice, 1_000), ':overnet.irc.local 332 Alice #OverNet :Compatibility topic',
+    'TOPIC query returns 332 when a topic is known';
 
   my $shutdown = $host->request_shutdown(reason => 'compatibility test complete');
   is $shutdown->{state}, 'shutdown_complete', 'compatibility server handles runtime shutdown';
@@ -744,15 +846,21 @@ subtest 'IRC server program accepts clients, emits Overnet output, and fans chan
 
   _write_client_line($alice, 'NICK alice');
   _write_client_line($alice, 'USER alice 0 * :Alice Example');
-  is _read_client_line($alice, 1_000), ':overnet.irc.local 001 alice :Welcome to Overnet IRC',
-    'alice receives numeric 001 after registration';
+  _assert_registration_prelude(
+    client  => $alice,
+    nick    => 'alice',
+    network => $privmsg->{input}{network},
+  );
   ok _wait_for_dm_subscription_count($host, 1),
     'alice registration completes the first DM subscription open';
 
   _write_client_line($bob, 'NICK bob');
   _write_client_line($bob, 'USER bob 0 * :Bob Example');
-  is _read_client_line($bob, 1_000), ':overnet.irc.local 001 bob :Welcome to Overnet IRC',
-    'bob receives numeric 001 after registration';
+  _assert_registration_prelude(
+    client  => $bob,
+    nick    => 'bob',
+    network => $privmsg->{input}{network},
+  );
   ok _wait_for_dm_subscription_count($host, 2),
     'bob registration completes the second DM subscription open';
 
@@ -847,8 +955,11 @@ subtest 'IRC server program accepts clients, emits Overnet output, and fans chan
   my $carol = _connect_irc_client($ready_details->{listen_port});
   _write_client_line($carol, 'NICK carol');
   _write_client_line($carol, 'USER carol 0 * :Carol Example');
-  is _read_client_line($carol, 1_000), ':overnet.irc.local 001 carol :Welcome to Overnet IRC',
-    'carol receives numeric 001 after registration';
+  _assert_registration_prelude(
+    client  => $carol,
+    nick    => 'carol',
+    network => $privmsg->{input}{network},
+  );
   ok _wait_for_dm_subscription_count($host, 3),
     'carol registration completes its DM subscription open';
 
@@ -1207,15 +1318,21 @@ subtest 'IRC server program routes direct messages through directional chat.dm o
 
   _write_client_line($alice, 'NICK alice');
   _write_client_line($alice, 'USER alice 0 * :Alice Example');
-  is _read_client_line($alice, 1_000), ':overnet.irc.local 001 alice :Welcome to Overnet IRC',
-    'alice registers for direct-message coverage';
+  _assert_registration_prelude(
+    client  => $alice,
+    nick    => 'alice',
+    network => $dm_privmsg->{input}{network},
+  );
   ok _wait_for_dm_subscription_count($host, 1),
     'alice DM subscription opens after registration';
 
   _write_client_line($bob, 'NICK bob');
   _write_client_line($bob, 'USER bob 0 * :Bob Example');
-  is _read_client_line($bob, 1_000), ':overnet.irc.local 001 bob :Welcome to Overnet IRC',
-    'bob registers for direct-message coverage';
+  _assert_registration_prelude(
+    client  => $bob,
+    nick    => 'bob',
+    network => $dm_privmsg->{input}{network},
+  );
   ok _wait_for_dm_subscription_count($host, 2),
     'program opens one DM subscription per registered nick';
 
@@ -1427,8 +1544,11 @@ subtest 'IRC server program accepts TLS clients using the baseline tls config sh
 
   _write_client_line($client, 'NICK alice');
   _write_client_line($client, 'USER alice 0 * :Alice TLS');
-  is _read_client_line($client, 1_000), ':overnet.irc.local 001 alice :Welcome to Overnet IRC',
-    'TLS client receives numeric 001 after registration';
+  _assert_registration_prelude(
+    client  => $client,
+    nick    => 'alice',
+    network => $privmsg->{input}{network},
+  );
   ok _wait_for_dm_subscription_count($host, 1),
     'TLS client registration completes its DM subscription open';
 
