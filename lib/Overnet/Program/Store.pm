@@ -9,9 +9,81 @@ our $VERSION = '0.001';
 sub new {
   my ($class, %args) = @_;
   return bless {
-    streams => {},
     %args,
+    streams   => {},
+    documents => {},
   }, $class;
+}
+
+sub has_document {
+  my ($self, %args) = @_;
+  my $key = $args{key};
+
+  die "key is required\n"
+    unless defined $key && !ref($key) && length($key);
+
+  return exists $self->{documents}{$key} ? 1 : 0;
+}
+
+sub put_document {
+  my ($self, %args) = @_;
+  my $key = $args{key};
+  my $value = $args{value};
+
+  die "key is required\n"
+    unless defined $key && !ref($key) && length($key);
+  die "value must be an object\n"
+    unless ref($value) eq 'HASH';
+
+  $self->{documents}{$key} = _clone_json_object($value);
+  return {
+    key => $key,
+  };
+}
+
+sub get_document {
+  my ($self, %args) = @_;
+  my $key = $args{key};
+
+  die "key is required\n"
+    unless defined $key && !ref($key) && length($key);
+  die "Unknown key: $key\n"
+    unless exists $self->{documents}{$key};
+
+  return {
+    key   => $key,
+    value => _clone_json_object($self->{documents}{$key}),
+  };
+}
+
+sub delete_document {
+  my ($self, %args) = @_;
+  my $key = $args{key};
+
+  die "key is required\n"
+    unless defined $key && !ref($key) && length($key);
+  die "Unknown key: $key\n"
+    unless exists $self->{documents}{$key};
+
+  delete $self->{documents}{$key};
+  return {};
+}
+
+sub list_documents {
+  my ($self, %args) = @_;
+  my $prefix = $args{prefix};
+
+  die "prefix must be a string\n"
+    if defined $prefix && ref($prefix);
+
+  my @keys = sort keys %{$self->{documents}};
+  if (defined $prefix) {
+    @keys = grep { index($_, $prefix) == 0 } @keys;
+  }
+
+  return {
+    keys => \@keys,
+  };
 }
 
 sub append_event {
@@ -87,6 +159,6 @@ Overnet::Program::Store - Overnet program storage scaffold
 =head1 DESCRIPTION
 
 Runtime-managed in-memory append-only event storage used by baseline program
-runtime services.
+runtime services, including exact-key document storage.
 
 =cut

@@ -65,6 +65,22 @@ sub advance_after_fire {
   return $self->{due_at_ms};
 }
 
+sub advance_after_fire_until_after {
+  my ($self, $now_ms) = @_;
+
+  die "Timer is not repeating\n"
+    unless $self->is_repeating;
+  die "now_ms must be an integer\n"
+    unless defined $now_ms && !ref($now_ms) && $now_ms =~ /\A-?\d+\z/;
+
+  $self->advance_after_fire;
+  while ($self->{due_at_ms} <= $now_ms) {
+    $self->{due_at_ms} += $self->{repeat_ms};
+  }
+
+  return $self->{due_at_ms};
+}
+
 sub build_notification_params {
   my ($self, %args) = @_;
   my $fired_at = $args{fired_at};

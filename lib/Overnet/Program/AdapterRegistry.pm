@@ -14,9 +14,9 @@ sub new {
     unless ref($adapter_factory) && $adapter_factory->isa('Overnet::Program::AdapterFactory');
 
   my $self = bless {
+    %args,
     adapters        => {},
     adapter_factory => $adapter_factory,
-    %args,
   }, $class;
   return $self;
 }

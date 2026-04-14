@@ -14,6 +14,7 @@ my %PROGRAM_NOTIFICATION_METHODS = map { $_ => 1 } qw(
   program.health
 );
 my %RUNTIME_NOTIFICATION_METHODS = map { $_ => 1 } qw(
+  runtime.fatal
   runtime.subscription_event
   runtime.timer_fired
 );
@@ -263,6 +264,26 @@ sub build_program_ready {
   );
 }
 
+sub build_runtime_fatal {
+  my (%args) = @_;
+  _require_string_field(code => $args{code});
+  _require_string_field(message => $args{message});
+  _require_string_field_optional(phase => $args{phase});
+  _require_object_field_optional(details => $args{details});
+
+  my %params = (
+    code    => $args{code},
+    message => $args{message},
+  );
+  $params{phase} = $args{phase} if defined $args{phase};
+  $params{details} = $args{details} if defined $args{details};
+
+  return build_notification(
+    method => 'runtime.fatal',
+    params => \%params,
+  );
+}
+
 sub build_runtime_shutdown {
   my (%args) = @_;
   _require_string_field(id => $args{id});
@@ -315,6 +336,39 @@ sub feed {
   }
 
   return \@messages;
+}
+
+sub finish {
+  my ($self) = @_;
+
+  return 1 unless length $self->{_buffer};
+
+  my $newline_at = index($self->{_buffer}, "\n");
+  if ($newline_at < 0) {
+    die "Protocol framing error: incomplete frame at end of stream\n";
+  }
+
+  my $prefix = substr($self->{_buffer}, 0, $newline_at);
+  if (!length $prefix) {
+    die "Protocol framing error: missing length prefix\n";
+  }
+
+  if ($prefix !~ /\A\d+\z/) {
+    die "Protocol framing error: non-numeric length prefix\n";
+  }
+
+  my $length = 0 + $prefix;
+  if ($length > $self->{max_frame_size}) {
+    die "Protocol framing error: frame exceeds maximum size\n";
+  }
+
+  my $header_length = $newline_at + 1;
+  my $available_payload_bytes = length($self->{_buffer}) - $header_length;
+  if ($available_payload_bytes < $length) {
+    die "Protocol framing error: payload shorter than declared length\n";
+  }
+
+  die "Protocol framing error: trailing payload bytes do not begin a valid next frame\n";
 }
 
 sub _decode_payload {
@@ -425,6 +479,10 @@ sub _validate_notification {
     return _validate_program_health_notification($message);
   }
 
+  if ($message->{method} eq 'runtime.fatal') {
+    return _validate_runtime_fatal_notification($message);
+  }
+
   if ($message->{method} eq 'runtime.subscription_event') {
     return _validate_runtime_subscription_event_notification($message);
   }
@@ -475,6 +533,22 @@ sub _validate_program_health_notification {
   return (0, 'protocol.invalid_params', 'program.health params.message must be a non-empty string')
     if exists $params->{message} && !_is_non_empty_string($params->{message});
   return (0, 'protocol.invalid_params', 'program.health params.details must be an object')
+    if exists $params->{details} && ref($params->{details}) ne 'HASH';
+
+  return (1, undef, undef);
+}
+
+sub _validate_runtime_fatal_notification {
+  my ($message) = @_;
+  my $params = $message->{params} || {};
+
+  return (0, 'protocol.invalid_params', 'runtime.fatal params.code is required')
+    unless _is_non_empty_string($params->{code});
+  return (0, 'protocol.invalid_params', 'runtime.fatal params.message is required')
+    unless _is_non_empty_string($params->{message});
+  return (0, 'protocol.invalid_params', 'runtime.fatal params.phase must be a non-empty string')
+    if exists $params->{phase} && !_is_non_empty_string($params->{phase});
+  return (0, 'protocol.invalid_params', 'runtime.fatal params.details must be an object')
     if exists $params->{details} && ref($params->{details}) ne 'HASH';
 
   return (1, undef, undef);

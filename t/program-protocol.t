@@ -116,6 +116,30 @@ subtest 'rejects invalid JSON payloads' => sub {
     'invalid JSON payload is rejected';
 };
 
+subtest 'rejects truncated frames at end of stream' => sub {
+  my $protocol = Overnet::Program::Protocol->new;
+  my $frame = "10\n{\"type\":1";
+
+  is scalar(@{$protocol->feed($frame)}), 0, 'truncated frame remains buffered until stream end';
+  like dies_with { $protocol->finish },
+    qr/payload shorter than declared length|incomplete frame at end of stream/,
+    'end-of-stream validation rejects truncated frame';
+};
+
+subtest 'rejects trailing bytes at end of stream after valid frames' => sub {
+  my $protocol = Overnet::Program::Protocol->new;
+  my $frame = $protocol->encode_message({
+    type   => 'notification',
+    method => 'program.ready',
+    params => {},
+  });
+
+  is scalar(@{$protocol->feed($frame . 'x')}), 1, 'valid frame is decoded before trailing bytes';
+  like dies_with { $protocol->finish },
+    qr/incomplete frame at end of stream|trailing payload bytes do not begin a valid next frame/,
+    'end-of-stream validation rejects trailing garbage';
+};
+
 subtest 'rejects JSON payloads that are not objects' => sub {
   my $protocol = Overnet::Program::Protocol->new;
   my $frame = "2\n[]";
@@ -158,6 +182,39 @@ subtest 'rejects unknown notification methods' => sub {
   ok !$ok, 'notification is invalid';
   is $code, 'protocol.unknown_method', 'returns protocol.unknown_method';
   like $message, qr/Unknown notification method/, 'error message is informative';
+};
+
+subtest 'validates runtime.fatal notifications' => sub {
+  my $protocol = Overnet::Program::Protocol->new;
+  my ($ok, $code, $message) = $protocol->validate_message(
+    Overnet::Program::Protocol::build_runtime_fatal(
+      code    => 'protocol.version_mismatch',
+      message => 'No compatible protocol version',
+      phase   => 'handshake',
+      details => {
+        runtime_supported_protocol_versions => ['0.1'],
+      },
+    )
+  );
+
+  ok $ok, 'runtime.fatal notification is valid';
+  ok !defined $code, 'no error code';
+  ok !defined $message, 'no error message';
+};
+
+subtest 'rejects malformed runtime.fatal notifications' => sub {
+  my $protocol = Overnet::Program::Protocol->new;
+  my ($ok, $code, $message) = $protocol->validate_message({
+    type   => 'notification',
+    method => 'runtime.fatal',
+    params => {
+      code => 'protocol.version_mismatch',
+    },
+  });
+
+  ok !$ok, 'runtime.fatal notification is invalid';
+  is $code, 'protocol.invalid_params', 'runtime.fatal validation uses invalid params';
+  like $message, qr/runtime\.fatal params\.message is required/, 'validation error identifies missing field';
 };
 
 subtest 'rejects malformed responses' => sub {

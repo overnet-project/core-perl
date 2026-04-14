@@ -16,6 +16,13 @@ sub new {
   my $instance_id = $args{instance_id} || 'instance-1';
   my $runtime_program_id = $args{runtime_program_id} || 'overnet.runtime';
   my $service_handler = $args{service_handler};
+  my $config = exists $args{config}
+    ? $args{config}
+    : (
+      defined $service_handler
+        ? $service_handler->runtime->config
+        : {}
+    );
 
   die "protocol must be an Overnet::Program::Protocol instance\n"
     unless ref($protocol) && $protocol->isa('Overnet::Program::Protocol');
@@ -29,6 +36,8 @@ sub new {
     die "service_handler must be an Overnet::Program::Services instance\n"
       unless ref($service_handler) && $service_handler->isa('Overnet::Program::Services');
   }
+  die "config must be an object\n"
+    unless ref($config) eq 'HASH';
 
   return bless {
     protocol                    => $protocol,
@@ -36,7 +45,7 @@ sub new {
     program_id                  => $program_id,
     instance_id                 => $instance_id,
     runtime_program_id          => $runtime_program_id,
-    config                      => $args{config} || {},
+    config                      => $config,
     permissions                 => $args{permissions} || [],
     services                    => $args{services} || {},
     service_handler             => $service_handler,
@@ -47,6 +56,7 @@ sub new {
 }
 
 sub state { $_[0]->{state} }
+sub instance_id { $_[0]->{instance_id} }
 sub is_ready { $_[0]->{state} eq 'ready' ? 1 : 0 }
 sub selected_protocol_version { $_[0]->{selected_protocol_version} }
 sub peer_program_id { $_[0]->{peer_program_id} }
@@ -135,8 +145,25 @@ sub _handle_program_hello {
 
   my $params = $message->{params} || {};
   my $selected = $self->_select_protocol_version($params->{supported_protocol_versions});
-  die "No compatible protocol version\n"
-    unless defined $selected;
+  unless (defined $selected) {
+    $self->{state} = 'failed';
+    return {
+      send => Overnet::Program::Protocol::build_runtime_fatal(
+        code    => 'protocol.version_mismatch',
+        message => 'No compatible protocol version',
+        phase   => 'handshake',
+        details => {
+          runtime_supported_protocol_versions => [ @{$self->{supported_protocol_versions}} ],
+          program_supported_protocol_versions => [ @{$params->{supported_protocol_versions} || []} ],
+        },
+      ),
+      fatal => 1,
+      error => {
+        code    => 'protocol.version_mismatch',
+        message => 'No compatible protocol version',
+      },
+    };
+  }
 
   $self->{selected_protocol_version} = $selected;
   $self->{peer_program_id} = $params->{program_id};
@@ -174,7 +201,7 @@ sub _handle_init_response {
     unless $message->{type} eq 'response';
 
   my $method = delete $self->{inflight}{$message->{id}}
-    or die "Unexpected response id while awaiting runtime.init response\n";
+    or die "protocol.unknown_request_id: Unexpected response id while awaiting runtime.init response\n";
   die "Expected runtime.init response\n"
     unless $method eq 'runtime.init';
 
@@ -224,7 +251,7 @@ sub _handle_ready_message {
 
   if ($message->{type} eq 'response') {
     my $method = delete $self->{inflight}{$message->{id}}
-      or die "Unexpected response id in ready state\n";
+      or die "protocol.unknown_request_id: Unexpected response id in ready state\n";
     return {
       response_to => $method,
       ok          => $message->{ok} ? 1 : 0,
@@ -265,6 +292,7 @@ sub _handle_service_request {
       $message->{params} || {},
       permissions => $self->{permissions},
       session_id  => $self->{instance_id},
+      program_id  => $self->_known_program_id,
     );
     1;
   } or $error = $@;
@@ -309,15 +337,17 @@ sub _handle_shutdown_response {
     unless $message->{type} eq 'response';
 
   my $method = delete $self->{inflight}{$message->{id}}
-    or die "Unexpected response id while awaiting runtime.shutdown response\n";
+    or die "protocol.unknown_request_id: Unexpected response id while awaiting runtime.shutdown response\n";
   die "Expected runtime.shutdown response\n"
     unless $method eq 'runtime.shutdown';
 
   if ($message->{ok}) {
+    $self->_revoke_secret_handles;
     $self->{state} = 'shutdown_complete';
     return { shutdown_complete => 1 };
   }
 
+  $self->_revoke_secret_handles;
   $self->{state} = 'failed';
   return {
     shutdown_rejected => 1,
@@ -341,6 +371,25 @@ sub _select_protocol_version {
   }
 
   return undef;
+}
+
+sub _known_program_id {
+  my ($self) = @_;
+  return $self->{program_id}
+    if defined $self->{program_id} && length $self->{program_id};
+  return $self->{peer_program_id};
+}
+
+sub _revoke_secret_handles {
+  my ($self) = @_;
+  my $handler = $self->{service_handler}
+    or return 0;
+  my $runtime = $handler->runtime
+    or return 0;
+
+  return $runtime->revoke_secret_handles_for_session(
+    session_id => $self->{instance_id},
+  );
 }
 
 1;

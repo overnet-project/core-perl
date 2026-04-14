@@ -160,9 +160,36 @@ subtest 'request_shutdown emits runtime.shutdown and tracks state' => sub {
   is $instance->state, 'shutdown_complete', 'session reached shutdown_complete';
 };
 
-subtest 'no compatible protocol version is rejected' => sub {
+subtest 'no compatible protocol version emits runtime.fatal and fails the session' => sub {
   my $instance = Overnet::Program::Instance->new(
     supported_protocol_versions => ['0.2'],
+  );
+
+  my $result = $instance->process_program_message(
+    Overnet::Program::Protocol::build_program_hello(
+      program_id                  => 'irc.example',
+      supported_protocol_versions => ['0.1'],
+    )
+  );
+
+  ok $result->{fatal}, 'hello mismatch produces a fatal runtime result';
+  is $result->{send}{type}, 'notification', 'fatal result sends a notification';
+  is $result->{send}{method}, 'runtime.fatal', 'fatal result uses runtime.fatal';
+  is $result->{send}{params}{code}, 'protocol.version_mismatch', 'fatal code identifies version mismatch';
+  is $result->{send}{params}{phase}, 'handshake', 'fatal notification identifies handshake phase';
+  is $instance->state, 'failed', 'session enters failed state after version mismatch';
+};
+
+subtest 'unknown response ids are fatal protocol.unknown_request_id errors' => sub {
+  my $instance = Overnet::Program::Instance->new(
+    supported_protocol_versions => ['0.1'],
+  );
+
+  my $hello = $instance->process_program_message(
+    Overnet::Program::Protocol::build_program_hello(
+      program_id                  => 'irc.example',
+      supported_protocol_versions => ['0.1'],
+    )
   );
 
   like(
@@ -170,17 +197,45 @@ subtest 'no compatible protocol version is rejected' => sub {
       my $error;
       eval {
         $instance->process_program_message(
-          Overnet::Program::Protocol::build_program_hello(
-            program_id                  => 'irc.example',
-            supported_protocol_versions => ['0.1'],
-          )
+          Overnet::Program::Protocol::build_response_ok(id => 'unknown-init-id')
         );
         1;
       } or $error = $@;
       $error;
     },
-    qr/No compatible protocol version/,
-    'hello is rejected when there is no version overlap',
+    qr/protocol\.unknown_request_id/,
+    'unexpected runtime.init response id is a protocol.unknown_request_id error',
+  );
+
+  $instance = Overnet::Program::Instance->new(
+    supported_protocol_versions => ['0.1'],
+  );
+  $hello = $instance->process_program_message(
+    Overnet::Program::Protocol::build_program_hello(
+      program_id                  => 'irc.example',
+      supported_protocol_versions => ['0.1'],
+    )
+  );
+  $instance->process_program_message(
+    Overnet::Program::Protocol::build_response_ok(id => $hello->{send}{id})
+  );
+  $instance->process_program_message(
+    Overnet::Program::Protocol::build_program_ready()
+  );
+
+  like(
+    do {
+      my $error;
+      eval {
+        $instance->process_program_message(
+          Overnet::Program::Protocol::build_response_ok(id => 'unknown-ready-id')
+        );
+        1;
+      } or $error = $@;
+      $error;
+    },
+    qr/protocol\.unknown_request_id/,
+    'unexpected ready-state response id is a protocol.unknown_request_id error',
   );
 };
 
@@ -362,13 +417,17 @@ subtest 'ready session returns protocol.unknown_method for runtime-only requests
   is $result->{send}{error}{code}, 'protocol.unknown_method', 'wrong-direction request gets protocol.unknown_method';
 };
 
-subtest 'ready session reports unavailable config service distinctly from program failure' => sub {
-  my $runtime = Overnet::Program::Runtime->new;
+subtest 'ready session reports unknown secret as invalid params' => sub {
+  my $runtime = Overnet::Program::Runtime->new(
+    secrets => {
+      'api-token' => 'top-secret',
+    },
+  );
   my $services = Overnet::Program::Services->new(runtime => $runtime);
 
   my $instance = Overnet::Program::Instance->new(
     supported_protocol_versions => ['0.1'],
-    permissions                 => ['config.read'],
+    permissions                 => ['secrets.read'],
     service_handler             => $services,
   );
 
@@ -388,13 +447,13 @@ subtest 'ready session reports unavailable config service distinctly from progra
   my $result = $instance->process_program_message(
     Overnet::Program::Protocol::build_request(
       id     => 'cfg-1',
-      method => 'config.get',
-      params => {},
+      method => 'secrets.get',
+      params => { name => 'missing-token' },
     )
   );
 
-  ok !$result->{send}{ok}, 'config.get fails when unavailable';
-  is $result->{send}{error}{code}, 'runtime.service_unavailable', 'unimplemented service is typed as service_unavailable';
+  ok !$result->{send}{ok}, 'secrets.get rejects unknown name';
+  is $result->{send}{error}{code}, 'protocol.invalid_params', 'unknown secret is typed as invalid params';
 };
 
 subtest 'malformed program.hello is rejected as invalid params' => sub {

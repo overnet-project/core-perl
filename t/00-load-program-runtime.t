@@ -12,8 +12,10 @@ use_ok('Overnet::Program::AdapterSession');
 use_ok('Overnet::Program::Host');
 use_ok('Overnet::Program::Instance');
 use_ok('Overnet::Program::Permissions');
+use_ok('Overnet::Program::SecretProvider');
 use_ok('Overnet::Program::Store');
 use_ok('Overnet::Program::Subscription');
+use_ok('Overnet::Program::TLSConfig');
 use_ok('Overnet::Program::Timer');
 
 done_testing;

@@ -130,6 +130,235 @@ subtest 'services reject invalid event store params' => sub {
   is $error->{code}, 'protocol.invalid_params', 'invalid limit is invalid params';
 };
 
+subtest 'services provide document storage CRUD and listing' => sub {
+  my $runtime = Overnet::Program::Runtime->new;
+  my $services = Overnet::Program::Services->new(runtime => $runtime);
+
+  my $put_profile = $services->dispatch_request(
+    'storage.put',
+    {
+      key   => 'profiles/alice',
+      value => {
+        display_name => 'Alice',
+        preferences  => { theme => 'light' },
+      },
+    },
+    permissions => ['storage.write'],
+  );
+  is $put_profile->{key}, 'profiles/alice', 'storage.put returns stored key';
+
+  my $put_room = $services->dispatch_request(
+    'storage.put',
+    {
+      key   => 'rooms/general',
+      value => {
+        topic => 'General chat',
+      },
+    },
+    permissions => ['storage.write'],
+  );
+  is $put_room->{key}, 'rooms/general', 'second storage.put returns stored key';
+
+  my $get_profile = $services->dispatch_request(
+    'storage.get',
+    { key => 'profiles/alice' },
+    permissions => ['storage.read'],
+  );
+  is $get_profile->{key}, 'profiles/alice', 'storage.get returns requested key';
+  is $get_profile->{value}{display_name}, 'Alice', 'storage.get returns stored document';
+
+  my $list_all = $services->dispatch_request(
+    'storage.list',
+    {},
+    permissions => ['storage.read'],
+  );
+  is_deeply(
+    $list_all->{keys},
+    ['profiles/alice', 'rooms/general'],
+    'storage.list returns sorted keys',
+  );
+
+  my $list_profiles = $services->dispatch_request(
+    'storage.list',
+    { prefix => 'profiles/' },
+    permissions => ['storage.read'],
+  );
+  is_deeply(
+    $list_profiles->{keys},
+    ['profiles/alice'],
+    'storage.list applies prefix filtering',
+  );
+
+  my $delete_profile = $services->dispatch_request(
+    'storage.delete',
+    { key => 'profiles/alice' },
+    permissions => ['storage.write'],
+  );
+  is_deeply $delete_profile, {}, 'storage.delete returns empty result';
+
+  my $list_after_delete = $services->dispatch_request(
+    'storage.list',
+    {},
+    permissions => ['storage.read'],
+  );
+  is_deeply(
+    $list_after_delete->{keys},
+    ['rooms/general'],
+    'deleted document is removed from listings',
+  );
+};
+
+subtest 'services reject invalid document storage params' => sub {
+  my $runtime = Overnet::Program::Runtime->new;
+  my $services = Overnet::Program::Services->new(runtime => $runtime);
+
+  my $error;
+  eval {
+    $services->dispatch_request(
+      'storage.put',
+      { value => { ok => 1 } },
+      permissions => ['storage.write'],
+    );
+    1;
+  } or $error = $@;
+  is ref($error), 'HASH', 'missing storage.put key error is structured';
+  is $error->{code}, 'protocol.invalid_params', 'missing storage.put key is invalid params';
+
+  $error = undef;
+  eval {
+    $services->dispatch_request(
+      'storage.put',
+      {
+        key   => 'profiles/alice',
+        value => 'not-an-object',
+      },
+      permissions => ['storage.write'],
+    );
+    1;
+  } or $error = $@;
+  is ref($error), 'HASH', 'non-object storage.put value error is structured';
+  is $error->{code}, 'protocol.invalid_params', 'non-object storage.put value is invalid params';
+
+  $error = undef;
+  eval {
+    $services->dispatch_request(
+      'storage.get',
+      { key => 'missing/document' },
+      permissions => ['storage.read'],
+    );
+    1;
+  } or $error = $@;
+  is ref($error), 'HASH', 'unknown storage.get key error is structured';
+  is $error->{code}, 'protocol.invalid_params', 'unknown storage.get key is invalid params';
+
+  $error = undef;
+  eval {
+    $services->dispatch_request(
+      'storage.delete',
+      { key => 'missing/document' },
+      permissions => ['storage.write'],
+    );
+    1;
+  } or $error = $@;
+  is ref($error), 'HASH', 'unknown storage.delete key error is structured';
+  is $error->{code}, 'protocol.invalid_params', 'unknown storage.delete key is invalid params';
+
+  $error = undef;
+  eval {
+    $services->dispatch_request(
+      'storage.list',
+      { prefix => {} },
+      permissions => ['storage.read'],
+    );
+    1;
+  } or $error = $@;
+  is ref($error), 'HASH', 'non-string storage.list prefix error is structured';
+  is $error->{code}, 'protocol.invalid_params', 'non-string storage.list prefix is invalid params';
+};
+
+subtest 'document storage isolates stored values from caller mutation' => sub {
+  my $runtime = Overnet::Program::Runtime->new;
+  my $services = Overnet::Program::Services->new(runtime => $runtime);
+  my $input = {
+    display_name => 'Carol',
+    preferences  => { theme => 'light' },
+  };
+
+  $services->dispatch_request(
+    'storage.put',
+    {
+      key   => 'profiles/carol',
+      value => $input,
+    },
+    permissions => ['storage.write'],
+  );
+
+  $input->{display_name} = 'Changed';
+  $input->{preferences}{theme} = 'dark';
+
+  my $stored = $services->dispatch_request(
+    'storage.get',
+    { key => 'profiles/carol' },
+    permissions => ['storage.read'],
+  );
+  is $stored->{value}{display_name}, 'Carol', 'stored document is isolated from input mutation';
+  is $stored->{value}{preferences}{theme}, 'light', 'nested input mutation does not affect stored document';
+
+  $stored->{value}{display_name} = 'Mutated read result';
+  $stored->{value}{preferences}{theme} = 'solarized';
+
+  my $reloaded = $services->dispatch_request(
+    'storage.get',
+    { key => 'profiles/carol' },
+    permissions => ['storage.read'],
+  );
+  is $reloaded->{value}{display_name}, 'Carol', 'stored document is isolated from returned value mutation';
+  is $reloaded->{value}{preferences}{theme}, 'light', 'nested returned value mutation does not affect stored document';
+};
+
+subtest 'services enforce storage permissions' => sub {
+  my $runtime = Overnet::Program::Runtime->new;
+  my $services = Overnet::Program::Services->new(runtime => $runtime);
+
+  my $error;
+  eval {
+    $services->dispatch_request(
+      'storage.put',
+      {
+        key   => 'profiles/dave',
+        value => { display_name => 'Dave' },
+      },
+      permissions => [],
+    );
+    1;
+  } or $error = $@;
+  is ref($error), 'HASH', 'storage.put permission error is structured';
+  is $error->{code}, 'runtime.permission_denied', 'storage.put requires permission';
+  is $error->{details}{required_permission}, 'storage.write', 'storage.put reports required permission';
+
+  $services->dispatch_request(
+    'storage.put',
+    {
+      key   => 'profiles/dave',
+      value => { display_name => 'Dave' },
+    },
+    permissions => ['storage.write'],
+  );
+
+  $error = undef;
+  eval {
+    $services->dispatch_request(
+      'storage.get',
+      { key => 'profiles/dave' },
+      permissions => [],
+    );
+    1;
+  } or $error = $@;
+  is ref($error), 'HASH', 'storage.get permission error is structured';
+  is $error->{code}, 'runtime.permission_denied', 'storage.get requires permission';
+  is $error->{details}{required_permission}, 'storage.read', 'storage.get reports required permission';
+};
+
 subtest 'accepted emitted outputs are exposed through runtime event streams' => sub {
   my $runtime = Overnet::Program::Runtime->new;
   my $services = Overnet::Program::Services->new(runtime => $runtime);
@@ -216,6 +445,59 @@ subtest 'instance can read emitted stream entries through protocol' => sub {
   );
   ok $read->{send}{ok}, 'events.read succeeds through instance';
   is $read->{send}{result}{entries}[0]{event}{id}, $event->{id}, 'protocol read returns emitted event payload';
+};
+
+subtest 'instance can use document storage through protocol' => sub {
+  my $runtime = Overnet::Program::Runtime->new;
+  my $services = Overnet::Program::Services->new(runtime => $runtime);
+  my $instance = _ready_instance(
+    supported_protocol_versions => ['0.1'],
+    permissions                 => ['storage.read', 'storage.write'],
+    service_handler             => $services,
+  );
+
+  my $put = $instance->process_program_message(
+    Overnet::Program::Protocol::build_request(
+      id     => 'storage-1',
+      method => 'storage.put',
+      params => {
+        key   => 'profiles/bob',
+        value => { display_name => 'Bob' },
+      },
+    )
+  );
+  ok $put->{send}{ok}, 'storage.put succeeds through instance';
+  is $put->{send}{result}{key}, 'profiles/bob', 'storage.put response includes key';
+
+  my $get = $instance->process_program_message(
+    Overnet::Program::Protocol::build_request(
+      id     => 'storage-2',
+      method => 'storage.get',
+      params => { key => 'profiles/bob' },
+    )
+  );
+  ok $get->{send}{ok}, 'storage.get succeeds through instance';
+  is $get->{send}{result}{value}{display_name}, 'Bob', 'storage.get returns stored value';
+
+  my $list = $instance->process_program_message(
+    Overnet::Program::Protocol::build_request(
+      id     => 'storage-3',
+      method => 'storage.list',
+      params => { prefix => 'profiles/' },
+    )
+  );
+  ok $list->{send}{ok}, 'storage.list succeeds through instance';
+  is_deeply $list->{send}{result}{keys}, ['profiles/bob'], 'storage.list returns matching keys';
+
+  my $delete = $instance->process_program_message(
+    Overnet::Program::Protocol::build_request(
+      id     => 'storage-4',
+      method => 'storage.delete',
+      params => { key => 'profiles/bob' },
+    )
+  );
+  ok $delete->{send}{ok}, 'storage.delete succeeds through instance';
+  is_deeply $delete->{send}{result}, {}, 'storage.delete returns empty result';
 };
 
 done_testing;

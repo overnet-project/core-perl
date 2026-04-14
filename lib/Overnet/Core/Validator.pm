@@ -114,14 +114,44 @@ sub validate {
       if (!defined $ptype || ($ptype ne 'native' && $ptype ne 'adapted')) {
         push @errors, "Provenance type must be 'native' or 'adapted'";
       } elsif ($ptype eq 'adapted') {
-        push @errors, "Adapted provenance missing required protocol field"
-          unless defined $provenance->{protocol};
-        push @errors, "Adapted provenance missing required origin field"
-          unless defined $provenance->{origin};
-        push @errors, "Adapted provenance missing required limitations field"
-          unless defined $provenance->{limitations} && ref $provenance->{limitations} eq 'ARRAY';
+        if (!defined $provenance->{protocol}) {
+          push @errors, "Adapted provenance missing required protocol field";
+        } elsif (!_is_non_empty_string($provenance->{protocol})) {
+          push @errors, "Adapted provenance protocol must be a non-empty string";
+        }
+
+        if (!defined $provenance->{origin}) {
+          push @errors, "Adapted provenance missing required origin field";
+        } elsif (!_is_non_empty_string($provenance->{origin})) {
+          push @errors, "Adapted provenance origin must be a non-empty string";
+        }
+
+        if (!defined $provenance->{limitations}) {
+          push @errors, "Adapted provenance missing required limitations field";
+        } elsif (!_is_string_array($provenance->{limitations})) {
+          push @errors, "Adapted provenance limitations must be an array of strings";
+        }
+
+        my $has_identity = 0;
+        if (exists $provenance->{external_identity}) {
+          if (_is_non_empty_string($provenance->{external_identity})) {
+            $has_identity = 1;
+          } else {
+            push @errors, "Adapted provenance external_identity must be a non-empty string";
+          }
+        }
+
+        my $has_scope = 0;
+        if (exists $provenance->{external_scope}) {
+          if (_is_non_empty_string($provenance->{external_scope})) {
+            $has_scope = 1;
+          } else {
+            push @errors, "Adapted provenance external_scope must be a non-empty string";
+          }
+        }
+
         push @errors, "Adapted provenance must include external_identity or external_scope"
-          unless defined $provenance->{external_identity} || defined $provenance->{external_scope};
+          unless $has_identity || $has_scope;
       }
     }
 
@@ -288,6 +318,22 @@ sub _result {
   return @{$errors}
     ? { valid => 0, errors => $errors, reason => $errors->[0], (defined $event ? (event => $event) : ()) }
     : { valid => 1, errors => [], (defined $event ? (event => $event) : ()) };
+}
+
+sub _is_non_empty_string {
+  my ($value) = @_;
+  return defined $value && !ref($value) && length($value) ? 1 : 0;
+}
+
+sub _is_string_array {
+  my ($value) = @_;
+  return 0 unless ref($value) eq 'ARRAY';
+
+  for my $item (@{$value}) {
+    return 0 unless _is_non_empty_string($item);
+  }
+
+  return 1;
 }
 
 1;

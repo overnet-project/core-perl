@@ -90,6 +90,39 @@ subtest 'services schedule, fire, repeat, and cancel timers' => sub {
   is scalar @{$runtime->drain_runtime_notifications('session-1')}, 0, 'one-shot timer is removed after firing';
 };
 
+subtest 'repeating timers coalesce overdue intervals into one notification per drain' => sub {
+  my $now_ms = 0;
+  my $runtime = Overnet::Program::Runtime->new(
+    now_cb => sub { $now_ms },
+  );
+  my $services = Overnet::Program::Services->new(runtime => $runtime);
+
+  $services->dispatch_request(
+    'timers.schedule',
+    {
+      timer_id  => 'timer-repeat',
+      delay_ms  => 100,
+      repeat_ms => 100,
+    },
+    permissions => ['timers.write'],
+    session_id  => 'session-repeat',
+  );
+
+  $now_ms = 450;
+  my $first_drain = $runtime->drain_runtime_notifications('session-repeat');
+  is scalar @{$first_drain}, 1, 'overdue repeating timer emits one notification for the drain';
+  is $first_drain->[0]{params}{timer_id}, 'timer-repeat', 'coalesced notification records timer id';
+
+  $now_ms = 499;
+  is scalar @{$runtime->drain_runtime_notifications('session-repeat')}, 0,
+    'timer does not immediately replay missed historical intervals';
+
+  $now_ms = 500;
+  my $second_drain = $runtime->drain_runtime_notifications('session-repeat');
+  is scalar @{$second_drain}, 1, 'timer resumes on the next scheduled boundary after coalescing';
+  is $second_drain->[0]{params}{timer_id}, 'timer-repeat', 'subsequent notification records timer id';
+};
+
 subtest 'services reject invalid timer params and unknown timers' => sub {
   my $now_ms = 1_700_000_000_000;
   my $runtime = Overnet::Program::Runtime->new(

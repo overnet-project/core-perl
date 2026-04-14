@@ -8,6 +8,7 @@ use Time::HiRes qw(time);
 use Overnet::Core::Validator ();
 use Overnet::Program::AdapterRegistry;
 use Overnet::Program::AdapterSession;
+use Overnet::Program::SecretProvider;
 use Overnet::Program::Store;
 use Overnet::Program::Subscription;
 use Overnet::Program::Timer;
@@ -19,6 +20,9 @@ sub new {
   my $adapter_registry = $args{adapter_registry} || Overnet::Program::AdapterRegistry->new;
   my $store = $args{store} || Overnet::Program::Store->new;
   my $now_cb = $args{now_cb} || sub { int(time() * 1000) };
+  my $secret_provider = $args{secret_provider};
+  my $config = exists $args{config} ? $args{config} : {};
+  my $config_description = exists $args{config_description} ? $args{config_description} : {};
 
   die "adapter_registry must be an Overnet::Program::AdapterRegistry instance\n"
     unless ref($adapter_registry) && $adapter_registry->isa('Overnet::Program::AdapterRegistry');
@@ -26,23 +30,88 @@ sub new {
     unless ref($store) && $store->isa('Overnet::Program::Store');
   die "now_cb must be a code reference\n"
     unless ref($now_cb) eq 'CODE';
+  die "config must be an object\n"
+    unless ref($config) eq 'HASH';
+  die "config_description must be an object\n"
+    unless ref($config_description) eq 'HASH';
+
+  die "host is reserved for process supervision; use secret_provider instead\n"
+    if exists $args{host};
+
+  if (defined $secret_provider) {
+    die "secret_provider must be an Overnet::Program::SecretProvider instance\n"
+      unless ref($secret_provider) && $secret_provider->isa('Overnet::Program::SecretProvider');
+    for my $field (qw(secrets secret_policies secret_handle_ttl_ms random_bytes_cb)) {
+      die "$field cannot be supplied when secret_provider is provided\n"
+        if exists $args{$field};
+    }
+  } else {
+    $secret_provider = Overnet::Program::SecretProvider->new(
+      now_cb => $now_cb,
+      (exists $args{secrets} ? (secrets => $args{secrets}) : ()),
+      (exists $args{secret_policies} ? (secret_policies => $args{secret_policies}) : ()),
+      (exists $args{secret_handle_ttl_ms} ? (secret_handle_ttl_ms => $args{secret_handle_ttl_ms}) : ()),
+      (exists $args{random_bytes_cb} ? (random_bytes_cb => $args{random_bytes_cb}) : ()),
+    );
+  }
+
+  _validate_config_description($config_description);
 
   return bless {
     adapter_registry => $adapter_registry,
     store            => $store,
+    secret_provider  => $secret_provider,
     now_cb           => $now_cb,
+    config           => _clone_json($config),
+    config_description => _clone_json($config_description),
     next_session_id  => 1,
     adapter_sessions => {},
     timers           => {},
     emitted_items    => [],
     subscriptions    => {},
     runtime_notifications => {},
-    %args,
   }, $class;
 }
 
 sub adapter_registry { $_[0]->{adapter_registry} }
 sub store { $_[0]->{store} }
+sub secret_provider { $_[0]->{secret_provider} }
+sub config { _clone_json($_[0]->{config}) }
+sub describe_config { _clone_json($_[0]->{config_description}) }
+sub has_secret {
+  my ($self, %args) = @_;
+  return $self->{secret_provider}->has_secret(%args);
+}
+
+sub issue_secret_handle {
+  my ($self, %args) = @_;
+  return $self->{secret_provider}->issue_secret_handle(%args);
+}
+
+sub resolve_secret_handle {
+  my ($self, %args) = @_;
+  return $self->{secret_provider}->resolve_secret_handle(%args);
+}
+
+sub revoke_secret_handle {
+  my ($self, %args) = @_;
+  return $self->{secret_provider}->revoke_secret_handle(%args);
+}
+
+sub revoke_secret_handles_for_session {
+  my ($self, %args) = @_;
+  return $self->{secret_provider}->revoke_secret_handles_for_session(%args);
+}
+
+sub rotate_secret {
+  my ($self, %args) = @_;
+  return $self->{secret_provider}->rotate_secret(%args);
+}
+
+sub secret_audit_events {
+  my ($self) = @_;
+  return $self->{secret_provider}->audit_events;
+}
 sub emitted_items { [ @{$_[0]->{emitted_items} || []} ] }
 
 sub emitted_stream_name {
@@ -75,23 +144,95 @@ sub open_adapter_session {
 
   my $adapter_id = $args{adapter_id};
   my $config = $args{config} || {};
+  my $secret_handles = exists $args{secret_handles} ? $args{secret_handles} : {};
+  my $program_session_id = $args{session_id};
+  my $program_id = $args{program_id};
 
   die "adapter_id is required\n"
     unless defined $adapter_id && !ref($adapter_id) && length($adapter_id);
   die "config must be an object\n"
     if ref($config) ne 'HASH';
+  die "secret_handles must be an object\n"
+    if ref($secret_handles) ne 'HASH';
+  die "session_id is required when secret_handles are supplied\n"
+    if keys(%{$secret_handles}) && (!defined $program_session_id || ref($program_session_id) || !length($program_session_id));
+  die "program_id must be a non-empty string\n"
+    if defined $program_id && (ref($program_id) || !length($program_id));
 
   my $adapter = $self->{adapter_registry}->build($adapter_id);
   die "Unknown adapter_id: $adapter_id\n"
     unless defined $adapter;
 
+  if (keys %{$secret_handles}) {
+    _require_adapter_secret_slot_support(
+      adapter    => $adapter,
+      adapter_id => $adapter_id,
+      slots      => [ sort keys %{$secret_handles} ],
+    );
+  }
+
   my $session_id = 'adapter-' . $self->{next_session_id}++;
   my $session = Overnet::Program::AdapterSession->new(
-    session_id => $session_id,
-    adapter_id => $adapter_id,
-    adapter    => $adapter,
-    config     => $config,
+    session_id          => $session_id,
+    adapter_id          => $adapter_id,
+    adapter             => $adapter,
+    config              => $config,
+    program_session_id  => $program_session_id,
+    program_id          => $program_id,
   );
+
+  my %resolved_secret_values;
+  eval {
+    if (keys %{$secret_handles}) {
+      for my $slot (sort keys %{$secret_handles}) {
+        my $handle = $secret_handles->{$slot};
+        die {
+          code    => 'protocol.invalid_params',
+          message => "secret_handles.$slot must be a secret_handle object",
+          details => {
+            param => "secret_handles.$slot",
+          },
+        } unless ref($handle) eq 'HASH';
+        die {
+          code    => 'protocol.invalid_params',
+          message => "secret_handles.$slot.id must be a non-empty string",
+          details => {
+            param => "secret_handles.$slot.id",
+          },
+        } unless defined $handle->{id} && !ref($handle->{id}) && length($handle->{id});
+
+        my $resolved = $self->resolve_secret_handle(
+          session_id => $program_session_id,
+          handle_id  => $handle->{id},
+          (defined $program_id ? (program_id => $program_id) : ()),
+          method      => 'adapters.open_session',
+          adapter_id  => $adapter_id,
+          secret_slot => $slot,
+          purpose     => "adapters.open_session:$adapter_id:$slot",
+          error_param => "secret_handles.$slot",
+        );
+        $resolved_secret_values{$slot} = $resolved->{value};
+      }
+    }
+
+    $session->open(secret_values => \%resolved_secret_values);
+    1;
+  } or do {
+    my $error = $@;
+    _clear_secret_values(\%resolved_secret_values);
+    die $error if ref($error) eq 'HASH';
+
+    chomp $error if !ref($error);
+    die {
+      code    => 'runtime.service_unavailable',
+      message => $error,
+      details => {
+        method     => 'adapters.open_session',
+        adapter_id => $adapter_id,
+      },
+    };
+  };
+  _clear_secret_values(\%resolved_secret_values);
 
   $self->{adapter_sessions}{$session_id} = $session;
   return $session;
@@ -108,9 +249,12 @@ sub close_adapter_session {
   die "adapter_session_id is required\n"
     unless defined $session_id && !ref($session_id) && length($session_id);
 
-  my $session = delete $self->{adapter_sessions}{$session_id};
+  my $session = $self->{adapter_sessions}{$session_id};
   die "Unknown adapter_session_id: $session_id\n"
     unless defined $session;
+
+  $session->close;
+  delete $self->{adapter_sessions}{$session_id};
 
   return 1;
 }
@@ -118,6 +262,46 @@ sub close_adapter_session {
 sub adapter_session_ids {
   my ($self) = @_;
   return [ sort keys %{$self->{adapter_sessions}} ];
+}
+
+sub release_session_resources {
+  my ($self, %args) = @_;
+  my $session_id = _require_string_arg(session_id => $args{session_id});
+
+  my %released = (
+    adapter_sessions_closed => 0,
+    subscriptions_closed    => 0,
+    timers_canceled         => 0,
+    notifications_cleared   => 0,
+  );
+
+  for my $adapter_session_id (sort keys %{$self->{adapter_sessions}}) {
+    my $session = $self->{adapter_sessions}{$adapter_session_id};
+    next unless defined $session;
+    next unless defined $session->program_session_id;
+    next unless $session->program_session_id eq $session_id;
+
+    eval { $session->close; 1; };
+    delete $self->{adapter_sessions}{$adapter_session_id};
+    $released{adapter_sessions_closed}++;
+  }
+
+  if (exists $self->{subscriptions}{$session_id}) {
+    $released{subscriptions_closed} = scalar keys %{$self->{subscriptions}{$session_id} || {}};
+    delete $self->{subscriptions}{$session_id};
+  }
+
+  if (exists $self->{timers}{$session_id}) {
+    $released{timers_canceled} = scalar keys %{$self->{timers}{$session_id} || {}};
+    delete $self->{timers}{$session_id};
+  }
+
+  if (exists $self->{runtime_notifications}{$session_id}) {
+    $released{notifications_cleared} = scalar @{$self->{runtime_notifications}{$session_id} || []};
+    delete $self->{runtime_notifications}{$session_id};
+  }
+
+  return \%released;
 }
 
 sub append_event {
@@ -128,6 +312,31 @@ sub append_event {
 sub read_events {
   my ($self, %args) = @_;
   return $self->{store}->read_events(%args);
+}
+
+sub has_document {
+  my ($self, %args) = @_;
+  return $self->{store}->has_document(%args);
+}
+
+sub put_document {
+  my ($self, %args) = @_;
+  return $self->{store}->put_document(%args);
+}
+
+sub get_document {
+  my ($self, %args) = @_;
+  return $self->{store}->get_document(%args);
+}
+
+sub delete_document {
+  my ($self, %args) = @_;
+  return $self->{store}->delete_document(%args);
+}
+
+sub list_documents {
+  my ($self, %args) = @_;
+  return $self->{store}->list_documents(%args);
 }
 
 sub has_subscription {
@@ -507,6 +716,75 @@ sub _now_ms {
   return 0 + $now;
 }
 
+sub _clear_secret_values {
+  my ($values) = @_;
+  return 1 unless ref($values) eq 'HASH';
+
+  for my $slot (keys %{$values}) {
+    next unless defined $values->{$slot};
+    $values->{$slot} = '';
+    delete $values->{$slot};
+  }
+
+  return 1;
+}
+
+sub _require_adapter_secret_slot_support {
+  my (%args) = @_;
+  my $adapter = $args{adapter};
+  my $adapter_id = $args{adapter_id};
+  my $slots = $args{slots} || [];
+
+  die {
+    code    => 'runtime.service_unavailable',
+    message => "Adapter $adapter_id does not declare secure secret input slots",
+    details => {
+      method     => 'adapters.open_session',
+      adapter_id => $adapter_id,
+    },
+  } unless $adapter->can('supported_secret_slots');
+
+  die {
+    code    => 'runtime.service_unavailable',
+    message => "Adapter $adapter_id does not support secure session opening",
+    details => {
+      method     => 'adapters.open_session',
+      adapter_id => $adapter_id,
+    },
+  } unless $adapter->can('open_session');
+
+  my $supported = $adapter->supported_secret_slots;
+  die {
+    code    => 'runtime.service_unavailable',
+    message => "Adapter $adapter_id supported_secret_slots must return an array",
+    details => {
+      method     => 'adapters.open_session',
+      adapter_id => $adapter_id,
+    },
+  } unless ref($supported) eq 'ARRAY';
+  die {
+    code    => 'runtime.service_unavailable',
+    message => "Adapter $adapter_id supported_secret_slots must contain non-empty strings",
+    details => {
+      method     => 'adapters.open_session',
+      adapter_id => $adapter_id,
+    },
+  } if grep { !defined($_) || ref($_) || !length($_) } @{$supported};
+
+  my %supported = map { $_ => 1 } @{$supported};
+  for my $slot (@{$slots}) {
+    die {
+      code    => 'protocol.invalid_params',
+      message => "Unsupported secret handle slot: $slot",
+      details => {
+        param => "secret_handles.$slot",
+      },
+    } unless $supported{$slot};
+  }
+
+  return 1;
+}
+
 sub _queue_due_timer_notifications {
   my ($self) = @_;
   my $now_ms = $self->_now_ms;
@@ -519,22 +797,21 @@ sub _queue_due_timer_notifications {
       my $timer = $timers->{$timer_id};
       next unless defined $timer;
 
-      while ($timer->is_due($now_ms)) {
-        push @{$self->{runtime_notifications}{$session_id} ||= []}, {
-          method => 'runtime.timer_fired',
-          params => $timer->build_notification_params(
-            fired_at => $fired_at,
-          ),
-        };
+      next unless $timer->is_due($now_ms);
 
-        if ($timer->is_repeating) {
-          $timer->advance_after_fire;
-          next;
-        }
+      push @{$self->{runtime_notifications}{$session_id} ||= []}, {
+        method => 'runtime.timer_fired',
+        params => $timer->build_notification_params(
+          fired_at => $fired_at,
+        ),
+      };
 
-        delete $timers->{$timer_id};
-        last;
+      if ($timer->is_repeating) {
+        $timer->advance_after_fire_until_after($now_ms);
+        next;
       }
+
+      delete $timers->{$timer_id};
     }
 
     delete $self->{timers}{$session_id}
@@ -551,6 +828,30 @@ sub _require_string_arg {
     unless defined $value && !ref($value) && length($value);
 
   return $value;
+}
+
+sub _validate_config_description {
+  my ($description) = @_;
+
+  die "config_description.schema must be an object\n"
+    if exists $description->{schema}
+      && ref($description->{schema}) ne 'HASH';
+  die "config_description.schema_ref must be a non-empty string\n"
+    if exists $description->{schema_ref}
+      && (
+        !defined $description->{schema_ref}
+        || ref($description->{schema_ref})
+        || !length($description->{schema_ref})
+      );
+  die "config_description.version must be a non-empty string\n"
+    if exists $description->{version}
+      && (
+        !defined $description->{version}
+        || ref($description->{version})
+        || !length($description->{version})
+      );
+
+  return 1;
 }
 
 sub _clone_json {
