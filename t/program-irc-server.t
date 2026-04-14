@@ -1,7 +1,7 @@
 use strict;
 use warnings;
 use Test::More;
-use JSON::PP qw(decode_json);
+use JSON::PP qw(decode_json encode_json);
 use File::Spec;
 use File::Temp qw(tempdir);
 use FindBin;
@@ -43,6 +43,21 @@ sub _method_count {
   return $count;
 }
 
+sub _request_count_matching {
+  my ($entries, $direction, $method, $predicate) = @_;
+  my $count = 0;
+
+  for my $entry (@{$entries}) {
+    next unless ($entry->{direction} || '') eq $direction;
+    next unless ($entry->{message}{type} || '') eq 'request';
+    next unless ($entry->{message}{method} || '') eq $method;
+    next if $predicate && !$predicate->($entry->{message}{params} || {});
+    $count++;
+  }
+
+  return $count;
+}
+
 sub _wait_for_ready_details {
   my ($host) = @_;
 
@@ -69,6 +84,22 @@ sub _wait_for_ready_details {
   }
 
   return undef;
+}
+
+sub _wait_for_dm_subscription_count {
+  my ($host, $count) = @_;
+
+  return $host->pump_until(
+    timeout_ms => 1_000,
+    condition  => sub {
+      _request_count_matching(
+        $_[0]->transcript,
+        'from_program',
+        'subscriptions.open',
+        sub { (($_[0]{subscription_id} || '') =~ /\Adm:/) ? 1 : 0 },
+      ) >= $count;
+    },
+  );
 }
 
 sub _connect_irc_client {
@@ -109,15 +140,16 @@ sub _connect_irc_client_tls {
 
 sub _read_client_line {
   my ($client, $timeout_ms) = @_;
+  my (undef, $caller_file, $caller_line) = caller;
 
   while ($client->{read_buffer} !~ /\n/) {
     my $selector = IO::Select->new($client->{socket});
     my @ready = $selector->can_read($timeout_ms / 1000);
-    die "Timed out waiting for IRC client line\n"
+    die "Timed out waiting for IRC client line at $caller_file line $caller_line\n"
       unless @ready;
 
     my $bytes = sysread($client->{socket}, my $chunk, 4096);
-    die "IRC client disconnected before sending a line\n"
+    die "IRC client disconnected before sending a line at $caller_file line $caller_line\n"
       unless defined $bytes && $bytes > 0;
     $client->{read_buffer} .= $chunk;
   }
@@ -141,6 +173,7 @@ sub _read_client_lines {
 
 sub _read_client_line_optional {
   my ($client, $timeout_ms) = @_;
+  my (undef, $caller_file, $caller_line) = caller;
 
   while ($client->{read_buffer} !~ /\n/) {
     my $selector = IO::Select->new($client->{socket});
@@ -148,7 +181,7 @@ sub _read_client_line_optional {
     return undef unless @ready;
 
     my $bytes = sysread($client->{socket}, my $chunk, 4096);
-    die "IRC client disconnected unexpectedly\n"
+    die "IRC client disconnected unexpectedly at $caller_file line $caller_line\n"
       unless defined $bytes && $bytes > 0;
     $client->{read_buffer} .= $chunk;
   }
@@ -321,11 +354,15 @@ subtest 'IRC server program enforces nick uniqueness and emits 433 for collision
   _write_client_line($alice, 'USER alice 0 * :Alice Example');
   is _read_client_line($alice, 1_000), ':overnet.irc.local 001 alice :Welcome to Overnet IRC',
     'alice can complete registration after reserving the nick';
+  ok _wait_for_dm_subscription_count($host, 1),
+    'alice registration completes the first DM subscription open';
 
   _write_client_line($bob, 'NICK bob');
   _write_client_line($bob, 'USER bob 0 * :Bob Example');
   is _read_client_line($bob, 1_000), ':overnet.irc.local 001 bob :Welcome to Overnet IRC',
     'bob can register with a different nick after the collision';
+  ok _wait_for_dm_subscription_count($host, 2),
+    'bob registration completes the second DM subscription open';
 
   _write_client_line($bob, 'NICK alice');
   is _read_client_line($bob, 1_000), ':overnet.irc.local 433 bob alice :Nickname is already in use',
@@ -351,8 +388,21 @@ subtest 'IRC server program enforces nick uniqueness and emits 433 for collision
   _write_client_line($carol, 'USER carol 0 * :Carol Example');
   is _read_client_line($carol, 1_000), ':overnet.irc.local 001 alice :Welcome to Overnet IRC',
     'old nick becomes reusable after a successful nick change';
+  ok _wait_for_dm_subscription_count($host, 3),
+    'carol registration completes its DM subscription open';
 
   _write_client_line($bob, 'QUIT :bye');
+  ok $host->pump_until(
+    timeout_ms => 1_000,
+    condition  => sub {
+      _request_count_matching(
+        $_[0]->transcript,
+        'from_program',
+        'subscriptions.close',
+        sub { (($_[0]{subscription_id} || '') =~ /\Adm:/) ? 1 : 0 },
+      ) >= 2;
+    },
+  ), 'bob quit completes its DM subscription close';
   my $bob_closed = eval {
     _read_client_line($bob, 500);
     '';
@@ -364,6 +414,8 @@ subtest 'IRC server program enforces nick uniqueness and emits 433 for collision
   _write_client_line($dave, 'USER dave 0 * :Dave Example');
   is _read_client_line($dave, 1_000), ':overnet.irc.local 001 bob :Welcome to Overnet IRC',
     'nick becomes reusable after disconnect';
+  ok _wait_for_dm_subscription_count($host, 5),
+    'dave registration completes its DM subscription open';
 
   _write_client_line($erin, 'NICK erin');
   close $erin->{socket};
@@ -373,6 +425,8 @@ subtest 'IRC server program enforces nick uniqueness and emits 433 for collision
   _write_client_line($frank, 'USER frank 0 * :Frank Example');
   is _read_client_line($frank, 1_000), ':overnet.irc.local 001 erin :Welcome to Overnet IRC',
     'nick reserved by an unregistered client is released on disconnect';
+  ok _wait_for_dm_subscription_count($host, 6),
+    'frank registration completes its DM subscription open';
 
   is _method_count($host->transcript, 'from_program', 'request', 'adapters.map_input'), 1,
     'only the successful registered nick change reaches adapter mapping';
@@ -385,6 +439,197 @@ subtest 'IRC server program enforces nick uniqueness and emits 433 for collision
   close $carol->{socket};
   close $dave->{socket};
   close $frank->{socket};
+};
+
+subtest 'IRC server program supports a minimal IRC client compatibility slice' => sub {
+  my $privmsg = _load_irc_fixture('valid-channel-privmsg.json');
+  my $network = $privmsg->{input}{network};
+  my $channel_object_id = 'irc:' . $network . ':#OverNet';
+
+  my $tmpdir = tempdir(CLEANUP => 1);
+  my $key_path = File::Spec->catfile($tmpdir, 'irc-server-test-key.pem');
+  my $key = Net::Nostr::Key->new;
+  $key->save_privkey($key_path);
+
+  my $runtime = Overnet::Program::Runtime->new(
+    config => {
+      adapter_id       => 'irc.real',
+      network          => $network,
+      listen_host      => '127.0.0.1',
+      listen_port      => 0,
+      server_name      => 'overnet.irc.local',
+      signing_key_file => $key_path,
+      adapter_config   => {},
+    },
+  );
+  ok $runtime->register_adapter_definition(
+    adapter_id => 'irc.real',
+    definition => {
+      kind             => 'class',
+      class            => 'Overnet::Adapter::IRC',
+      lib_dirs         => [$irc_lib],
+      constructor_args => {},
+    },
+  ), 'runtime can register the real IRC adapter for compatibility coverage';
+
+  my $host = Overnet::Program::Host->new(
+    command     => [$^X, $program_path],
+    runtime     => $runtime,
+    program_id  => 'overnet.program.irc_server',
+    permissions => [
+      'adapters.use',
+      'subscriptions.read',
+      'overnet.emit_event',
+      'overnet.emit_state',
+      'overnet.emit_capabilities',
+    ],
+    services => {
+      'adapters.open_session'      => {},
+      'adapters.map_input'         => {},
+      'adapters.close_session'     => {},
+      'subscriptions.open'         => {},
+      'subscriptions.close'        => {},
+      'overnet.emit_event'         => {},
+      'overnet.emit_state'         => {},
+      'overnet.emit_capabilities'  => {},
+    },
+    startup_timeout_ms  => 1_000,
+    shutdown_timeout_ms => 1_000,
+  );
+
+  $host->start;
+  is $host->state, 'ready', 'compatibility server reaches ready state';
+
+  my $ready_details = _wait_for_ready_details($host);
+  ok $ready_details, 'compatibility server publishes ready health details';
+  ok defined $ready_details->{listen_port} && $ready_details->{listen_port} > 0,
+    'compatibility server exposes the bound listen port';
+
+  my $alice = _connect_irc_client($ready_details->{listen_port});
+  my $bob   = _connect_irc_client($ready_details->{listen_port});
+
+  _write_client_line($alice, 'CAP LS 302');
+  is _read_client_line($alice, 1_000), ':overnet.irc.local CAP * LS :',
+    'CAP LS returns an empty capability advertisement';
+
+  _write_client_line($alice, 'CAP REQ :multi-prefix sasl');
+  is _read_client_line($alice, 1_000), ':overnet.irc.local CAP * NAK :multi-prefix sasl',
+    'CAP REQ returns NAK for unsupported capabilities';
+
+  _write_client_line($alice, 'CAP END');
+  is _read_client_line_optional($alice, 200), undef,
+    'CAP END does not emit any compatibility reply';
+
+  _write_client_line($alice, 'JOIN #overnet');
+  is _read_client_line($alice, 1_000), ':overnet.irc.local 451 * :You have not registered',
+    'pre-registration JOIN returns 451';
+
+  _write_client_line($alice, 'MODE #overnet');
+  is _read_client_line($alice, 1_000), ':overnet.irc.local 451 * :You have not registered',
+    'pre-registration MODE returns 451';
+
+  _write_client_line($alice, 'NICK');
+  is _read_client_line($alice, 1_000), ':overnet.irc.local 431 * :No nickname given',
+    'bare NICK returns 431';
+
+  _write_client_line($alice, 'USER alice 0 *');
+  is _read_client_line($alice, 1_000), ':overnet.irc.local 461 * USER :Not enough parameters',
+    'short USER returns 461';
+
+  _write_client_line($alice, 'NICK Alice');
+  _write_client_line($alice, 'USER alice 0 * :Alice Example');
+  is _read_client_line($alice, 1_000), ':overnet.irc.local 001 Alice :Welcome to Overnet IRC',
+    'alice can register after compatibility prelude';
+  ok _wait_for_dm_subscription_count($host, 1),
+    'alice registration completes its DM subscription open';
+
+  _write_client_line($alice, 'FROB');
+  is _read_client_line($alice, 1_000), ':overnet.irc.local 421 Alice FROB :Unknown command',
+    'unknown registered commands return 421';
+
+  _write_client_line($alice, 'PART #Elsewhere');
+  is _read_client_line($alice, 1_000), ':overnet.irc.local 442 Alice #Elsewhere :You\'re not on that channel',
+    'PART on an unjoined channel returns 442';
+
+  _write_client_line($alice, 'MODE');
+  is _read_client_line($alice, 1_000), ':overnet.irc.local 461 Alice MODE :Not enough parameters',
+    'MODE without a target returns 461';
+
+  _write_client_line($alice, 'MODE aLiCe');
+  is _read_client_line($alice, 1_000), ':overnet.irc.local 221 Alice +',
+    'self MODE query uses folded nick lookup and returns a minimal user mode reply';
+
+  _write_client_line($alice, 'MODE #Elsewhere');
+  is _read_client_line($alice, 1_000), ':overnet.irc.local 442 Alice #Elsewhere :You\'re not on that channel',
+    'MODE on an unjoined channel returns 442';
+
+  _write_client_line($alice, 'JOIN alice');
+  is _read_client_line($alice, 1_000), ':overnet.irc.local 403 Alice alice :No such channel',
+    'JOIN on a non-channel target returns 403';
+
+  _write_client_line($alice, 'PRIVMSG MissingNick :hello');
+  is _read_client_line($alice, 1_000), ':overnet.irc.local 401 Alice MissingNick :No such nick/channel',
+    'PRIVMSG to a missing nick returns 401';
+
+  _write_client_line($bob, 'NICK aLICE');
+  is _read_client_line($bob, 1_000), ':overnet.irc.local 433 * aLICE :Nickname is already in use',
+    'nick uniqueness uses RFC1459-style case-folding';
+
+  _write_client_line($alice, 'JOIN #OverNet');
+  ok $host->pump_until(
+    timeout_ms => 1_000,
+    condition  => sub {
+      defined _find_emitted_item(
+        $_[0]->runtime->emitted_items,
+        item_type   => 'event',
+        overnet_et  => 'chat.join',
+        overnet_ot  => 'chat.channel',
+        overnet_oid => $channel_object_id,
+      );
+    },
+  ), 'case-folded JOIN is emitted on the canonical channel object';
+  is_deeply [
+    _read_client_lines($alice, 3, 1_000),
+  ], [
+    ':Alice JOIN #OverNet',
+    ':overnet.irc.local 353 Alice = #OverNet :Alice',
+    ':overnet.irc.local 366 Alice #OverNet :End of /NAMES list.',
+  ], 'join preserves the first presentational channel spelling and returns bootstrap lines';
+
+  _write_client_line($alice, 'MODE #oVERnEt');
+  is _read_client_line($alice, 1_000), ':overnet.irc.local 324 Alice #OverNet +n',
+    'MODE query uses folded channel lookup and canonical channel spelling';
+
+  _write_client_line($alice, 'NAMES #oVERnEt');
+  is_deeply [
+    _read_client_lines($alice, 2, 1_000),
+  ], [
+    ':overnet.irc.local 353 Alice = #OverNet :Alice',
+    ':overnet.irc.local 366 Alice #OverNet :End of /NAMES list.',
+  ], 'explicit NAMES uses the canonical channel spelling after case-folded lookup';
+
+  _write_client_line($alice, 'PRIVMSG #oVERnEt :Casefolded hello');
+  ok $host->pump_until(
+    timeout_ms => 1_000,
+    condition  => sub {
+      defined _find_emitted_item(
+        $_[0]->runtime->emitted_items,
+        item_type   => 'event',
+        overnet_et  => 'chat.message',
+        overnet_ot  => 'chat.channel',
+        overnet_oid => $channel_object_id,
+      );
+    },
+  ), 'case-folded channel PRIVMSG is emitted on the canonical channel object';
+  is _read_client_line($alice, 1_000), ':Alice PRIVMSG #OverNet :Casefolded hello',
+    'case-folded channel PRIVMSG renders back using the canonical channel spelling';
+
+  my $shutdown = $host->request_shutdown(reason => 'compatibility test complete');
+  is $shutdown->{state}, 'shutdown_complete', 'compatibility server handles runtime shutdown';
+  is $shutdown->{exit_code}, 0, 'compatibility server exits cleanly';
+
+  close $alice->{socket};
+  close $bob->{socket};
 };
 
 subtest 'IRC server program accepts clients, emits Overnet output, and fans channel items back out' => sub {
@@ -469,11 +714,15 @@ subtest 'IRC server program accepts clients, emits Overnet output, and fans chan
   _write_client_line($alice, 'USER alice 0 * :Alice Example');
   is _read_client_line($alice, 1_000), ':overnet.irc.local 001 alice :Welcome to Overnet IRC',
     'alice receives numeric 001 after registration';
+  ok _wait_for_dm_subscription_count($host, 1),
+    'alice registration completes the first DM subscription open';
 
   _write_client_line($bob, 'NICK bob');
   _write_client_line($bob, 'USER bob 0 * :Bob Example');
   is _read_client_line($bob, 1_000), ':overnet.irc.local 001 bob :Welcome to Overnet IRC',
     'bob receives numeric 001 after registration';
+  ok _wait_for_dm_subscription_count($host, 2),
+    'bob registration completes the second DM subscription open';
 
   _write_client_line($alice, 'JOIN #overnet');
   ok $host->pump_until(
@@ -568,6 +817,8 @@ subtest 'IRC server program accepts clients, emits Overnet output, and fans chan
   _write_client_line($carol, 'USER carol 0 * :Carol Example');
   is _read_client_line($carol, 1_000), ':overnet.irc.local 001 carol :Welcome to Overnet IRC',
     'carol receives numeric 001 after registration';
+  ok _wait_for_dm_subscription_count($host, 3),
+    'carol registration completes its DM subscription open';
 
   _write_client_line($carol, 'JOIN #overnet');
   ok $host->pump_until(
@@ -680,6 +931,17 @@ subtest 'IRC server program accepts clients, emits Overnet output, and fans chan
     'remaining shared channel members receive QUIT lines';
   is _read_client_line_optional($alice, 200), undef,
     'parted clients do not receive later QUIT lines';
+  ok $host->pump_until(
+    timeout_ms => 1_000,
+    condition  => sub {
+      _request_count_matching(
+        $_[0]->transcript,
+        'from_program',
+        'subscriptions.close',
+        sub { (($_[0]{subscription_id} || '') =~ /\Adm:/) ? 1 : 0 },
+      ) >= 2;
+    },
+  ), 'bob quit completes its DM subscription close before later client input';
 
   _write_client_line($carol, 'PART #overnet :done');
   is _read_client_line($carol, 1_000), ':carol PART #overnet :done',
@@ -811,10 +1073,18 @@ subtest 'IRC server program accepts clients, emits Overnet output, and fans chan
   );
 
   my $transcript = $host->transcript;
-  is _method_count($transcript, 'from_program', 'request', 'subscriptions.open'), 1,
-    'program opens one shared subscription for the channel';
-  is _method_count($transcript, 'from_program', 'request', 'subscriptions.close'), 1,
-    'program closes one subscription when the channel becomes empty';
+  is _request_count_matching(
+    $transcript,
+    'from_program',
+    'subscriptions.open',
+    sub { (($_[0]{subscription_id} || '') =~ /\Achannel:/) ? 1 : 0 },
+  ), 1, 'program opens one shared channel subscription';
+  is _request_count_matching(
+    $transcript,
+    'from_program',
+    'subscriptions.close',
+    sub { (($_[0]{subscription_id} || '') =~ /\Achannel:/) ? 1 : 0 },
+  ), 1, 'program closes one shared channel subscription when the channel becomes empty';
   ok _method_count($transcript, 'to_program', 'notification', 'runtime.subscription_event') >= 6,
     'runtime delivers subscription events back to the program';
   ok _method_count($transcript, 'from_program', 'request', 'adapters.map_input') >= 9,
@@ -832,6 +1102,209 @@ subtest 'IRC server program accepts clients, emits Overnet output, and fans chan
   close $alice->{socket};
   close $bob->{socket};
   close $carol->{socket};
+};
+
+subtest 'IRC server program routes direct messages through directional chat.dm objects' => sub {
+  my $dm_privmsg = _load_irc_fixture('valid-dm-privmsg.json');
+  my $dm_notice = _load_irc_fixture('valid-dm-notice.json');
+  my $network = $dm_privmsg->{input}{network};
+  my $bob_dm_object_id = 'irc:' . $network . ':dm:bob';
+  my $alice_dm_object_id = 'irc:' . $network . ':dm:alice';
+
+  my $tmpdir = tempdir(CLEANUP => 1);
+  my $key_path = File::Spec->catfile($tmpdir, 'irc-server-test-key.pem');
+  my $key = Net::Nostr::Key->new;
+  $key->save_privkey($key_path);
+
+  my $runtime = Overnet::Program::Runtime->new(
+    config => {
+      adapter_id       => 'irc.real',
+      network          => $network,
+      listen_host      => '127.0.0.1',
+      listen_port      => 0,
+      server_name      => 'overnet.irc.local',
+      signing_key_file => $key_path,
+      adapter_config   => {},
+    },
+  );
+  ok $runtime->register_adapter_definition(
+    adapter_id => 'irc.real',
+    definition => {
+      kind             => 'class',
+      class            => 'Overnet::Adapter::IRC',
+      lib_dirs         => [$irc_lib],
+      constructor_args => {},
+    },
+  ), 'runtime can register the real IRC adapter for direct-message coverage';
+
+  my $host = Overnet::Program::Host->new(
+    command     => [$^X, $program_path],
+    runtime     => $runtime,
+    program_id  => 'overnet.program.irc_server',
+    permissions => [
+      'adapters.use',
+      'subscriptions.read',
+      'overnet.emit_event',
+      'overnet.emit_state',
+      'overnet.emit_capabilities',
+    ],
+    services => {
+      'adapters.open_session'      => {},
+      'adapters.map_input'         => {},
+      'adapters.close_session'     => {},
+      'subscriptions.open'         => {},
+      'subscriptions.close'        => {},
+      'overnet.emit_event'         => {},
+      'overnet.emit_state'         => {},
+      'overnet.emit_capabilities'  => {},
+    },
+    startup_timeout_ms  => 1_000,
+    shutdown_timeout_ms => 1_000,
+  );
+
+  $host->start;
+  is $host->state, 'ready', 'direct-message server reaches ready state';
+
+  my $ready_details = _wait_for_ready_details($host);
+  ok $ready_details, 'direct-message server publishes ready health details';
+  ok defined $ready_details->{listen_port} && $ready_details->{listen_port} > 0,
+    'direct-message server exposes the bound listen port';
+
+  my $alice = _connect_irc_client($ready_details->{listen_port});
+  my $bob = _connect_irc_client($ready_details->{listen_port});
+
+  _write_client_line($alice, 'NICK alice');
+  _write_client_line($alice, 'USER alice 0 * :Alice Example');
+  is _read_client_line($alice, 1_000), ':overnet.irc.local 001 alice :Welcome to Overnet IRC',
+    'alice registers for direct-message coverage';
+  ok _wait_for_dm_subscription_count($host, 1),
+    'alice DM subscription opens after registration';
+
+  _write_client_line($bob, 'NICK bob');
+  _write_client_line($bob, 'USER bob 0 * :Bob Example');
+  is _read_client_line($bob, 1_000), ':overnet.irc.local 001 bob :Welcome to Overnet IRC',
+    'bob registers for direct-message coverage';
+  ok _wait_for_dm_subscription_count($host, 2),
+    'program opens one DM subscription per registered nick';
+
+  my $dm_message_window = {
+    min => int(time()) - 1,
+    max => int(time()) + 5,
+  };
+  _write_client_line($alice, 'PRIVMSG bob :hello in private');
+  ok $host->pump_until(
+    timeout_ms => 1_000,
+    condition  => sub {
+      defined _find_emitted_item(
+        $_[0]->runtime->emitted_items,
+        item_type   => 'event',
+        overnet_et  => 'chat.dm_message',
+        overnet_ot  => 'chat.dm',
+        overnet_oid => $bob_dm_object_id,
+      );
+    },
+  ), 'alice direct-message PRIVMSG is emitted through the runtime';
+  $host->pump(timeout_ms => 100);
+  is _read_client_line($bob, 1_000), ':alice PRIVMSG bob :hello in private',
+    'bob receives the direct-message PRIVMSG fanout';
+  is _read_client_line_optional($alice, 200), undef,
+    'sender does not receive a synthetic DM echo';
+
+  my $dm_notice_window = {
+    min => int(time()) - 1,
+    max => int(time()) + 5,
+  };
+  _write_client_line($bob, 'NOTICE alice :private notice');
+  ok $host->pump_until(
+    timeout_ms => 1_000,
+    condition  => sub {
+      defined _find_emitted_item(
+        $_[0]->runtime->emitted_items,
+        item_type   => 'event',
+        overnet_et  => 'chat.dm_notice',
+        overnet_ot  => 'chat.dm',
+        overnet_oid => $alice_dm_object_id,
+      );
+    },
+  ), 'bob direct-message NOTICE is emitted through the runtime';
+  $host->pump(timeout_ms => 100);
+  is _read_client_line($alice, 1_000), ':bob NOTICE alice :private notice',
+    'alice receives the direct-message NOTICE fanout';
+  is _read_client_line_optional($bob, 200), undef,
+    'NOTICE sender does not receive a synthetic DM echo';
+
+  my $dm_message_item = _find_emitted_item(
+    $runtime->emitted_items,
+    item_type   => 'event',
+    overnet_et  => 'chat.dm_message',
+    overnet_ot  => 'chat.dm',
+    overnet_oid => $bob_dm_object_id,
+  );
+  ok $dm_message_item, 'runtime recorded the direct-message PRIVMSG event';
+  my $dm_message_expected = {
+    %{$dm_privmsg->{expected}{event}},
+    tags => [
+      ['overnet_v',  '0.1.0'],
+      ['overnet_et', 'chat.dm_message'],
+      ['overnet_ot', 'chat.dm'],
+      ['overnet_oid', $bob_dm_object_id],
+    ],
+  };
+  my $dm_message_content = decode_json($dm_privmsg->{expected}{event}{content});
+  $dm_message_content->{provenance}{origin} = $network . '/bob';
+  $dm_message_content->{provenance}{external_identity} = 'alice';
+  $dm_message_content->{body}{text} = 'hello in private';
+  _assert_signed_emitted_matches_fixture(
+    $dm_message_item,
+    $dm_message_expected,
+    $key,
+    'mapped direct-message PRIVMSG event',
+    $dm_message_window,
+    $dm_message_content,
+  );
+
+  my $dm_notice_item = _find_emitted_item(
+    $runtime->emitted_items,
+    item_type   => 'event',
+    overnet_et  => 'chat.dm_notice',
+    overnet_ot  => 'chat.dm',
+    overnet_oid => $alice_dm_object_id,
+  );
+  ok $dm_notice_item, 'runtime recorded the direct-message NOTICE event';
+  my $dm_notice_expected = {
+    %{$dm_notice->{expected}{event}},
+    tags => [
+      ['overnet_v',  '0.1.0'],
+      ['overnet_et', 'chat.dm_notice'],
+      ['overnet_ot', 'chat.dm'],
+      ['overnet_oid', $alice_dm_object_id],
+    ],
+  };
+  my $dm_notice_content = decode_json($dm_notice->{expected}{event}{content});
+  $dm_notice_content->{provenance}{origin} = $network . '/alice';
+  $dm_notice_content->{provenance}{external_identity} = 'bob';
+  $dm_notice_content->{body}{text} = 'private notice';
+  _assert_signed_emitted_matches_fixture(
+    $dm_notice_item,
+    $dm_notice_expected,
+    $key,
+    'mapped direct-message NOTICE event',
+    $dm_notice_window,
+    $dm_notice_content,
+  );
+
+  my $shutdown = $host->request_shutdown(reason => 'direct message test complete');
+  is $shutdown->{state}, 'shutdown_complete', 'direct-message server handles runtime shutdown';
+  is $shutdown->{exit_code}, 0, 'direct-message server exits cleanly';
+  is _request_count_matching(
+    $host->transcript,
+    'from_program',
+    'subscriptions.open',
+    sub { (($_[0]{subscription_id} || '') =~ /\Adm:/) ? 1 : 0 },
+  ), 2, 'program opens exactly two DM subscriptions for the two registered clients';
+
+  close $alice->{socket};
+  close $bob->{socket};
 };
 
 subtest 'IRC server program accepts TLS clients using the baseline tls config shape' => sub {
@@ -924,6 +1397,8 @@ subtest 'IRC server program accepts TLS clients using the baseline tls config sh
   _write_client_line($client, 'USER alice 0 * :Alice TLS');
   is _read_client_line($client, 1_000), ':overnet.irc.local 001 alice :Welcome to Overnet IRC',
     'TLS client receives numeric 001 after registration';
+  ok _wait_for_dm_subscription_count($host, 1),
+    'TLS client registration completes its DM subscription open';
 
   _write_client_line($client, 'JOIN #overnet');
   ok $host->pump_until(
@@ -978,8 +1453,12 @@ subtest 'IRC server program accepts TLS clients using the baseline tls config sh
   cmp_ok $message_item->{data}{created_at}, '>=', $time_window->{min}, 'TLS message created_at is recent';
   cmp_ok $message_item->{data}{created_at}, '<=', $time_window->{max}, 'TLS message created_at stays within the test window';
 
-  is _method_count($host->transcript, 'from_program', 'request', 'subscriptions.open'), 1,
-    'TLS server opens one runtime subscription for the joined channel';
+  is _request_count_matching(
+    $host->transcript,
+    'from_program',
+    'subscriptions.open',
+    sub { (($_[0]{subscription_id} || '') =~ /\Achannel:/) ? 1 : 0 },
+  ), 1, 'TLS server opens one shared channel subscription';
 
   my $shutdown = $host->request_shutdown(reason => 'tls test complete');
   is $shutdown->{state}, 'shutdown_complete', 'TLS server handles runtime shutdown';
