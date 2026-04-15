@@ -35,12 +35,35 @@ sub matches {
   my ($self, %args) = @_;
   my $item_type = $args{item_type};
   my $event = $args{event};
+  my $data = $args{data};
   my $query = $self->{query};
 
   return 0 unless defined $item_type && !ref($item_type);
-  return 0 if $item_type ne 'event' && $item_type ne 'state' && keys %{$query};
+  return 0 if $item_type ne 'event'
+    && $item_type ne 'state'
+    && $item_type ne 'private_message'
+    && keys %{$query};
 
   return 1 unless keys %{$query};
+
+  if ($item_type eq 'private_message') {
+    return 0 unless ref($data) eq 'HASH';
+
+    if (exists $query->{kind}) {
+      my $kind = ref($data->{transport}) eq 'HASH' ? $data->{transport}{kind} : undef;
+      return 0 unless defined $kind && !ref($kind) && $kind == $query->{kind};
+    }
+
+    return 0 if exists $query->{overnet_et}
+      && (($data->{private_type} || '') ne $query->{overnet_et});
+    return 0 if exists $query->{overnet_ot}
+      && (($data->{object_type} || '') ne $query->{overnet_ot});
+    return 0 if exists $query->{overnet_oid}
+      && (($data->{object_id} || '') ne $query->{overnet_oid});
+
+    return 1;
+  }
+
   return 0 unless defined $event && ref($event) && $event->isa('Net::Nostr::Event');
 
   if (exists $query->{kind} && $event->kind != $query->{kind}) {

@@ -26,6 +26,7 @@ my %SERVICE_METHODS = map { $_ => 1 } qw(
   adapters.close_session
   overnet.emit_event
   overnet.emit_state
+  overnet.emit_private_message
   overnet.emit_capabilities
 );
 
@@ -387,6 +388,17 @@ sub emit_state {
   );
 }
 
+sub emit_private_message {
+  my ($self, %args) = @_;
+  _require_present_param('message', \%args);
+  my $message = _require_object_param('message', $args{message});
+
+  return $self->{runtime}->accept_emitted_private_message(
+    method    => 'overnet.emit_private_message',
+    candidate => $message,
+  );
+}
+
 sub emit_capabilities {
   my ($self, %args) = @_;
   _require_present_param('capabilities', \%args);
@@ -441,6 +453,7 @@ sub dispatch_request {
     'adapters.close_session' => sub { $self->close_adapter_session(%{$params}) },
     'overnet.emit_event'     => sub { $self->emit_event(%{$params}) },
     'overnet.emit_state'     => sub { $self->emit_state(%{$params}) },
+    'overnet.emit_private_message' => sub { $self->emit_private_message(%{$params}) },
     'overnet.emit_capabilities' => sub { $self->emit_capabilities(%{$params}) },
   );
 

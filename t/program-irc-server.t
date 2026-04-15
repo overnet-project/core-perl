@@ -241,10 +241,16 @@ sub _find_emitted_item {
     next if defined $args{item_type} && ($item->{item_type} || '') ne $args{item_type};
     next unless ref($item->{data}) eq 'HASH';
 
-    my %tags = _first_tag_values($item->{data}{tags});
-    next if defined $args{overnet_et} && ($tags{overnet_et} || '') ne $args{overnet_et};
-    next if defined $args{overnet_ot} && ($tags{overnet_ot} || '') ne $args{overnet_ot};
-    next if defined $args{overnet_oid} && ($tags{overnet_oid} || '') ne $args{overnet_oid};
+    if (ref($item->{data}{tags}) eq 'ARRAY') {
+      my %tags = _first_tag_values($item->{data}{tags});
+      next if defined $args{overnet_et} && ($tags{overnet_et} || '') ne $args{overnet_et};
+      next if defined $args{overnet_ot} && ($tags{overnet_ot} || '') ne $args{overnet_ot};
+      next if defined $args{overnet_oid} && ($tags{overnet_oid} || '') ne $args{overnet_oid};
+    } else {
+      next if defined $args{overnet_et} && (($item->{data}{private_type} || '') ne $args{overnet_et});
+      next if defined $args{overnet_ot} && (($item->{data}{object_type} || '') ne $args{overnet_ot});
+      next if defined $args{overnet_oid} && (($item->{data}{object_id} || '') ne $args{overnet_oid});
+    }
 
     return $item;
   }
@@ -260,10 +266,16 @@ sub _count_emitted_items {
     next if defined $args{item_type} && ($item->{item_type} || '') ne $args{item_type};
     next unless ref($item->{data}) eq 'HASH';
 
-    my %tags = _first_tag_values($item->{data}{tags});
-    next if defined $args{overnet_et} && ($tags{overnet_et} || '') ne $args{overnet_et};
-    next if defined $args{overnet_ot} && ($tags{overnet_ot} || '') ne $args{overnet_ot};
-    next if defined $args{overnet_oid} && ($tags{overnet_oid} || '') ne $args{overnet_oid};
+    if (ref($item->{data}{tags}) eq 'ARRAY') {
+      my %tags = _first_tag_values($item->{data}{tags});
+      next if defined $args{overnet_et} && ($tags{overnet_et} || '') ne $args{overnet_et};
+      next if defined $args{overnet_ot} && ($tags{overnet_ot} || '') ne $args{overnet_ot};
+      next if defined $args{overnet_oid} && ($tags{overnet_oid} || '') ne $args{overnet_oid};
+    } else {
+      next if defined $args{overnet_et} && (($item->{data}{private_type} || '') ne $args{overnet_et});
+      next if defined $args{overnet_ot} && (($item->{data}{object_type} || '') ne $args{overnet_ot});
+      next if defined $args{overnet_oid} && (($item->{data}{object_id} || '') ne $args{overnet_oid});
+    }
 
     $count++;
   }
@@ -290,6 +302,36 @@ sub _assert_signed_emitted_matches_fixture {
 
   my $event = Net::Nostr::Event->from_wire($data);
   ok eval { $event->validate; 1 }, "$label validates as a signed Nostr event";
+}
+
+sub _assert_private_message_emitted_matches_fixture {
+  my ($item, %args) = @_;
+  my $label = $args{label} || 'private message';
+  my $expected_content = $args{content};
+  my $expected_type = $args{private_type};
+  my $expected_object_id = $args{object_id};
+
+  my $data = $item->{data};
+  is $data->{private_type}, $expected_type, "$label keeps the logical private type";
+  is $data->{object_type}, 'chat.dm', "$label keeps the logical object type";
+  is $data->{object_id}, $expected_object_id, "$label keeps the logical object id";
+
+  is $data->{transport}{kind}, 1059, "$label uses a kind 1059 gift wrap transport";
+  like $data->{transport}{id}, qr/\A[0-9a-f]{64}\z/, "$label has a visible wrap id";
+  like $data->{transport}{sig}, qr/\A[0-9a-f]{128}\z/, "$label has a visible wrap signature";
+  my $wrap = Net::Nostr::Event->from_wire($data->{transport});
+  ok eval { $wrap->validate; 1 }, "$label validates as a signed gift wrap";
+
+  is $data->{decrypted_rumor}{kind}, 14, "$label uses a kind 14 rumor";
+  like $data->{decrypted_rumor}{id}, qr/\A[0-9a-f]{64}\z/, "$label has a rumor id";
+  is_deeply $data->{decrypted_rumor}{content}, $expected_content,
+    "$label decrypted rumor content matches the expected logical payload";
+
+  my @recipient_tags = grep {
+    ref($_) eq 'ARRAY' && @{$_} >= 2 && $_->[0] eq 'p'
+  } @{$data->{decrypted_rumor}{tags} || []};
+  is scalar @recipient_tags, 1, "$label rumor has exactly one recipient tag";
+  like $recipient_tags[0][1], qr/\A[0-9a-f]{64}\z/, "$label rumor recipient tag contains a hex pubkey";
 }
 
 subtest 'IRC server program enforces nick uniqueness and emits 433 for collisions' => sub {
@@ -331,6 +373,7 @@ subtest 'IRC server program enforces nick uniqueness and emits 433 for collision
       'subscriptions.read',
       'overnet.emit_event',
       'overnet.emit_state',
+      'overnet.emit_private_message',
       'overnet.emit_capabilities',
     ],
     services => {
@@ -341,6 +384,7 @@ subtest 'IRC server program enforces nick uniqueness and emits 433 for collision
       'subscriptions.close'        => {},
       'overnet.emit_event'         => {},
       'overnet.emit_state'         => {},
+      'overnet.emit_private_message' => {},
       'overnet.emit_capabilities'  => {},
     },
     startup_timeout_ms  => 1_000,
@@ -512,6 +556,7 @@ subtest 'IRC server program supports a minimal IRC client compatibility slice' =
       'subscriptions.read',
       'overnet.emit_event',
       'overnet.emit_state',
+      'overnet.emit_private_message',
       'overnet.emit_capabilities',
     ],
     services => {
@@ -522,6 +567,7 @@ subtest 'IRC server program supports a minimal IRC client compatibility slice' =
       'subscriptions.close'        => {},
       'overnet.emit_event'         => {},
       'overnet.emit_state'         => {},
+      'overnet.emit_private_message' => {},
       'overnet.emit_capabilities'  => {},
     },
     startup_timeout_ms  => 1_000,
@@ -824,6 +870,7 @@ subtest 'IRC server program accepts clients, emits Overnet output, and fans chan
       'subscriptions.read',
       'overnet.emit_event',
       'overnet.emit_state',
+      'overnet.emit_private_message',
       'overnet.emit_capabilities',
     ],
     services => {
@@ -834,6 +881,7 @@ subtest 'IRC server program accepts clients, emits Overnet output, and fans chan
       'subscriptions.close'        => {},
       'overnet.emit_event'         => {},
       'overnet.emit_state'         => {},
+      'overnet.emit_private_message' => {},
       'overnet.emit_capabilities'  => {},
     },
     startup_timeout_ms  => 1_000,
@@ -1302,6 +1350,7 @@ subtest 'IRC server program routes direct messages through directional chat.dm o
       'subscriptions.read',
       'overnet.emit_event',
       'overnet.emit_state',
+      'overnet.emit_private_message',
       'overnet.emit_capabilities',
     ],
     services => {
@@ -1312,6 +1361,7 @@ subtest 'IRC server program routes direct messages through directional chat.dm o
       'subscriptions.close'        => {},
       'overnet.emit_event'         => {},
       'overnet.emit_state'         => {},
+      'overnet.emit_private_message' => {},
       'overnet.emit_capabilities'  => {},
     },
     startup_timeout_ms  => 1_000,
@@ -1359,13 +1409,13 @@ subtest 'IRC server program routes direct messages through directional chat.dm o
     condition  => sub {
       defined _find_emitted_item(
         $_[0]->runtime->emitted_items,
-        item_type   => 'event',
+        item_type   => 'private_message',
         overnet_et  => 'chat.dm_message',
         overnet_ot  => 'chat.dm',
         overnet_oid => $bob_dm_object_id,
       );
     },
-  ), 'alice direct-message PRIVMSG is emitted through the runtime';
+  ), 'alice direct-message PRIVMSG is emitted as an encrypted private message';
   $host->pump(timeout_ms => 100);
   is _read_client_line($bob, 1_000), ':alice PRIVMSG bob :hello in private',
     'bob receives the direct-message PRIVMSG fanout';
@@ -1382,13 +1432,13 @@ subtest 'IRC server program routes direct messages through directional chat.dm o
     condition  => sub {
       defined _find_emitted_item(
         $_[0]->runtime->emitted_items,
-        item_type   => 'event',
+        item_type   => 'private_message',
         overnet_et  => 'chat.dm_notice',
         overnet_ot  => 'chat.dm',
         overnet_oid => $alice_dm_object_id,
       );
     },
-  ), 'bob direct-message NOTICE is emitted through the runtime';
+  ), 'bob direct-message NOTICE is emitted as an encrypted private message';
   $host->pump(timeout_ms => 100);
   is _read_client_line($alice, 1_000), ':bob NOTICE alice :private notice',
     'alice receives the direct-message NOTICE fanout';
@@ -1397,62 +1447,56 @@ subtest 'IRC server program routes direct messages through directional chat.dm o
 
   my $dm_message_item = _find_emitted_item(
     $runtime->emitted_items,
-    item_type   => 'event',
+    item_type   => 'private_message',
     overnet_et  => 'chat.dm_message',
     overnet_ot  => 'chat.dm',
     overnet_oid => $bob_dm_object_id,
   );
-  ok $dm_message_item, 'runtime recorded the direct-message PRIVMSG event';
-  my $dm_message_expected = {
-    %{$dm_privmsg->{expected}{event}},
-    tags => [
-      ['overnet_v',  '0.1.0'],
-      ['overnet_et', 'chat.dm_message'],
-      ['overnet_ot', 'chat.dm'],
-      ['overnet_oid', $bob_dm_object_id],
-    ],
-  };
+  ok $dm_message_item, 'runtime recorded the direct-message PRIVMSG private message';
   my $dm_message_content = decode_json($dm_privmsg->{expected}{event}{content});
   $dm_message_content->{provenance}{origin} = $network . '/bob';
   $dm_message_content->{provenance}{external_identity} = 'alice';
   $dm_message_content->{body}{text} = 'hello in private';
-  _assert_signed_emitted_matches_fixture(
+  _assert_private_message_emitted_matches_fixture(
     $dm_message_item,
-    $dm_message_expected,
-    $key,
-    'mapped direct-message PRIVMSG event',
-    $dm_message_window,
-    $dm_message_content,
+    label        => 'mapped direct-message PRIVMSG',
+    private_type => 'chat.dm_message',
+    object_id    => $bob_dm_object_id,
+    content      => {
+      overnet_v    => '0.1.0',
+      private_type => 'chat.dm_message',
+      object_type  => 'chat.dm',
+      object_id    => $bob_dm_object_id,
+      provenance   => $dm_message_content->{provenance},
+      body         => $dm_message_content->{body},
+    },
   );
 
   my $dm_notice_item = _find_emitted_item(
     $runtime->emitted_items,
-    item_type   => 'event',
+    item_type   => 'private_message',
     overnet_et  => 'chat.dm_notice',
     overnet_ot  => 'chat.dm',
     overnet_oid => $alice_dm_object_id,
   );
-  ok $dm_notice_item, 'runtime recorded the direct-message NOTICE event';
-  my $dm_notice_expected = {
-    %{$dm_notice->{expected}{event}},
-    tags => [
-      ['overnet_v',  '0.1.0'],
-      ['overnet_et', 'chat.dm_notice'],
-      ['overnet_ot', 'chat.dm'],
-      ['overnet_oid', $alice_dm_object_id],
-    ],
-  };
+  ok $dm_notice_item, 'runtime recorded the direct-message NOTICE private message';
   my $dm_notice_content = decode_json($dm_notice->{expected}{event}{content});
   $dm_notice_content->{provenance}{origin} = $network . '/alice';
   $dm_notice_content->{provenance}{external_identity} = 'bob';
   $dm_notice_content->{body}{text} = 'private notice';
-  _assert_signed_emitted_matches_fixture(
+  _assert_private_message_emitted_matches_fixture(
     $dm_notice_item,
-    $dm_notice_expected,
-    $key,
-    'mapped direct-message NOTICE event',
-    $dm_notice_window,
-    $dm_notice_content,
+    label        => 'mapped direct-message NOTICE',
+    private_type => 'chat.dm_notice',
+    object_id    => $alice_dm_object_id,
+    content      => {
+      overnet_v    => '0.1.0',
+      private_type => 'chat.dm_notice',
+      object_type  => 'chat.dm',
+      object_id    => $alice_dm_object_id,
+      provenance   => $dm_notice_content->{provenance},
+      body         => $dm_notice_content->{body},
+    },
   );
 
   my $shutdown = $host->request_shutdown(reason => 'direct message test complete');
@@ -1529,6 +1573,7 @@ subtest 'IRC server program accepts TLS clients using the baseline tls config sh
       'subscriptions.read',
       'overnet.emit_event',
       'overnet.emit_state',
+      'overnet.emit_private_message',
       'overnet.emit_capabilities',
     ],
     services => {
@@ -1539,6 +1584,7 @@ subtest 'IRC server program accepts TLS clients using the baseline tls config sh
       'subscriptions.close'        => {},
       'overnet.emit_event'         => {},
       'overnet.emit_state'         => {},
+      'overnet.emit_private_message' => {},
       'overnet.emit_capabilities'  => {},
     },
     startup_timeout_ms  => 1_000,

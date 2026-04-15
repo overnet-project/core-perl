@@ -5,6 +5,7 @@ use warnings;
 use JSON::PP ();
 use Net::Nostr::Event;
 use Time::HiRes qw(time);
+use Overnet::Core::PrivateMessaging ();
 use Overnet::Core::Validator ();
 use Overnet::Program::AdapterRegistry;
 use Overnet::Program::AdapterSession;
@@ -117,12 +118,13 @@ sub emitted_items { [ @{$_[0]->{emitted_items} || []} ] }
 sub emitted_stream_name {
   my ($self, $item_type) = @_;
 
-  die "item_type must be event, state, or capability\n"
+  die "item_type must be event, state, private_message, or capability\n"
     unless defined $item_type
       && !ref($item_type)
       && (
         $item_type eq 'event'
         || $item_type eq 'state'
+        || $item_type eq 'private_message'
         || $item_type eq 'capability'
       );
 
@@ -499,6 +501,60 @@ sub drain_runtime_notifications {
   return _clone_json($notifications);
 }
 
+sub accept_emitted_private_message {
+  my ($self, %args) = @_;
+
+  my $method = $args{method};
+  my $candidate = $args{candidate};
+
+  die "method is required\n"
+    unless defined $method && !ref($method) && length($method);
+  die "candidate must be an object\n"
+    unless ref($candidate) eq 'HASH';
+
+  my $validation = Overnet::Core::PrivateMessaging::validate_transport($candidate);
+  my @errors = @{$validation->{errors} || []};
+
+  if (@errors || !$validation->{valid}) {
+    die {
+      code    => 'runtime.validation_failed',
+      message => 'Candidate private message failed validation',
+      details => {
+        method    => $method,
+        item_type => 'private_message',
+        errors    => \@errors,
+      },
+    };
+  }
+
+  my $payload = $validation->{decrypted_rumor}{content};
+  my $visible_transport = _clone_json($candidate->{transport});
+  delete $visible_transport->{decrypted_rumor}
+    if ref($visible_transport) eq 'HASH';
+  my $stored = {
+    transport       => $visible_transport,
+    decrypted_rumor => _clone_json($validation->{decrypted_rumor}),
+    private_type    => $payload->{private_type},
+    object_type     => $payload->{object_type},
+    object_id       => $payload->{object_id},
+  };
+
+  $self->_record_emitted_item(
+    item_type => 'private_message',
+    data      => $stored,
+  );
+
+  my $result = {
+    accepted => JSON::PP::true,
+  };
+  $result->{event_id} = $stored->{transport}{id}
+    if defined $stored->{transport}{id};
+  $result->{rumor_id} = $stored->{decrypted_rumor}{id}
+    if defined $stored->{decrypted_rumor}{id};
+
+  return $result;
+}
+
 sub accept_emitted_item {
   my ($self, %args) = @_;
 
@@ -657,6 +713,7 @@ sub _queue_subscription_notification_if_match {
   return 0 unless $subscription->matches(
     item_type => $item_type,
     event     => $event,
+    data      => $data,
   );
 
   push @{$self->{runtime_notifications}{$session_id} ||= []}, {

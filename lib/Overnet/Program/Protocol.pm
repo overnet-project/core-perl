@@ -42,6 +42,7 @@ my %SERVICE_REQUEST_METHODS = map { $_ => 1 } qw(
   adapters.close_session
   overnet.emit_event
   overnet.emit_state
+  overnet.emit_private_message
   overnet.emit_capabilities
 );
 my %BASELINE_NOTIFICATION_METHODS = (

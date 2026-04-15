@@ -25,6 +25,7 @@ my %METHOD_PERMISSIONS = (
   'adapters.close_session' => 'adapters.use',
   'overnet.emit_event'      => 'overnet.emit_event',
   'overnet.emit_state'      => 'overnet.emit_state',
+  'overnet.emit_private_message' => 'overnet.emit_private_message',
   'overnet.emit_capabilities' => 'overnet.emit_capabilities',
 );
 
