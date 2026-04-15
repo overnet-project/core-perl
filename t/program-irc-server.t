@@ -2950,6 +2950,309 @@ subtest 'IRC server program rejects non-member JOIN on a closed authoritative ch
   close $bob->{socket};
 };
 
+subtest 'IRC server program admits an invited user to a closed authoritative channel' => sub {
+  my $network = 'irc.authority.invite.test';
+  my $channel = '#ops';
+  my $group_host = 'groups.example.test';
+  my $group_id = 'ops';
+  my $server_name = 'overnet.irc.local';
+  my $alice_key = Net::Nostr::Key->new;
+  my $bob_key   = Net::Nostr::Key->new;
+  my $carol_key = Net::Nostr::Key->new;
+  my $alice_pubkey = $alice_key->pubkey_hex;
+  my $bob_pubkey   = $bob_key->pubkey_hex;
+  my $carol_pubkey = $carol_key->pubkey_hex;
+  my $authority_stream = _authoritative_nip29_stream_name(
+    network    => $network,
+    group_host => $group_host,
+    group_id   => $group_id,
+  );
+
+  my $tmpdir = tempdir(CLEANUP => 1);
+  my $key_path = File::Spec->catfile($tmpdir, 'irc-server-authority-invite-test-key.pem');
+  my $key = Net::Nostr::Key->new;
+  $key->save_privkey($key_path);
+
+  my $runtime = Overnet::Program::Runtime->new(
+    config => {
+      adapter_id       => 'irc.authoritative.invite',
+      network          => $network,
+      listen_host      => '127.0.0.1',
+      listen_port      => 0,
+      server_name      => $server_name,
+      signing_key_file => $key_path,
+      adapter_config   => {
+        network           => $network,
+        authority_profile => 'nip29',
+        group_host        => $group_host,
+        channel_groups    => {
+          $channel => $group_id,
+        },
+      },
+    },
+  );
+  ok $runtime->register_adapter_definition(
+    adapter_id => 'irc.authoritative.invite',
+    definition => {
+      kind             => 'class',
+      class            => 'Overnet::Adapter::IRC',
+      lib_dirs         => [$irc_lib],
+      constructor_args => {},
+    },
+  ), 'runtime can register the real authoritative IRC adapter for invite coverage';
+
+  my @seed_events = (
+    Net::Nostr::Group->metadata(
+      pubkey     => 'f' x 64,
+      group_id   => $group_id,
+      created_at => 1_744_301_030,
+      closed     => 1,
+    )->to_hash,
+    Net::Nostr::Group->admins(
+      pubkey     => 'f' x 64,
+      group_id   => $group_id,
+      created_at => 1_744_301_031,
+      members    => [
+        {
+          pubkey => $alice_pubkey,
+          roles  => ['irc.operator'],
+        },
+      ],
+    )->to_hash,
+    Net::Nostr::Group->members(
+      pubkey     => 'f' x 64,
+      group_id   => $group_id,
+      created_at => 1_744_301_032,
+      members    => [
+        $alice_pubkey,
+      ],
+    )->to_hash,
+    Net::Nostr::Group->roles(
+      pubkey     => 'f' x 64,
+      group_id   => $group_id,
+      created_at => 1_744_301_033,
+      roles      => [
+        { name => 'irc.operator' },
+        { name => 'irc.voice' },
+      ],
+    )->to_hash,
+  );
+
+  for my $event (@seed_events) {
+    my $append = $runtime->append_event(
+      stream => $authority_stream,
+      event  => $event,
+    );
+    ok defined $append->{offset}, 'runtime stores seeded invite authoritative NIP-29 event';
+  }
+
+  my $host = Overnet::Program::Host->new(
+    command     => [$^X, $program_path],
+    runtime     => $runtime,
+    program_id  => 'overnet.program.irc_server',
+    permissions => [
+      'adapters.use',
+      'events.append',
+      'events.read',
+      'subscriptions.read',
+      'overnet.emit_event',
+      'overnet.emit_state',
+      'overnet.emit_private_message',
+      'overnet.emit_capabilities',
+    ],
+    services => {
+      'adapters.open_session'        => {},
+      'adapters.map_input'           => {},
+      'adapters.derive'              => {},
+      'adapters.close_session'       => {},
+      'events.append'                => {},
+      'events.read'                  => {},
+      'subscriptions.open'           => {},
+      'subscriptions.close'          => {},
+      'overnet.emit_event'           => {},
+      'overnet.emit_state'           => {},
+      'overnet.emit_private_message' => {},
+      'overnet.emit_capabilities'    => {},
+    },
+    startup_timeout_ms  => 1_000,
+    shutdown_timeout_ms => 1_000,
+  );
+
+  $host->start;
+  is $host->state, 'ready', 'invite authoritative server reaches ready state';
+
+  my $ready_details = _wait_for_ready_details($host);
+  ok $ready_details, 'invite authoritative server publishes ready health details';
+
+  my $alice = _connect_irc_client($ready_details->{listen_port});
+  my $bob   = _connect_irc_client($ready_details->{listen_port});
+  my $carol = _connect_irc_client($ready_details->{listen_port});
+
+  my $register_client = sub {
+    my (%args) = @_;
+    _write_client_line($args{client}, "NICK $args{nick}");
+    _write_client_line($args{client}, "USER $args{nick} 0 * :$args{realname}");
+    _assert_registration_prelude(
+      client  => $args{client},
+      nick    => $args{nick},
+      network => $network,
+    );
+  };
+
+  my $authenticate_client = sub {
+    my (%args) = @_;
+    _write_client_line($args{client}, 'OVERNETAUTH CHALLENGE');
+    my $challenge_line = _read_client_line($args{client}, 1_000);
+    like $challenge_line, qr/\A:\Q$server_name\E NOTICE \Q$args{nick}\E :OVERNETAUTH CHALLENGE [0-9a-f]{64}\z/,
+      "$args{nick} receives an authoritative auth challenge";
+    $challenge_line =~ /([0-9a-f]{64})\z/;
+    my $challenge = $1;
+    _write_client_line($args{client}, 'OVERNETAUTH AUTH ' . _build_authoritative_auth_payload(
+      key       => $args{key},
+      challenge => $challenge,
+      scope     => _authoritative_auth_scope(
+        server_name => $server_name,
+        network     => $network,
+      ),
+    ));
+    is _read_client_line($args{client}, 1_000), ":$server_name NOTICE $args{nick} :OVERNETAUTH AUTH $args{pubkey}",
+      "$args{nick} authenticates an authoritative pubkey";
+  };
+
+  $register_client->(
+    client   => $alice,
+    nick     => 'alice',
+    realname => 'Alice Example',
+  );
+  ok _wait_for_dm_subscription_count($host, 1),
+    'alice registration completes its DM subscription open on the invite authoritative server';
+
+  $register_client->(
+    client   => $bob,
+    nick     => 'bob',
+    realname => 'Bob Example',
+  );
+  ok _wait_for_dm_subscription_count($host, 2),
+    'bob registration completes its DM subscription open on the invite authoritative server';
+
+  $register_client->(
+    client   => $carol,
+    nick     => 'carol',
+    realname => 'Carol Example',
+  );
+  ok _wait_for_dm_subscription_count($host, 3),
+    'carol registration completes its DM subscription open on the invite authoritative server';
+
+  $authenticate_client->(
+    client => $alice,
+    nick   => 'alice',
+    key    => $alice_key,
+    pubkey => $alice_pubkey,
+  );
+  $authenticate_client->(
+    client => $bob,
+    nick   => 'bob',
+    key    => $bob_key,
+    pubkey => $bob_pubkey,
+  );
+  $authenticate_client->(
+    client => $carol,
+    nick   => 'carol',
+    key    => $carol_key,
+    pubkey => $carol_pubkey,
+  );
+
+  _write_client_line($alice, "JOIN $channel");
+  ok $host->pump(timeout_ms => 200) >= 0,
+    'invite authoritative host pumps alice join requests';
+  is _read_client_line($alice, 1_000), ":alice JOIN $channel",
+    'alice receives her JOIN echo on the invite authoritative server';
+  is _read_client_line($alice, 1_000), ":overnet.irc.local 353 alice = $channel :\@alice",
+    'invite authoritative JOIN bootstrap prefixes the operator nick from NIP-29 state';
+  is _read_client_line($alice, 1_000), ":overnet.irc.local 366 alice $channel :End of /NAMES list.",
+    'alice receives the end-of-names line on the invite authoritative server';
+
+  _write_client_line($bob, "JOIN $channel");
+  ok $host->pump(timeout_ms => 200) >= 0,
+    'invite authoritative host pumps bob pre-invite join rejection';
+  is _read_client_line($bob, 1_000), ":overnet.irc.local 473 bob $channel :Cannot join channel (+i)",
+    'closed authoritative channel rejects bob before invite';
+
+  _write_client_line($alice, "INVITE bob $channel");
+  ok $host->pump(timeout_ms => 200) >= 0,
+    'invite authoritative host pumps INVITE writes';
+  is _read_client_line($alice, 1_000), ":overnet.irc.local 341 alice bob $channel",
+    'operator receives the INVITE confirmation numeric';
+  is _read_client_line($bob, 1_000), ":alice INVITE bob :$channel",
+    'target receives the INVITE line';
+
+  my $invite_request = _last_request_matching(
+    $host->transcript,
+    'from_program',
+    'adapters.map_input',
+    sub {
+      ref($_[0]{input}) eq 'HASH'
+        && (($_[0]{input}{command} || '') eq 'INVITE')
+        && (($_[0]{input}{target} || '') eq $channel);
+    },
+  );
+  ok $invite_request, 'program routes authoritative INVITE through the adapter';
+  is $invite_request->{input}{actor_pubkey}, $alice_pubkey, 'authoritative INVITE includes actor_pubkey';
+  is $invite_request->{input}{target_pubkey}, $bob_pubkey, 'authoritative INVITE includes target_pubkey';
+  like $invite_request->{input}{invite_code}, qr/\A[0-9a-f]{64}\z/,
+    'authoritative INVITE generates a deterministic invite code';
+
+  _write_client_line($bob, "JOIN $channel");
+  ok $host->pump(timeout_ms => 200) >= 0,
+    'invite authoritative host pumps bob invited join';
+  is _read_client_line($alice, 1_000), ":bob JOIN $channel",
+    'alice sees the invited user join the closed authoritative channel';
+  is _read_client_line($bob, 1_000), ":bob JOIN $channel",
+    'bob receives his JOIN echo after invite';
+  is _read_client_line($bob, 1_000), ":overnet.irc.local 353 bob = $channel :\@alice bob",
+    'bob sees invited membership during JOIN bootstrap';
+  is _read_client_line($bob, 1_000), ":overnet.irc.local 366 bob $channel :End of /NAMES list.",
+    'bob receives the end-of-names line after invited JOIN';
+
+  my $join_request = _last_request_matching(
+    $host->transcript,
+    'from_program',
+    'adapters.map_input',
+    sub {
+      ref($_[0]{input}) eq 'HASH'
+        && (($_[0]{input}{command} || '') eq 'JOIN')
+        && (($_[0]{input}{target} || '') eq $channel)
+        && defined($_[0]{input}{invite_code});
+    },
+  );
+  ok $join_request, 'invited authoritative JOIN is routed through the adapter';
+  is $join_request->{input}{actor_pubkey}, $bob_pubkey, 'invited authoritative JOIN includes actor_pubkey';
+  is $join_request->{input}{invite_code}, $invite_request->{input}{invite_code},
+    'invited authoritative JOIN uses the stored invite code';
+
+  _write_client_line($carol, "JOIN $channel");
+  ok $host->pump(timeout_ms => 200) >= 0,
+    'invite authoritative host pumps carol uninvited join rejection';
+  is _read_client_line($carol, 1_000), ":overnet.irc.local 473 carol $channel :Cannot join channel (+i)",
+    'closed authoritative channel still rejects an uninvited authenticated client';
+
+  _write_client_line($alice, "NAMES $channel");
+  ok $host->pump(timeout_ms => 200) >= 0,
+    'invite authoritative host pumps post-invite NAMES';
+  is _read_client_line($alice, 1_000), ":overnet.irc.local 353 alice = $channel :\@alice bob",
+    'invited join updates authoritative NAMES output';
+  is _read_client_line($alice, 1_000), ":overnet.irc.local 366 alice $channel :End of /NAMES list.",
+    'alice receives the end-of-names line after invite-mediated join';
+
+  my $shutdown = $host->request_shutdown(reason => 'closed authoritative invite test complete');
+  is $shutdown->{state}, 'shutdown_complete', 'invite authoritative server handles runtime shutdown';
+  is $shutdown->{exit_code}, 0, 'invite authoritative server exits cleanly';
+
+  close $alice->{socket};
+  close $bob->{socket};
+  close $carol->{socket};
+};
+
 subtest 'IRC program entrypoints do not import Net::Nostr directly' => sub {
   my @paths = (
     File::Spec->catfile(
