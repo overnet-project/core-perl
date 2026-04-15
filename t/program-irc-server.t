@@ -575,6 +575,10 @@ subtest 'IRC server program supports a minimal IRC client compatibility slice' =
   is _read_client_line($alice, 1_000), ':overnet.irc.local 451 * :You have not registered',
     'pre-registration LUSERS returns 451';
 
+  _write_client_line($alice, 'LIST');
+  is _read_client_line($alice, 1_000), ':overnet.irc.local 451 * :You have not registered',
+    'pre-registration LIST returns 451';
+
   _write_client_line($alice, 'NICK');
   is _read_client_line($alice, 1_000), ':overnet.irc.local 431 * :No nickname given',
     'bare NICK returns 431';
@@ -757,6 +761,15 @@ subtest 'IRC server program supports a minimal IRC client compatibility slice' =
   _write_client_line($alice, 'TOPIC #oVERnEt');
   is _read_client_line($alice, 1_000), ':overnet.irc.local 332 Alice #OverNet :Compatibility topic',
     'TOPIC query returns 332 when a topic is known';
+
+  _write_client_line($alice, 'LIST');
+  is_deeply [
+    _read_client_lines($alice, 3, 1_000),
+  ], [
+    ':overnet.irc.local 321 Alice Channel :Users Name',
+    ':overnet.irc.local 322 Alice #OverNet 1 :Compatibility topic',
+    ':overnet.irc.local 323 Alice :End of /LIST',
+  ], 'LIST returns the current exposed channel state';
 
   my $shutdown = $host->request_shutdown(reason => 'compatibility test complete');
   is $shutdown->{state}, 'shutdown_complete', 'compatibility server handles runtime shutdown';
