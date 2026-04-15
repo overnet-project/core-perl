@@ -9,8 +9,10 @@ use IO::Select;
 use IO::Socket::INET;
 use IO::Socket::SSL qw(SSL_VERIFY_NONE);
 use IO::Socket::SSL::Utils qw(CERT_create PEM_cert2file PEM_key2file);
+use MIME::Base64 qw(decode_base64 encode_base64);
 use Time::HiRes qw(time);
 
+use Net::Nostr::DirectMessage;
 use Net::Nostr::Event;
 use Net::Nostr::Key;
 use Overnet::Program::Host;
@@ -234,6 +236,23 @@ sub _first_tag_values {
   return %values;
 }
 
+sub _extract_trailing_text {
+  my ($line) = @_;
+  return undef unless defined $line && !ref($line);
+  return undef unless $line =~ / :(.*)\z/;
+  return $1;
+}
+
+sub _decode_e2ee_transport_from_line {
+  my ($line) = @_;
+  my $body = _extract_trailing_text($line);
+  return undef unless defined $body;
+  return undef unless $body =~ /\A\+overnet-e2ee-v1\s+(.+)\z/;
+
+  my $decoded = decode_base64($1);
+  return decode_json($decoded);
+}
+
 sub _find_emitted_item {
   my ($items, %args) = @_;
 
@@ -332,6 +351,33 @@ sub _assert_private_message_emitted_matches_fixture {
   } @{$data->{decrypted_rumor}{tags} || []};
   is scalar @recipient_tags, 1, "$label rumor has exactly one recipient tag";
   like $recipient_tags[0][1], qr/\A[0-9a-f]{64}\z/, "$label rumor recipient tag contains a hex pubkey";
+}
+
+sub _assert_opaque_private_message_metadata {
+  my ($item, %args) = @_;
+  my $label = $args{label} || 'opaque private message';
+  my $expected_type = $args{private_type};
+  my $expected_object_id = $args{object_id};
+  my $expected_sender_identity = $args{sender_identity};
+
+  my $data = $item->{data};
+  is $data->{private_type}, $expected_type, "$label keeps the logical private type";
+  is $data->{object_type}, 'chat.dm', "$label keeps the logical object type";
+  is $data->{object_id}, $expected_object_id, "$label keeps the logical object id";
+  is $data->{sender_identity}, $expected_sender_identity, "$label keeps sender identity metadata";
+
+  ok !exists($data->{decrypted_rumor}), "$label does not expose decrypted_rumor";
+  is $data->{transport}{kind}, 1059, "$label uses a kind 1059 gift wrap transport";
+  like $data->{transport}{id}, qr/\A[0-9a-f]{64}\z/, "$label has a visible wrap id";
+  like $data->{transport}{sig}, qr/\A[0-9a-f]{128}\z/, "$label has a visible wrap signature";
+  my $wrap = Net::Nostr::Event->from_wire($data->{transport});
+  ok eval { $wrap->validate; 1 }, "$label validates as a signed gift wrap";
+
+  my @recipient_tags = grep {
+    ref($_) eq 'ARRAY' && @{$_} >= 2 && $_->[0] eq 'p'
+  } @{$data->{transport}{tags} || []};
+  is scalar @recipient_tags, 1, "$label visible transport has exactly one recipient tag";
+  like $recipient_tags[0][1], qr/\A[0-9a-f]{64}\z/, "$label visible recipient tag contains a hex pubkey";
 }
 
 subtest 'IRC server program enforces nick uniqueness and emits 433 for collisions' => sub {
@@ -586,8 +632,12 @@ subtest 'IRC server program supports a minimal IRC client compatibility slice' =
   my $bob   = _connect_irc_client($ready_details->{listen_port});
 
   _write_client_line($alice, 'CAP LS 302');
-  is _read_client_line($alice, 1_000), ':overnet.irc.local CAP * LS :',
-    'CAP LS returns an empty capability advertisement';
+  is _read_client_line($alice, 1_000), ':overnet.irc.local CAP * LS :overnet-e2ee',
+    'CAP LS advertises the overnet-e2ee capability';
+
+  _write_client_line($alice, 'CAP REQ :overnet-e2ee');
+  is _read_client_line($alice, 1_000), ':overnet.irc.local CAP * ACK :overnet-e2ee',
+    'CAP REQ ACKs the supported overnet-e2ee capability';
 
   _write_client_line($alice, 'CAP REQ :multi-prefix sasl');
   is _read_client_line($alice, 1_000), ':overnet.irc.local CAP * NAK :multi-prefix sasl',
@@ -1508,6 +1558,211 @@ subtest 'IRC server program routes direct messages through directional chat.dm o
     'subscriptions.open',
     sub { (($_[0]{subscription_id} || '') =~ /\Adm:/) ? 1 : 0 },
   ), 2, 'program opens exactly two DM subscriptions for the two registered clients';
+
+  close $alice->{socket};
+  close $bob->{socket};
+};
+
+subtest 'IRC server program blind-routes endpoint-blind E2E direct messages for E2EE-aware clients' => sub {
+  my $dm_privmsg = _load_irc_fixture('valid-dm-privmsg.json');
+  my $network = $dm_privmsg->{input}{network};
+  my $bob_dm_object_id = 'irc:' . $network . ':dm:bob';
+
+  my $tmpdir = tempdir(CLEANUP => 1);
+  my $key_path = File::Spec->catfile($tmpdir, 'irc-server-test-key.pem');
+  my $server_key = Net::Nostr::Key->new;
+  $server_key->save_privkey($key_path);
+
+  my $runtime = Overnet::Program::Runtime->new(
+    config => {
+      adapter_id       => 'irc.real',
+      network          => $network,
+      listen_host      => '127.0.0.1',
+      listen_port      => 0,
+      server_name      => 'overnet.irc.local',
+      signing_key_file => $key_path,
+      adapter_config   => {},
+    },
+  );
+  ok $runtime->register_adapter_definition(
+    adapter_id => 'irc.real',
+    definition => {
+      kind             => 'class',
+      class            => 'Overnet::Adapter::IRC',
+      lib_dirs         => [$irc_lib],
+      constructor_args => {},
+    },
+  ), 'runtime can register the real IRC adapter for E2EE direct-message coverage';
+
+  my $host = Overnet::Program::Host->new(
+    command     => [$^X, $program_path],
+    runtime     => $runtime,
+    program_id  => 'overnet.program.irc_server',
+    permissions => [
+      'adapters.use',
+      'subscriptions.read',
+      'overnet.emit_event',
+      'overnet.emit_state',
+      'overnet.emit_private_message',
+      'overnet.emit_capabilities',
+    ],
+    services => {
+      'adapters.open_session'        => {},
+      'adapters.map_input'           => {},
+      'adapters.close_session'       => {},
+      'subscriptions.open'           => {},
+      'subscriptions.close'          => {},
+      'overnet.emit_event'           => {},
+      'overnet.emit_state'           => {},
+      'overnet.emit_private_message' => {},
+      'overnet.emit_capabilities'    => {},
+    },
+    startup_timeout_ms  => 1_000,
+    shutdown_timeout_ms => 1_000,
+  );
+
+  $host->start;
+  is $host->state, 'ready', 'E2EE direct-message server reaches ready state';
+
+  my $ready_details = _wait_for_ready_details($host);
+  ok $ready_details, 'E2EE direct-message server publishes ready health details';
+  ok defined $ready_details->{listen_port} && $ready_details->{listen_port} > 0,
+    'E2EE direct-message server exposes the bound listen port';
+
+  my $alice = _connect_irc_client($ready_details->{listen_port});
+  my $bob = _connect_irc_client($ready_details->{listen_port});
+  my $alice_key = Net::Nostr::Key->new;
+  my $bob_key = Net::Nostr::Key->new;
+
+  _write_client_line($alice, 'CAP LS 302');
+  is _read_client_line($alice, 1_000), ':overnet.irc.local CAP * LS :overnet-e2ee',
+    'alice sees overnet-e2ee in CAP LS';
+  _write_client_line($alice, 'CAP REQ :overnet-e2ee');
+  is _read_client_line($alice, 1_000), ':overnet.irc.local CAP * ACK :overnet-e2ee',
+    'alice CAP REQ overnet-e2ee is acknowledged';
+  _write_client_line($alice, 'CAP END');
+  is _read_client_line_optional($alice, 200), undef, 'alice CAP END produces no extra line';
+  _write_client_line($alice, 'NICK alice');
+  _write_client_line($alice, 'USER alice 0 * :Alice Example');
+  _assert_registration_prelude(
+    client  => $alice,
+    nick    => 'alice',
+    network => $network,
+  );
+  ok _wait_for_dm_subscription_count($host, 1),
+    'alice registration completes the first E2EE DM subscription open';
+  _write_client_line($alice, 'OVERNETKEY SET ' . $alice_key->pubkey_hex);
+  is _read_client_line($alice, 1_000),
+    ':overnet.irc.local NOTICE alice :OVERNETKEY SET ' . $alice_key->pubkey_hex,
+    'alice registers her E2EE pubkey';
+
+  _write_client_line($bob, 'CAP LS 302');
+  is _read_client_line($bob, 1_000), ':overnet.irc.local CAP * LS :overnet-e2ee',
+    'bob sees overnet-e2ee in CAP LS';
+  _write_client_line($bob, 'CAP REQ :overnet-e2ee');
+  is _read_client_line($bob, 1_000), ':overnet.irc.local CAP * ACK :overnet-e2ee',
+    'bob CAP REQ overnet-e2ee is acknowledged';
+  _write_client_line($bob, 'CAP END');
+  is _read_client_line_optional($bob, 200), undef, 'bob CAP END produces no extra line';
+  _write_client_line($bob, 'NICK bob');
+  _write_client_line($bob, 'USER bob 0 * :Bob Example');
+  _assert_registration_prelude(
+    client  => $bob,
+    nick    => 'bob',
+    network => $network,
+  );
+  ok _wait_for_dm_subscription_count($host, 2),
+    'bob registration completes the second E2EE DM subscription open';
+  _write_client_line($bob, 'OVERNETKEY SET ' . $bob_key->pubkey_hex);
+  is _read_client_line($bob, 1_000),
+    ':overnet.irc.local NOTICE bob :OVERNETKEY SET ' . $bob_key->pubkey_hex,
+    'bob registers his E2EE pubkey';
+
+  _write_client_line($alice, 'OVERNETKEY GET bob');
+  is _read_client_line($alice, 1_000),
+    ':overnet.irc.local NOTICE alice :OVERNETKEY GET bob ' . $bob_key->pubkey_hex,
+    'alice can query bob\'s E2EE pubkey';
+
+  my $payload = {
+    overnet_v    => '0.1.0',
+    private_type => 'chat.dm_message',
+    object_type  => 'chat.dm',
+    object_id    => $bob_dm_object_id,
+    provenance   => {
+      type              => 'adapted',
+      protocol          => 'irc',
+      origin            => $network . '/bob',
+      external_identity => 'alice',
+      limitations       => ['unsigned'],
+    },
+    body => {
+      text => 'secret hello',
+    },
+  };
+  my $rumor = Net::Nostr::DirectMessage->create(
+    sender_pubkey => $alice_key->pubkey_hex,
+    content       => encode_json($payload),
+    recipients    => [$bob_key->pubkey_hex],
+  );
+  my ($wrap) = Net::Nostr::DirectMessage->wrap_for_recipients(
+    rumor       => $rumor,
+    sender_key  => $alice_key,
+    skip_sender => 1,
+  );
+  my $e2ee_body = '+overnet-e2ee-v1 ' . encode_base64(encode_json($wrap->to_hash), '');
+
+  _write_client_line($alice, 'PRIVMSG bob :' . $e2ee_body);
+  ok $host->pump_until(
+    timeout_ms => 1_000,
+    condition  => sub {
+      defined _find_emitted_item(
+        $_[0]->runtime->emitted_items,
+        item_type   => 'private_message',
+        overnet_et  => 'chat.dm_message',
+        overnet_ot  => 'chat.dm',
+        overnet_oid => $bob_dm_object_id,
+      );
+    },
+  ), 'opaque E2EE direct-message PRIVMSG is emitted as a private message';
+  $host->pump(timeout_ms => 100);
+
+  my $received_line = _read_client_line($bob, 1_000);
+  like $received_line, qr/\A:alice PRIVMSG bob :\+overnet-e2ee-v1 /,
+    'bob receives an opaque E2EE direct-message PRIVMSG body';
+  is _read_client_line_optional($alice, 200), undef,
+    'sender does not receive a synthetic E2EE DM echo';
+
+  my $received_transport = _decode_e2ee_transport_from_line($received_line);
+  is_deeply $received_transport, $wrap->to_hash,
+    'recipient receives the same visible wrapped transport that alice sent';
+
+  my $received_rumor = Net::Nostr::DirectMessage->receive(
+    event         => Net::Nostr::Event->from_wire($received_transport),
+    recipient_key => $bob_key,
+  );
+  is $received_rumor->kind, 14, 'bob can locally unwrap a kind 14 rumor';
+  is_deeply decode_json($received_rumor->content), $payload,
+    'bob can locally decrypt the original private-message payload';
+
+  my $opaque_item = _find_emitted_item(
+    $runtime->emitted_items,
+    item_type   => 'private_message',
+    overnet_et  => 'chat.dm_message',
+    overnet_ot  => 'chat.dm',
+    overnet_oid => $bob_dm_object_id,
+  );
+  ok $opaque_item, 'runtime recorded the opaque E2EE private message';
+  _assert_opaque_private_message_metadata(
+    $opaque_item,
+    label           => 'opaque E2EE direct-message PRIVMSG',
+    private_type    => 'chat.dm_message',
+    object_id       => $bob_dm_object_id,
+    sender_identity => 'alice',
+  );
+
+  my $shutdown = $host->request_shutdown(reason => 'opaque E2EE direct message test complete');
+  is $shutdown->{state}, 'shutdown_complete', 'E2EE direct-message server handles runtime shutdown';
+  is $shutdown->{exit_code}, 0, 'E2EE direct-message server exits cleanly';
 
   close $alice->{socket};
   close $bob->{socket};

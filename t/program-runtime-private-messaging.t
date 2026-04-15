@@ -66,6 +66,57 @@ sub _private_message_candidate {
   };
 }
 
+sub _opaque_private_message_candidate {
+  my (%args) = @_;
+
+  my $sender_key = $args{sender_key} || Net::Nostr::Key->new;
+  my $recipient_key = $args{recipient_key} || Net::Nostr::Key->new;
+  my $private_type = $args{private_type} || 'chat.dm_message';
+  my $object_id = $args{object_id} || 'irc:local:dm:bob';
+  my $text = exists $args{text} ? $args{text} : 'opaque hello';
+
+  my $payload = {
+    overnet_v    => '0.1.0',
+    private_type => $private_type,
+    object_type  => 'chat.dm',
+    object_id    => $object_id,
+    provenance   => {
+      type              => 'adapted',
+      protocol          => 'irc',
+      origin            => 'local/bob',
+      external_identity => 'alice',
+      limitations       => ['unsigned'],
+    },
+    body => {
+      text => $text,
+    },
+  };
+
+  my $rumor = Net::Nostr::DirectMessage->create(
+    sender_pubkey => $sender_key->pubkey_hex,
+    content       => encode_json($payload),
+    recipients    => [$recipient_key->pubkey_hex],
+  );
+  my ($wrap) = Net::Nostr::DirectMessage->wrap_for_recipients(
+    rumor       => $rumor,
+    sender_key  => $sender_key,
+    skip_sender => 1,
+  );
+
+  return {
+    source => {
+      protocol => 'irc',
+      network  => 'local',
+      line     => ':alice PRIVMSG bob :+overnet-e2ee-v1 opaque',
+    },
+    private_type    => $private_type,
+    object_type     => 'chat.dm',
+    object_id       => $object_id,
+    sender_identity => 'alice',
+    transport       => $wrap->to_hash,
+  };
+}
+
 subtest 'services accept encrypted private messages and deliver matching subscription notifications' => sub {
   my $runtime = Overnet::Program::Runtime->new;
   my $services = Overnet::Program::Services->new(runtime => $runtime);
@@ -157,6 +208,53 @@ subtest 'services enforce overnet.emit_private_message permission' => sub {
   is $error->{code}, 'runtime.permission_denied', 'private-message emission requires permission';
   is $error->{details}{required_permission}, 'overnet.emit_private_message',
     'required private-message emission permission is reported';
+};
+
+subtest 'services accept opaque endpoint-blind private messages without decrypted_rumor' => sub {
+  my $runtime = Overnet::Program::Runtime->new;
+  my $services = Overnet::Program::Services->new(runtime => $runtime);
+
+  my $open = $services->dispatch_request(
+    'subscriptions.open',
+    {
+      subscription_id => 'dm-bob-opaque',
+      query           => {
+        kind        => 1059,
+        overnet_et  => 'chat.dm_message',
+        overnet_ot  => 'chat.dm',
+        overnet_oid => 'irc:local:dm:bob',
+      },
+    },
+    permissions => ['subscriptions.read'],
+    session_id  => 'session-opaque',
+  );
+  is $open->{subscription_id}, 'dm-bob-opaque', 'opaque private-message subscription opens';
+
+  my $candidate = _opaque_private_message_candidate();
+  my $result = $services->dispatch_request(
+    'overnet.emit_private_message',
+    { message => $candidate },
+    permissions => ['overnet.emit_private_message'],
+  );
+
+  is $result->{accepted}, JSON::PP::true, 'opaque private message is accepted';
+  like $result->{event_id}, qr/\A[0-9a-f]{64}\z/, 'opaque private message returns visible wrap event id';
+  ok !exists($result->{rumor_id}), 'opaque private message does not return a rumor id';
+
+  my $emitted = $runtime->emitted_items;
+  is scalar @{$emitted}, 1, 'runtime records one opaque private message';
+  is $emitted->[0]{item_type}, 'private_message', 'runtime stores opaque private message item type';
+  is $emitted->[0]{data}{private_type}, 'chat.dm_message', 'opaque private message keeps logical type';
+  is $emitted->[0]{data}{object_type}, 'chat.dm', 'opaque private message keeps logical object type';
+  is $emitted->[0]{data}{object_id}, 'irc:local:dm:bob', 'opaque private message keeps logical object id';
+  is $emitted->[0]{data}{sender_identity}, 'alice', 'opaque private message keeps sender identity metadata';
+  ok !exists($emitted->[0]{data}{decrypted_rumor}), 'opaque private message does not expose decrypted_rumor';
+
+  my $notifications = $runtime->drain_runtime_notifications('session-opaque');
+  is scalar @{$notifications}, 1, 'matching subscription receives one opaque private-message notification';
+  is $notifications->[0]{params}{item_type}, 'private_message', 'notification item_type stays private_message';
+  is $notifications->[0]{params}{data}{sender_identity}, 'alice', 'notification preserves sender identity metadata';
+  ok !exists($notifications->[0]{params}{data}{decrypted_rumor}), 'notification does not include decrypted rumor for opaque messages';
 };
 
 done_testing;

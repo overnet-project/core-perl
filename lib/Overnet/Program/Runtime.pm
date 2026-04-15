@@ -527,17 +527,19 @@ sub accept_emitted_private_message {
     };
   }
 
-  my $payload = $validation->{decrypted_rumor}{content};
   my $visible_transport = _clone_json($candidate->{transport});
   delete $visible_transport->{decrypted_rumor}
     if ref($visible_transport) eq 'HASH';
   my $stored = {
-    transport       => $visible_transport,
-    decrypted_rumor => _clone_json($validation->{decrypted_rumor}),
-    private_type    => $payload->{private_type},
-    object_type     => $payload->{object_type},
-    object_id       => $payload->{object_id},
+    transport    => $visible_transport,
+    private_type => $validation->{private_type},
+    object_type  => $validation->{object_type},
+    object_id    => $validation->{object_id},
   };
+  $stored->{decrypted_rumor} = _clone_json($validation->{decrypted_rumor})
+    if ref($validation->{decrypted_rumor}) eq 'HASH';
+  $stored->{sender_identity} = $validation->{sender_identity}
+    if defined $validation->{sender_identity};
 
   $self->_record_emitted_item(
     item_type => 'private_message',
@@ -550,7 +552,7 @@ sub accept_emitted_private_message {
   $result->{event_id} = $stored->{transport}{id}
     if defined $stored->{transport}{id};
   $result->{rumor_id} = $stored->{decrypted_rumor}{id}
-    if defined $stored->{decrypted_rumor}{id};
+    if ref($stored->{decrypted_rumor}) eq 'HASH' && defined $stored->{decrypted_rumor}{id};
 
   return $result;
 }
