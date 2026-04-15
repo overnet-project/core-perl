@@ -14,6 +14,7 @@ use Time::HiRes qw(time);
 
 use Net::Nostr::DirectMessage;
 use Net::Nostr::Event;
+use Net::Nostr::Group;
 use Net::Nostr::Key;
 use Overnet::Program::Host;
 use Overnet::Program::Runtime;
@@ -58,6 +59,22 @@ sub _request_count_matching {
   }
 
   return $count;
+}
+
+sub _last_request_matching {
+  my ($entries, $direction, $method, $predicate) = @_;
+  my $matched;
+
+  for my $entry (@{$entries}) {
+    next unless ($entry->{direction} || '') eq $direction;
+    next unless ($entry->{message}{type} || '') eq 'request';
+    next unless ($entry->{message}{method} || '') eq $method;
+    my $params = $entry->{message}{params} || {};
+    next if $predicate && !$predicate->($params);
+    $matched = $params;
+  }
+
+  return $matched;
 }
 
 sub _wait_for_ready_details {
@@ -243,6 +260,40 @@ sub _extract_trailing_text {
   return $1;
 }
 
+sub _authoritative_nip29_stream_name {
+  my (%args) = @_;
+  return join ':',
+    'irc.authority.nip29',
+    $args{network},
+    $args{group_host},
+    $args{group_id};
+}
+
+sub _authoritative_auth_scope {
+  my (%args) = @_;
+  return sprintf('irc://%s/%s', $args{server_name}, $args{network});
+}
+
+sub _build_authoritative_auth_payload {
+  my (%args) = @_;
+  my $key = $args{key};
+  my $challenge = $args{challenge};
+  my $scope = $args{scope};
+  my $created_at = exists $args{created_at} ? $args{created_at} : 1_744_301_000;
+
+  my $event = $key->create_event(
+    kind       => 22242,
+    created_at => $created_at,
+    content    => '',
+    tags       => [
+      [ 'relay', $scope ],
+      [ 'challenge', $challenge ],
+    ],
+  );
+
+  return encode_base64(encode_json($event->to_hash), '');
+}
+
 sub _decode_e2ee_transport_from_line {
   my ($line) = @_;
   my $body = _extract_trailing_text($line);
@@ -378,6 +429,159 @@ sub _assert_opaque_private_message_metadata {
   } @{$data->{transport}{tags} || []};
   is scalar @recipient_tags, 1, "$label visible transport has exactly one recipient tag";
   like $recipient_tags[0][1], qr/\A[0-9a-f]{64}\z/, "$label visible recipient tag contains a hex pubkey";
+}
+
+{
+  package Local::MockAuthoritativeIRCAdapter;
+
+  use strict;
+  use warnings;
+
+  sub new {
+    return bless {
+      sessions => {},
+    }, shift;
+  }
+
+  sub open_session {
+    my ($self, %args) = @_;
+    my $config = ref($args{session_config}) eq 'HASH'
+      ? $args{session_config}
+      : {};
+    my %channels;
+
+    for my $channel (keys %{$config->{mock_authoritative_channels} || {}}) {
+      my $source = $config->{mock_authoritative_channels}{$channel} || {};
+      my %members;
+      for my $member (@{$source->{members} || []}) {
+        next unless ref($member) eq 'HASH';
+        next unless defined $member->{pubkey};
+        $members{$member->{pubkey}} = {
+          pubkey => $member->{pubkey},
+          roles  => [ @{$member->{roles} || []} ],
+        };
+      }
+
+      $channels{$channel} = {
+        closed           => $source->{closed} ? 1 : 0,
+        moderated        => $source->{moderated} ? 1 : 0,
+        topic_restricted => $source->{topic_restricted} ? 1 : 0,
+        members          => \%members,
+      };
+    }
+
+    $self->{sessions}{$args{adapter_session_id}} = {
+      network  => $config->{network},
+      channels => \%channels,
+    };
+
+    return { accepted => 1 };
+  }
+
+  sub close_session {
+    my ($self, %args) = @_;
+    delete $self->{sessions}{$args{adapter_session_id}};
+    return 1;
+  }
+
+  sub map_input {
+    my ($self, %args) = @_;
+    my $session = $self->{sessions}{$args{adapter_session_id}} || {};
+    my $channel = $args{target};
+
+    return { valid => 1 }
+      unless ($args{session_config}{authority_profile} || '') eq 'nip29';
+    return { valid => 1 }
+      unless defined $channel && exists $session->{channels}{$channel};
+
+    my $state = $session->{channels}{$channel};
+    if (($args{command} || '') eq 'MODE') {
+      my $mode = $args{mode} || '';
+      if ($mode =~ /\A([+-])([ov])\z/) {
+        my ($direction, $mode_letter) = ($1, $2);
+        my $target_pubkey = $args{target_pubkey};
+        my %roles = map { $_ => 1 } @{$args{current_roles} || []};
+        my $role_name = $mode_letter eq 'o' ? 'irc.operator' : 'irc.voice';
+        if ($direction eq '+') {
+          $roles{$role_name} = 1;
+        } else {
+          delete $roles{$role_name};
+        }
+        $state->{members}{$target_pubkey} = {
+          pubkey => $target_pubkey,
+          roles  => [ sort keys %roles ],
+        };
+        return { valid => 1 };
+      }
+
+      if ($mode =~ /\A([+-])([imt])\z/) {
+        my ($direction, $mode_letter) = ($1, $2);
+        my $enabled = $direction eq '+' ? 1 : 0;
+        $state->{closed} = $enabled if $mode_letter eq 'i';
+        $state->{moderated} = $enabled if $mode_letter eq 'm';
+        $state->{topic_restricted} = $enabled if $mode_letter eq 't';
+        return { valid => 1 };
+      }
+    }
+
+    if (($args{command} || '') eq 'KICK') {
+      delete $state->{members}{$args{target_pubkey}}
+        if defined $args{target_pubkey};
+      return { valid => 1 };
+    }
+
+    return { valid => 1 };
+  }
+
+  sub derive {
+    my ($self, %args) = @_;
+    my $session = $self->{sessions}{$args{adapter_session_id}} || {};
+    my $input = ref($args{input}) eq 'HASH' ? $args{input} : {};
+    my $channel = $input->{target};
+    my $state = $session->{channels}{$channel} || {
+      closed           => 0,
+      moderated        => 0,
+      topic_restricted => 0,
+      members          => {},
+    };
+
+    my $channel_modes = '+' . join(
+      '',
+      grep { $_ }
+        ($state->{closed} ? 'i' : ''),
+        ($state->{moderated} ? 'm' : ''),
+        'n',
+        ($state->{topic_restricted} ? 't' : ''),
+    );
+
+    my @members = map {
+      my $member = $state->{members}{$_};
+      my @roles = sort @{$member->{roles} || []};
+      {
+        pubkey                => $member->{pubkey},
+        roles                 => \@roles,
+        presentational_prefix => (
+          (grep { $_ eq 'irc.operator' } @roles) ? '@'
+            : (grep { $_ eq 'irc.voice' } @roles) ? '+'
+            : ''
+        ),
+      }
+    } sort keys %{$state->{members} || {}};
+
+    return {
+      valid => 1,
+      state => [
+        {
+          operation         => 'authoritative_channel_state',
+          authority_profile => 'nip29',
+          object_type       => 'chat.channel',
+          object_id         => 'irc:' . ($session->{network} || 'irc.test') . ':' . $channel,
+          channel_modes     => $channel_modes,
+          members           => \@members,
+        },
+      ],
+    };
+  }
 }
 
 subtest 'IRC server program enforces nick uniqueness and emits 433 for collisions' => sub {
@@ -1931,6 +2135,626 @@ subtest 'IRC server program accepts TLS clients using the baseline tls config sh
   is $shutdown->{exit_code}, 0, 'TLS server exits cleanly';
 
   close $client->{socket};
+};
+
+subtest 'IRC server program uses authoritative hosted-channel state for moderated IRC behavior' => sub {
+  my $network = 'irc.authority.test';
+  my $channel = '#ops';
+  my $group_host = 'groups.example.test';
+  my $group_id = 'ops';
+  my $server_name = 'overnet.irc.local';
+  my $alice_key = Net::Nostr::Key->new;
+  my $bob_key   = Net::Nostr::Key->new;
+  my $alice_pubkey = $alice_key->pubkey_hex;
+  my $bob_pubkey   = $bob_key->pubkey_hex;
+
+  my $tmpdir = tempdir(CLEANUP => 1);
+  my $key_path = File::Spec->catfile($tmpdir, 'irc-server-authority-test-key.pem');
+  my $key = Net::Nostr::Key->new;
+  $key->save_privkey($key_path);
+
+  my $runtime = Overnet::Program::Runtime->new(
+    config => {
+      adapter_id       => 'irc.authoritative.mock',
+      network          => $network,
+      listen_host      => '127.0.0.1',
+      listen_port      => 0,
+      server_name      => $server_name,
+      signing_key_file => $key_path,
+      adapter_config   => {
+        network           => $network,
+        authority_profile => 'nip29',
+        group_host        => $group_host,
+        channel_groups    => {
+          $channel => $group_id,
+        },
+        mock_authoritative_channels => {
+          $channel => {
+            moderated        => 1,
+            topic_restricted => 1,
+            members          => [
+              {
+                pubkey => $alice_pubkey,
+                roles  => ['irc.operator'],
+              },
+              {
+                pubkey => $bob_pubkey,
+                roles  => [],
+              },
+            ],
+          },
+        },
+      },
+    },
+  );
+
+  my @seed_events = (
+    Net::Nostr::Group->metadata(
+      pubkey     => 'f' x 64,
+      group_id   => $group_id,
+      created_at => 1_744_301_000,
+    )->to_hash,
+  );
+  push @{$seed_events[0]{tags}}, [ 'mode', 'moderated' ], [ 'mode', 'topic-restricted' ];
+
+  my $authority_stream = _authoritative_nip29_stream_name(
+    network    => $network,
+    group_host => $group_host,
+    group_id   => $group_id,
+  );
+  for my $event (@seed_events) {
+    my $append = $runtime->append_event(
+      stream => $authority_stream,
+      event  => $event,
+    );
+    ok defined $append->{offset}, 'runtime stores seeded authoritative mock NIP-29 event';
+  }
+
+  ok $runtime->register_adapter_definition(
+    adapter_id => 'irc.authoritative.mock',
+    definition => {
+      kind             => 'class',
+      class            => 'Local::MockAuthoritativeIRCAdapter',
+      constructor_args => {},
+    },
+  ), 'runtime can register the mock authoritative adapter';
+
+  my $host = Overnet::Program::Host->new(
+    command     => [$^X, $program_path],
+    runtime     => $runtime,
+    program_id  => 'overnet.program.irc_server',
+    permissions => [
+      'adapters.use',
+      'events.read',
+      'subscriptions.read',
+      'overnet.emit_event',
+      'overnet.emit_state',
+      'overnet.emit_private_message',
+      'overnet.emit_capabilities',
+    ],
+    services => {
+      'adapters.open_session'        => {},
+      'adapters.map_input'           => {},
+      'adapters.derive'              => {},
+      'adapters.close_session'       => {},
+      'events.read'                  => {},
+      'subscriptions.open'           => {},
+      'subscriptions.close'          => {},
+      'overnet.emit_event'           => {},
+      'overnet.emit_state'           => {},
+      'overnet.emit_private_message' => {},
+      'overnet.emit_capabilities'    => {},
+    },
+    startup_timeout_ms  => 1_000,
+    shutdown_timeout_ms => 1_000,
+  );
+
+  $host->start;
+  is $host->state, 'ready', 'authoritative server reaches ready state';
+
+  my $ready_details = _wait_for_ready_details($host);
+  ok $ready_details, 'authoritative server publishes ready health details';
+
+  my $alice = _connect_irc_client($ready_details->{listen_port});
+  my $bob   = _connect_irc_client($ready_details->{listen_port});
+
+  _write_client_line($alice, 'NICK alice');
+  _write_client_line($alice, 'USER alice 0 * :Alice Example');
+  _assert_registration_prelude(
+    client  => $alice,
+    nick    => 'alice',
+    network => $network,
+  );
+  ok _wait_for_dm_subscription_count($host, 1),
+    'alice registration completes its DM subscription open';
+
+  _write_client_line($bob, 'NICK bob');
+  _write_client_line($bob, 'USER bob 0 * :Bob Example');
+  _assert_registration_prelude(
+    client  => $bob,
+    nick    => 'bob',
+    network => $network,
+  );
+  ok _wait_for_dm_subscription_count($host, 2),
+    'bob registration completes its DM subscription open';
+
+  _write_client_line($alice, 'OVERNETAUTH CHALLENGE');
+  my $alice_challenge_line = _read_client_line($alice, 1_000);
+  like $alice_challenge_line, qr/\A:\Q$server_name\E NOTICE alice :OVERNETAUTH CHALLENGE [0-9a-f]{64}\z/,
+    'alice receives an authoritative auth challenge';
+  $alice_challenge_line =~ /([0-9a-f]{64})\z/;
+  my $alice_challenge = $1;
+  _write_client_line($alice, 'OVERNETAUTH AUTH ' . _build_authoritative_auth_payload(
+    key       => $alice_key,
+    challenge => $alice_challenge,
+    scope     => _authoritative_auth_scope(
+      server_name => $server_name,
+      network     => $network,
+    ),
+  ));
+  is _read_client_line($alice, 1_000), ":$server_name NOTICE alice :OVERNETAUTH AUTH $alice_pubkey",
+    'alice authenticates her authoritative pubkey';
+
+  _write_client_line($bob, 'OVERNETAUTH CHALLENGE');
+  my $bob_challenge_line = _read_client_line($bob, 1_000);
+  like $bob_challenge_line, qr/\A:\Q$server_name\E NOTICE bob :OVERNETAUTH CHALLENGE [0-9a-f]{64}\z/,
+    'bob receives an authoritative auth challenge';
+  $bob_challenge_line =~ /([0-9a-f]{64})\z/;
+  my $bob_challenge = $1;
+  _write_client_line($bob, 'OVERNETAUTH AUTH ' . _build_authoritative_auth_payload(
+    key       => $bob_key,
+    challenge => $bob_challenge,
+    scope     => _authoritative_auth_scope(
+      server_name => $server_name,
+      network     => $network,
+    ),
+  ));
+  is _read_client_line($bob, 1_000), ":$server_name NOTICE bob :OVERNETAUTH AUTH $bob_pubkey",
+    'bob authenticates his authoritative pubkey';
+
+  _write_client_line($alice, "JOIN $channel");
+  ok $host->pump(timeout_ms => 200) >= 0,
+    'authoritative host pumps alice join requests';
+  is _read_client_line($alice, 1_000), ":alice JOIN $channel",
+    'alice receives her JOIN echo';
+  is _read_client_line($alice, 1_000), ":overnet.irc.local 353 alice = $channel :\@alice",
+    'authoritative JOIN bootstrap prefixes the operator nick';
+  is _read_client_line($alice, 1_000), ":overnet.irc.local 366 alice $channel :End of /NAMES list.",
+    'alice receives the end-of-names line';
+
+  _write_client_line($bob, "JOIN $channel");
+  ok $host->pump(timeout_ms => 200) >= 0,
+    'authoritative host pumps bob join requests';
+  is _read_client_line($alice, 1_000), ":bob JOIN $channel",
+    'alice sees bob join the authoritative channel';
+  is _read_client_line($bob, 1_000), ":bob JOIN $channel",
+    'bob receives his JOIN echo';
+  is _read_client_line($bob, 1_000), ":overnet.irc.local 353 bob = $channel :\@alice bob",
+    'bob sees authoritative prefixes during JOIN bootstrap';
+  is _read_client_line($bob, 1_000), ":overnet.irc.local 366 bob $channel :End of /NAMES list.",
+    'bob receives the end-of-names line';
+
+  _write_client_line($bob, "MODE $channel");
+  ok $host->pump(timeout_ms => 200) >= 0,
+    'authoritative host pumps MODE query requests';
+  is _read_client_line($bob, 1_000), ":overnet.irc.local 324 bob $channel +mnt",
+    'authoritative MODE query reflects derived channel modes';
+
+  _write_client_line($bob, "PRIVMSG $channel :blocked");
+  ok $host->pump(timeout_ms => 200) >= 0,
+    'authoritative host pumps moderated PRIVMSG checks';
+  is _read_client_line($bob, 1_000), ":overnet.irc.local 404 bob $channel :Cannot send to channel",
+    'moderated authoritative channels reject unvoiced senders';
+
+  _write_client_line($bob, "TOPIC $channel :blocked");
+  ok $host->pump(timeout_ms => 200) >= 0,
+    'authoritative host pumps topic privilege checks';
+  is _read_client_line($bob, 1_000), ":overnet.irc.local 482 bob $channel :You're not channel operator",
+    'topic-restricted authoritative channels reject non-operators';
+
+  _write_client_line($alice, "MODE $channel +v bob");
+  ok $host->pump(timeout_ms => 200) >= 0,
+    'authoritative host pumps MODE writes';
+  is _read_client_line($alice, 1_000), ":alice MODE $channel +v bob",
+    'operator mode changes are broadcast to the actor';
+  is _read_client_line($bob, 1_000), ":alice MODE $channel +v bob",
+    'operator mode changes are broadcast to the target';
+
+  _write_client_line($bob, "NAMES $channel");
+  ok $host->pump(timeout_ms => 200) >= 0,
+    'authoritative host pumps NAMES derivation';
+  is _read_client_line($bob, 1_000), ":overnet.irc.local 353 bob = $channel :\@alice +bob",
+    'authoritative NAMES output reflects derived role prefixes after MODE';
+  is _read_client_line($bob, 1_000), ":overnet.irc.local 366 bob $channel :End of /NAMES list.",
+    'bob receives the end-of-names line after NAMES';
+
+  _write_client_line($alice, "KICK $channel bob :bye");
+  ok $host->pump(timeout_ms => 200) >= 0,
+    'authoritative host pumps KICK writes';
+  is _read_client_line($alice, 1_000), ":alice KICK $channel bob :bye",
+    'authoritative KICK is broadcast to the operator';
+  is _read_client_line($bob, 1_000), ":alice KICK $channel bob :bye",
+    'authoritative KICK is broadcast to the target';
+
+  _write_client_line($alice, "NAMES $channel");
+  ok $host->pump(timeout_ms => 200) >= 0,
+    'authoritative host pumps post-KICK NAMES derivation';
+  is _read_client_line($alice, 1_000), ":overnet.irc.local 353 alice = $channel :\@alice",
+    'kicked members disappear from authoritative NAMES output';
+  is _read_client_line($alice, 1_000), ":overnet.irc.local 366 alice $channel :End of /NAMES list.",
+    'alice receives the end-of-names line after KICK';
+
+  my $derived_request = _last_request_matching(
+    $host->transcript,
+    'from_program',
+    'adapters.derive',
+    sub {
+      ($_[0]{operation} || '') eq 'authoritative_channel_state'
+        && ref($_[0]{input}) eq 'HASH'
+        && (($_[0]{input}{target} || '') eq $channel);
+    },
+  );
+  ok $derived_request, 'program requests authoritative channel derivation through the adapter';
+
+  my $mode_request = _last_request_matching(
+    $host->transcript,
+    'from_program',
+    'adapters.map_input',
+    sub {
+      ref($_[0]{input}) eq 'HASH'
+        && (($_[0]{input}{command} || '') eq 'MODE')
+        && (($_[0]{input}{target} || '') eq $channel)
+        && (($_[0]{input}{mode} || '') eq '+v');
+    },
+  );
+  ok $mode_request, 'program routes authoritative MODE writes through the adapter';
+  is $mode_request->{input}{actor_pubkey}, $alice_pubkey, 'authoritative MODE writes include actor_pubkey';
+  is $mode_request->{input}{target_pubkey}, $bob_pubkey, 'authoritative MODE writes include target_pubkey';
+  is_deeply $mode_request->{input}{current_roles}, [], 'authoritative MODE writes include current target roles';
+
+  my $kick_request = _last_request_matching(
+    $host->transcript,
+    'from_program',
+    'adapters.map_input',
+    sub {
+      ref($_[0]{input}) eq 'HASH'
+        && (($_[0]{input}{command} || '') eq 'KICK')
+        && (($_[0]{input}{target} || '') eq $channel);
+    },
+  );
+  ok $kick_request, 'program routes authoritative KICK through the adapter';
+  is $kick_request->{input}{actor_pubkey}, $alice_pubkey, 'authoritative KICK includes actor_pubkey';
+  is $kick_request->{input}{target_pubkey}, $bob_pubkey, 'authoritative KICK includes target_pubkey';
+
+  my $shutdown = $host->request_shutdown(reason => 'authoritative test complete');
+  is $shutdown->{state}, 'shutdown_complete', 'authoritative server handles runtime shutdown';
+  is $shutdown->{exit_code}, 0, 'authoritative server exits cleanly';
+
+  close $alice->{socket};
+  close $bob->{socket};
+};
+
+subtest 'IRC server program uses the real IRC adapter for authoritative NIP-29 channel state' => sub {
+  my $network = 'irc.authority.real.test';
+  my $channel = '#ops';
+  my $group_host = 'groups.example.test';
+  my $group_id = 'ops';
+  my $server_name = 'overnet.irc.local';
+  my $alice_key = Net::Nostr::Key->new;
+  my $bob_key   = Net::Nostr::Key->new;
+  my $alice_pubkey = $alice_key->pubkey_hex;
+  my $bob_pubkey   = $bob_key->pubkey_hex;
+  my $authority_stream = _authoritative_nip29_stream_name(
+    network    => $network,
+    group_host => $group_host,
+    group_id   => $group_id,
+  );
+
+  my $tmpdir = tempdir(CLEANUP => 1);
+  my $key_path = File::Spec->catfile($tmpdir, 'irc-server-authority-real-test-key.pem');
+  my $key = Net::Nostr::Key->new;
+  $key->save_privkey($key_path);
+
+  my $runtime = Overnet::Program::Runtime->new(
+    config => {
+      adapter_id       => 'irc.authoritative.real',
+      network          => $network,
+      listen_host      => '127.0.0.1',
+      listen_port      => 0,
+      server_name      => $server_name,
+      signing_key_file => $key_path,
+      adapter_config   => {
+        network           => $network,
+        authority_profile => 'nip29',
+        group_host        => $group_host,
+        channel_groups    => {
+          $channel => $group_id,
+        },
+      },
+    },
+  );
+  ok $runtime->register_adapter_definition(
+    adapter_id => 'irc.authoritative.real',
+    definition => {
+      kind             => 'class',
+      class            => 'Overnet::Adapter::IRC',
+      lib_dirs         => [$irc_lib],
+      constructor_args => {},
+    },
+  ), 'runtime can register the real authoritative IRC adapter';
+
+  my @seed_events = (
+    Net::Nostr::Group->metadata(
+      pubkey     => 'f' x 64,
+      group_id   => $group_id,
+      created_at => 1_744_301_010,
+      closed     => 0,
+    )->to_hash,
+    Net::Nostr::Group->admins(
+      pubkey     => 'f' x 64,
+      group_id   => $group_id,
+      created_at => 1_744_301_011,
+      members    => [
+        {
+          pubkey => $alice_pubkey,
+          roles  => ['irc.operator'],
+        },
+      ],
+    )->to_hash,
+    Net::Nostr::Group->members(
+      pubkey     => 'f' x 64,
+      group_id   => $group_id,
+      created_at => 1_744_301_012,
+      members    => [
+        $alice_pubkey,
+        $bob_pubkey,
+      ],
+    )->to_hash,
+    Net::Nostr::Group->roles(
+      pubkey     => 'f' x 64,
+      group_id   => $group_id,
+      created_at => 1_744_301_013,
+      roles      => [
+        { name => 'irc.operator' },
+        { name => 'irc.voice' },
+      ],
+    )->to_hash,
+  );
+  push @{$seed_events[0]{tags}}, [ 'mode', 'moderated' ], [ 'mode', 'topic-restricted' ];
+
+  for my $event (@seed_events) {
+    my $append = $runtime->append_event(
+      stream => $authority_stream,
+      event  => $event,
+    );
+    ok defined $append->{offset}, 'runtime stores seeded authoritative NIP-29 event';
+  }
+
+  my $host = Overnet::Program::Host->new(
+    command     => [$^X, $program_path],
+    runtime     => $runtime,
+    program_id  => 'overnet.program.irc_server',
+    permissions => [
+      'adapters.use',
+      'events.append',
+      'events.read',
+      'subscriptions.read',
+      'overnet.emit_event',
+      'overnet.emit_state',
+      'overnet.emit_private_message',
+      'overnet.emit_capabilities',
+    ],
+    services => {
+      'adapters.open_session'        => {},
+      'adapters.map_input'           => {},
+      'adapters.derive'              => {},
+      'adapters.close_session'       => {},
+      'events.append'                => {},
+      'events.read'                  => {},
+      'subscriptions.open'           => {},
+      'subscriptions.close'          => {},
+      'overnet.emit_event'           => {},
+      'overnet.emit_state'           => {},
+      'overnet.emit_private_message' => {},
+      'overnet.emit_capabilities'    => {},
+    },
+    startup_timeout_ms  => 1_000,
+    shutdown_timeout_ms => 1_000,
+  );
+
+  $host->start;
+  is $host->state, 'ready', 'real authoritative server reaches ready state';
+
+  my $ready_details = _wait_for_ready_details($host);
+  ok $ready_details, 'real authoritative server publishes ready health details';
+
+  my $alice = _connect_irc_client($ready_details->{listen_port});
+  my $bob   = _connect_irc_client($ready_details->{listen_port});
+
+  _write_client_line($alice, 'NICK alice');
+  _write_client_line($alice, 'USER alice 0 * :Alice Example');
+  _assert_registration_prelude(
+    client  => $alice,
+    nick    => 'alice',
+    network => $network,
+  );
+  ok _wait_for_dm_subscription_count($host, 1),
+    'alice registration completes its DM subscription open on the real authoritative server';
+
+  _write_client_line($bob, 'NICK bob');
+  _write_client_line($bob, 'USER bob 0 * :Bob Example');
+  _assert_registration_prelude(
+    client  => $bob,
+    nick    => 'bob',
+    network => $network,
+  );
+  ok _wait_for_dm_subscription_count($host, 2),
+    'bob registration completes its DM subscription open on the real authoritative server';
+
+  _write_client_line($alice, 'OVERNETAUTH CHALLENGE');
+  my $alice_challenge_line = _read_client_line($alice, 1_000);
+  like $alice_challenge_line, qr/\A:\Q$server_name\E NOTICE alice :OVERNETAUTH CHALLENGE [0-9a-f]{64}\z/,
+    'alice receives a real authoritative auth challenge';
+  $alice_challenge_line =~ /([0-9a-f]{64})\z/;
+  my $alice_challenge = $1;
+  _write_client_line($alice, 'OVERNETAUTH AUTH ' . _build_authoritative_auth_payload(
+    key       => $alice_key,
+    challenge => $alice_challenge,
+    scope     => _authoritative_auth_scope(
+      server_name => $server_name,
+      network     => $network,
+    ),
+  ));
+  is _read_client_line($alice, 1_000), ":$server_name NOTICE alice :OVERNETAUTH AUTH $alice_pubkey",
+    'alice authenticates her authoritative pubkey on the real authoritative server';
+
+  _write_client_line($bob, 'OVERNETAUTH CHALLENGE');
+  my $bob_challenge_line = _read_client_line($bob, 1_000);
+  like $bob_challenge_line, qr/\A:\Q$server_name\E NOTICE bob :OVERNETAUTH CHALLENGE [0-9a-f]{64}\z/,
+    'bob receives a real authoritative auth challenge';
+  $bob_challenge_line =~ /([0-9a-f]{64})\z/;
+  my $bob_challenge = $1;
+  _write_client_line($bob, 'OVERNETAUTH AUTH ' . _build_authoritative_auth_payload(
+    key       => $bob_key,
+    challenge => $bob_challenge,
+    scope     => _authoritative_auth_scope(
+      server_name => $server_name,
+      network     => $network,
+    ),
+  ));
+  is _read_client_line($bob, 1_000), ":$server_name NOTICE bob :OVERNETAUTH AUTH $bob_pubkey",
+    'bob authenticates his authoritative pubkey on the real authoritative server';
+
+  _write_client_line($alice, "JOIN $channel");
+  ok $host->pump(timeout_ms => 200) >= 0,
+    'real authoritative host pumps alice join requests';
+  is _read_client_line($alice, 1_000), ":alice JOIN $channel",
+    'alice receives her JOIN echo on the real authoritative server';
+  is _read_client_line($alice, 1_000), ":overnet.irc.local 353 alice = $channel :\@alice",
+    'real authoritative JOIN bootstrap prefixes the operator nick from NIP-29 state';
+  is _read_client_line($alice, 1_000), ":overnet.irc.local 366 alice $channel :End of /NAMES list.",
+    'alice receives the end-of-names line from the real authoritative server';
+
+  _write_client_line($bob, "JOIN $channel");
+  ok $host->pump(timeout_ms => 200) >= 0,
+    'real authoritative host pumps bob join requests';
+  is _read_client_line($alice, 1_000), ":bob JOIN $channel",
+    'alice sees bob join the authoritative channel on the real adapter path';
+  is _read_client_line($bob, 1_000), ":bob JOIN $channel",
+    'bob receives his JOIN echo on the real adapter path';
+  is _read_client_line($bob, 1_000), ":overnet.irc.local 353 bob = $channel :\@alice bob",
+    'bob sees authoritative prefixes during JOIN bootstrap on the real adapter path';
+  is _read_client_line($bob, 1_000), ":overnet.irc.local 366 bob $channel :End of /NAMES list.",
+    'bob receives the end-of-names line on the real adapter path';
+
+  _write_client_line($bob, "MODE $channel");
+  ok $host->pump(timeout_ms => 200) >= 0,
+    'real authoritative host pumps MODE query requests';
+  is _read_client_line($bob, 1_000), ":overnet.irc.local 324 bob $channel +mnt",
+    'real authoritative MODE query reflects derived channel modes';
+
+  _write_client_line($bob, "PRIVMSG $channel :blocked");
+  ok $host->pump(timeout_ms => 200) >= 0,
+    'real authoritative host pumps moderated PRIVMSG checks';
+  is _read_client_line($bob, 1_000), ":overnet.irc.local 404 bob $channel :Cannot send to channel",
+    'real authoritative moderated channels reject unvoiced senders';
+
+  _write_client_line($bob, "TOPIC $channel :blocked");
+  ok $host->pump(timeout_ms => 200) >= 0,
+    'real authoritative host pumps topic privilege checks';
+  is _read_client_line($bob, 1_000), ":overnet.irc.local 482 bob $channel :You're not channel operator",
+    'real authoritative topic-restricted channels reject non-operators';
+
+  _write_client_line($alice, "MODE $channel +v bob");
+  ok $host->pump(timeout_ms => 200) >= 0,
+    'real authoritative host pumps MODE writes';
+  is _read_client_line($alice, 1_000), ":alice MODE $channel +v bob",
+    'real authoritative MODE writes are broadcast to the actor';
+  is _read_client_line($bob, 1_000), ":alice MODE $channel +v bob",
+    'real authoritative MODE writes are broadcast to the target';
+
+  _write_client_line($bob, "NAMES $channel");
+  ok $host->pump(timeout_ms => 200) >= 0,
+    'real authoritative host pumps NAMES derivation';
+  is _read_client_line($bob, 1_000), ":overnet.irc.local 353 bob = $channel :\@alice +bob",
+    'real authoritative NAMES output reflects derived role prefixes after MODE';
+  is _read_client_line($bob, 1_000), ":overnet.irc.local 366 bob $channel :End of /NAMES list.",
+    'bob receives the end-of-names line after a real authoritative NAMES query';
+
+  _write_client_line($alice, "KICK $channel bob :bye");
+  ok $host->pump(timeout_ms => 200) >= 0,
+    'real authoritative host pumps KICK writes';
+  is _read_client_line($alice, 1_000), ":alice KICK $channel bob :bye",
+    'real authoritative KICK is broadcast to the operator';
+  is _read_client_line($bob, 1_000), ":alice KICK $channel bob :bye",
+    'real authoritative KICK is broadcast to the target';
+
+  _write_client_line($alice, "NAMES $channel");
+  ok $host->pump(timeout_ms => 200) >= 0,
+    'real authoritative host pumps post-KICK NAMES derivation';
+  is _read_client_line($alice, 1_000), ":overnet.irc.local 353 alice = $channel :\@alice",
+    'real authoritative kicked members disappear from NAMES output';
+  is _read_client_line($alice, 1_000), ":overnet.irc.local 366 alice $channel :End of /NAMES list.",
+    'alice receives the end-of-names line after real authoritative KICK';
+
+  my $shutdown = $host->request_shutdown(reason => 'real authoritative test complete');
+  is $shutdown->{state}, 'shutdown_complete', 'real authoritative server handles runtime shutdown';
+  is $shutdown->{exit_code}, 0, 'real authoritative server exits cleanly';
+
+  close $alice->{socket};
+  close $bob->{socket};
+};
+
+subtest 'IRC program entrypoints do not import Net::Nostr directly' => sub {
+  my @paths = (
+    File::Spec->catfile(
+      $FindBin::Bin,
+      '..',
+      '..',
+      'overnet-program-irc',
+      'lib',
+      'Overnet',
+      'Program',
+      'IRC',
+      'Server.pm',
+    ),
+    File::Spec->catfile(
+      $FindBin::Bin,
+      '..',
+      '..',
+      'overnet-program-irc',
+      'bin',
+      'overnet-irc-local-server.pl',
+    ),
+    File::Spec->catfile(
+      $FindBin::Bin,
+      '..',
+      '..',
+      'overnet-program-irc',
+      'bin',
+      'overnet-irc-server.pl',
+    ),
+    File::Spec->catfile(
+      $FindBin::Bin,
+      '..',
+      '..',
+      'overnet-program-irc',
+      'bin',
+      'overnet-irc-chat-client.pl',
+    ),
+  );
+
+  for my $path (@paths) {
+    open my $fh, '<', $path
+      or die "Unable to read $path: $!";
+    my $source = do { local $/; <$fh> };
+    close $fh;
+
+    unlike $source, qr/^\s*use\s+Net::Nostr/m,
+      "$path no longer imports Net::Nostr directly";
+    unlike $source, qr/\bNet::Nostr::/,
+      "$path no longer references Net::Nostr directly";
+  }
 };
 
 done_testing;
