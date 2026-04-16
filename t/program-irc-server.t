@@ -287,7 +287,7 @@ sub _authoritative_grant_kind {
   return 14142;
 }
 
-sub _build_authoritative_auth_payload {
+sub _build_authoritative_auth_event_hash {
   my (%args) = @_;
   my $key = $args{key};
   my $challenge = $args{challenge};
@@ -304,10 +304,20 @@ sub _build_authoritative_auth_payload {
     ],
   );
 
-  return encode_base64(encode_json($event->to_hash), '');
+  return $event->to_hash;
 }
 
-sub _build_authoritative_delegate_payload {
+sub _build_authoritative_auth_payload {
+  my (%args) = @_;
+  return encode_base64(
+    encode_json(
+      _build_authoritative_auth_event_hash(%args)
+    ),
+    '',
+  );
+}
+
+sub _build_authoritative_delegate_event_hash {
   my (%args) = @_;
   my $key = $args{key};
   my $relay_url = $args{relay_url};
@@ -332,7 +342,53 @@ sub _build_authoritative_delegate_payload {
     ],
   );
 
-  return encode_base64(encode_json($event->to_hash), '');
+  return $event->to_hash;
+}
+
+sub _build_authoritative_delegate_payload {
+  my (%args) = @_;
+  return encode_base64(
+    encode_json(
+      _build_authoritative_delegate_event_hash(%args)
+    ),
+    '',
+  );
+}
+
+sub _write_authenticate_payload {
+  my ($client, $payload) = @_;
+  my $remaining = defined $payload ? $payload : '';
+  my $sent = 0;
+
+  while (length($remaining) > 400) {
+    _write_client_line($client, 'AUTHENTICATE ' . substr($remaining, 0, 400, ''));
+    $sent = 1;
+  }
+
+  if (length $remaining) {
+    _write_client_line($client, 'AUTHENTICATE ' . $remaining);
+    return 1;
+  }
+
+  _write_client_line($client, $sent ? 'AUTHENTICATE +' : 'AUTHENTICATE +');
+  return 1;
+}
+
+sub _read_authenticate_payload {
+  my ($client, $timeout_ms) = @_;
+  my $payload = '';
+
+  while (1) {
+    my $line = _read_client_line($client, $timeout_ms);
+    like $line, qr/\A(?::[^ ]+ )?AUTHENTICATE (.+)\z/,
+      'server emits an AUTHENTICATE challenge line';
+    my ($chunk) = $line =~ /\A(?::[^ ]+ )?AUTHENTICATE (.+)\z/;
+    last if !defined($chunk) || $chunk eq '+';
+    $payload .= $chunk;
+    last if length($chunk) < 400;
+  }
+
+  return decode_json(decode_base64($payload));
 }
 
 sub _free_port {
@@ -2393,6 +2449,108 @@ subtest 'IRC server program accepts TLS clients using the baseline tls config sh
   close $client->{socket};
 };
 
+subtest 'IRC server program drops TLS handshakes on the plain listener without exiting' => sub {
+  my $tmpdir = tempdir(CLEANUP => 1);
+  my $signing_key_path = File::Spec->catfile($tmpdir, 'plain-tls-probe-signing-key.pem');
+  Overnet::Core::Nostr->generate_key->save_privkey($signing_key_path);
+
+  my $runtime = Overnet::Program::Runtime->new(
+    config => {
+      adapter_id       => 'irc.test',
+      network          => 'local',
+      listen_host      => '127.0.0.1',
+      listen_port      => 0,
+      server_name      => 'overnet.irc.local',
+      signing_key_file => $signing_key_path,
+      adapter_config   => {},
+    },
+  );
+
+  ok $runtime->register_adapter_definition(
+    adapter_id => 'irc.test',
+    definition => {
+      kind             => 'class',
+      class            => 'Overnet::Adapter::IRC',
+      lib_dirs         => [$irc_lib],
+      constructor_args => {},
+    },
+  ), 'runtime can register the real IRC adapter for the plain listener TLS probe';
+
+  my $host = Overnet::Program::Host->new(
+    command     => ['/opt/perl-5.42/bin/perl', $program_path],
+    runtime     => $runtime,
+    program_id  => 'overnet.program.irc_server',
+    permissions => [
+      'adapters.use',
+      'subscriptions.read',
+      'overnet.emit_event',
+      'overnet.emit_state',
+      'overnet.emit_private_message',
+      'overnet.emit_capabilities',
+    ],
+    services => {
+      'adapters.open_session'        => {},
+      'adapters.map_input'           => {},
+      'adapters.close_session'       => {},
+      'subscriptions.open'           => {},
+      'subscriptions.close'          => {},
+      'overnet.emit_event'           => {},
+      'overnet.emit_state'           => {},
+      'overnet.emit_private_message' => {},
+      'overnet.emit_capabilities'    => {},
+    },
+    startup_timeout_ms  => 1_000,
+    shutdown_timeout_ms => 1_000,
+  );
+
+  $host->start;
+  is $host->state, 'ready', 'plain listener reaches ready state before the TLS probe';
+  my $ready_details = _wait_for_ready_details($host);
+  ok $ready_details, 'plain listener publishes ready health details';
+
+  my $tls_client;
+  my $tls_ok = eval {
+    $tls_client = _connect_irc_client_tls($ready_details->{listen_port});
+    1;
+  };
+  my $tls_error = $@;
+  ok $tls_client || !$tls_ok, 'TLS probe reaches the plain listener';
+
+  my $survived = eval {
+    for (1 .. 10) {
+      $host->pump(timeout_ms => 100);
+      last if $host->has_exited;
+    }
+    1;
+  };
+  ok $survived, 'host pumping stays non-fatal after the TLS probe';
+  ok !$host->has_exited, 'plain listener stays running after the TLS probe';
+
+  if ($tls_client) {
+    close $tls_client->{socket};
+  }
+
+  if (!$host->has_exited && $survived) {
+    my $client = _connect_irc_client($ready_details->{listen_port});
+    _write_client_line($client, 'NICK alice');
+    _write_client_line($client, 'USER alice 0 * :Alice');
+    _assert_registration_prelude(
+      client  => $client,
+      nick    => 'alice',
+      network => 'local',
+    );
+
+    _write_client_line($client, 'QUIT :done');
+    close $client->{socket};
+  } else {
+    fail('plain listener still accepts a normal client after the TLS probe');
+  }
+
+  my $shutdown = $host->request_shutdown(reason => 'plain tls probe complete');
+  is $shutdown->{state}, 'shutdown_complete', 'plain listener handles runtime shutdown after the TLS probe';
+  is $shutdown->{exit_code}, 0, 'plain listener exits cleanly after the TLS probe';
+};
+
 subtest 'IRC server program uses authoritative hosted-channel state for moderated IRC behavior' => sub {
   my $network = 'irc.authority.test';
   my $channel = '#ops';
@@ -2719,6 +2877,206 @@ subtest 'IRC server program uses authoritative hosted-channel state for moderate
 
   close $alice->{socket};
   close $bob->{socket};
+};
+
+subtest 'IRC server program authenticates authoritative clients through SASL NOSTR' => sub {
+  my $network = 'irc.authority.sasl.test';
+  my $channel = '#ops';
+  my $group_host = 'groups.example.test';
+  my $group_id = 'ops';
+  my $server_name = 'overnet.irc.local';
+  my $alice_key = Net::Nostr::Key->new;
+  my $alice_pubkey = $alice_key->pubkey_hex;
+
+  my $tmpdir = tempdir(CLEANUP => 1);
+  my $key_path = File::Spec->catfile($tmpdir, 'irc-server-authority-sasl-test-key.pem');
+  my $key = Net::Nostr::Key->new;
+  $key->save_privkey($key_path);
+
+  my $runtime = Overnet::Program::Runtime->new(
+    config => {
+      adapter_id       => 'irc.authoritative.sasl.mock',
+      network          => $network,
+      listen_host      => '127.0.0.1',
+      listen_port      => 0,
+      server_name      => $server_name,
+      signing_key_file => $key_path,
+      adapter_config   => {
+        network           => $network,
+        authority_profile => 'nip29',
+        group_host        => $group_host,
+        channel_groups    => {
+          $channel => $group_id,
+        },
+        mock_authoritative_channels => {
+          $channel => {
+            topic_restricted => 1,
+            members          => [
+              {
+                pubkey => $alice_pubkey,
+                roles  => ['irc.operator'],
+              },
+            ],
+          },
+        },
+      },
+    },
+  );
+
+  my $authority_stream = _authoritative_nip29_stream_name(
+    network    => $network,
+    group_host => $group_host,
+    group_id   => $group_id,
+  );
+  my $append = $runtime->append_event(
+    stream => $authority_stream,
+    event  => Net::Nostr::Group->metadata(
+      pubkey     => 'f' x 64,
+      group_id   => $group_id,
+      created_at => 1_744_301_200,
+    )->to_hash,
+  );
+  ok defined $append->{offset}, 'runtime stores seeded authoritative SASL mock NIP-29 event';
+
+  ok $runtime->register_adapter_definition(
+    adapter_id => 'irc.authoritative.sasl.mock',
+    definition => {
+      kind             => 'class',
+      class            => 'Local::MockAuthoritativeIRCAdapter',
+      constructor_args => {},
+    },
+  ), 'runtime can register the mock authoritative adapter for SASL coverage';
+
+  my $host = Overnet::Program::Host->new(
+    command     => [$^X, $program_path],
+    runtime     => $runtime,
+    program_id  => 'overnet.program.irc_server',
+    permissions => [
+      'adapters.use',
+      'events.read',
+      'subscriptions.read',
+      'overnet.emit_event',
+      'overnet.emit_state',
+      'overnet.emit_private_message',
+      'overnet.emit_capabilities',
+    ],
+    services => {
+      'adapters.open_session'        => {},
+      'adapters.map_input'           => {},
+      'adapters.derive'              => {},
+      'adapters.close_session'       => {},
+      'events.read'                  => {},
+      'subscriptions.open'           => {},
+      'subscriptions.close'          => {},
+      'overnet.emit_event'           => {},
+      'overnet.emit_state'           => {},
+      'overnet.emit_private_message' => {},
+      'overnet.emit_capabilities'    => {},
+    },
+    startup_timeout_ms  => 1_000,
+    shutdown_timeout_ms => 1_000,
+  );
+
+  $host->start;
+  is $host->state, 'ready', 'authoritative SASL server reaches ready state';
+
+  my $ready_details = _wait_for_ready_details($host);
+  ok $ready_details, 'authoritative SASL server publishes ready health details';
+
+  my $alice = _connect_irc_client($ready_details->{listen_port});
+
+  _write_client_line($alice, 'CAP LS 302');
+  like _read_client_line($alice, 1_000),
+    qr/\A:\Q$server_name\E CAP \* LS :(?:overnet-e2ee sasl|sasl overnet-e2ee|sasl)\z/,
+    'authoritative SASL server advertises the sasl capability';
+
+  _write_client_line($alice, 'CAP REQ :sasl');
+  is _read_client_line($alice, 1_000), ":$server_name CAP * ACK :sasl",
+    'authoritative SASL server ACKs CAP REQ :sasl';
+
+  _write_client_line($alice, 'NICK alice');
+  _write_client_line($alice, 'USER alice 0 * :Alice Example');
+  is _read_client_line_optional($alice, 200), undef,
+    'registration is deferred while SASL capability negotiation remains active';
+
+  _write_client_line($alice, 'AUTHENTICATE NOSTR');
+  my $challenge_payload = _read_authenticate_payload($alice, 1_000);
+  is_deeply(
+    {
+      map { $_ => $challenge_payload->{$_} }
+        grep { exists $challenge_payload->{$_} }
+        qw(challenge scope relay_url delegate_pubkey session_id expires_at grant_kind)
+    },
+    {
+      challenge => $challenge_payload->{challenge},
+      scope     => _authoritative_auth_scope(
+        server_name => $server_name,
+        network     => $network,
+      ),
+    },
+    'non-relay authoritative SASL challenge exposes only the auth challenge and scope',
+  );
+  like $challenge_payload->{challenge}, qr/\A[0-9a-f]{64}\z/,
+    'non-relay authoritative SASL challenge carries a random challenge token';
+
+  my $sasl_response_payload = encode_base64(
+    encode_json({
+      auth_event => _build_authoritative_auth_event_hash(
+        key       => $alice_key,
+        challenge => $challenge_payload->{challenge},
+        scope     => $challenge_payload->{scope},
+      ),
+    }),
+    '',
+  );
+  _write_authenticate_payload($alice, $sasl_response_payload);
+  is _read_client_line($alice, 1_000), ":$server_name 903 alice :SASL authentication successful",
+    'authoritative SASL NOSTR binds the authenticated pubkey successfully';
+
+  _write_client_line($alice, 'CAP END');
+  _assert_registration_prelude(
+    client  => $alice,
+    nick    => 'alice',
+    network => $network,
+  );
+  ok _wait_for_dm_subscription_count($host, 1),
+    'alice registration completes its DM subscription open after SASL success';
+
+  _write_client_line($alice, "JOIN $channel");
+  ok $host->pump(timeout_ms => 200) >= 0,
+    'authoritative SASL host pumps alice join requests';
+  is _read_client_line($alice, 1_000), ":alice JOIN $channel",
+    'alice receives her JOIN echo after SASL authentication';
+  is _read_client_line($alice, 1_000), ":overnet.irc.local 353 alice = $channel :\@alice",
+    'authoritative SASL JOIN bootstrap prefixes the operator nick';
+  is _read_client_line($alice, 1_000), ":overnet.irc.local 366 alice $channel :End of /NAMES list.",
+    'alice receives end-of-names after SASL-authenticated JOIN';
+
+  _write_client_line($alice, "TOPIC $channel :Topic via SASL");
+  ok $host->pump(timeout_ms => 200) >= 0,
+    'authoritative SASL host pumps TOPIC writes';
+  is _read_client_line($alice, 1_000), ":alice TOPIC $channel :Topic via SASL",
+    'SASL-authenticated authoritative TOPIC succeeds';
+
+  my $topic_request = _last_request_matching(
+    $host->transcript,
+    'from_program',
+    'adapters.map_input',
+    sub {
+      ref($_[0]{input}) eq 'HASH'
+        && (($_[0]{input}{command} || '') eq 'TOPIC')
+        && (($_[0]{input}{target} || '') eq $channel);
+    },
+  );
+  ok $topic_request, 'program routes SASL-authenticated authoritative TOPIC through the adapter';
+  is $topic_request->{input}{actor_pubkey}, $alice_pubkey,
+    'SASL-authenticated authoritative TOPIC binds the actor pubkey';
+
+  my $shutdown = $host->request_shutdown(reason => 'authoritative sasl test complete');
+  is $shutdown->{state}, 'shutdown_complete', 'authoritative SASL server handles runtime shutdown';
+  is $shutdown->{exit_code}, 0, 'authoritative SASL server exits cleanly';
+
+  close $alice->{socket};
 };
 
 subtest 'IRC server program uses the real IRC adapter for authoritative NIP-29 channel state' => sub {
@@ -3554,6 +3912,329 @@ subtest 'IRC server program admits an invited user to a closed authoritative cha
   close $carol->{socket};
 };
 
+subtest 'IRC server program establishes authoritative relay delegation through SASL NOSTR' => sub {
+  my $network = 'irc.authority.sasl.relay.test';
+  my $channel = '#ops';
+  my $group_host = 'groups.example.test';
+  my $group_id = 'ops';
+  my $relay_host_pump_ms = 1_500;
+  my $relay_propagation_timeout_ms = 5_000;
+  my $relay_port = _free_port();
+  my $relay_url = "ws://127.0.0.1:$relay_port";
+  my $server_name = 'overnet.irc.local';
+
+  my $alice_key = Net::Nostr::Key->new;
+  my $alice_pubkey = $alice_key->pubkey_hex;
+
+  my $relay = _spawn_authoritative_nip29_relay(
+    port      => $relay_port,
+    relay_url => $relay_url,
+  );
+  _wait_for_authoritative_nip29_relay_ready($relay_url);
+
+  my @seed_events = (
+    Net::Nostr::Group->metadata(
+      pubkey     => 'f' x 64,
+      group_id   => $group_id,
+      created_at => 1_744_301_300,
+      closed     => 1,
+    )->to_hash,
+    Net::Nostr::Group->admins(
+      pubkey     => 'f' x 64,
+      group_id   => $group_id,
+      created_at => 1_744_301_301,
+      members    => [
+        {
+          pubkey => $alice_pubkey,
+          roles  => ['irc.operator'],
+        },
+      ],
+    )->to_hash,
+    Net::Nostr::Group->members(
+      pubkey     => 'f' x 64,
+      group_id   => $group_id,
+      created_at => 1_744_301_302,
+      members    => [
+        $alice_pubkey,
+      ],
+    )->to_hash,
+    Net::Nostr::Group->roles(
+      pubkey     => 'f' x 64,
+      group_id   => $group_id,
+      created_at => 1_744_301_303,
+      roles      => [
+        { name => 'irc.operator' },
+        { name => 'irc.voice' },
+      ],
+    )->to_hash,
+  );
+  my $seed_key = Net::Nostr::Key->new;
+  @seed_events = map {
+    $seed_key->create_event(
+      kind       => $_->{kind},
+      created_at => $_->{created_at},
+      content    => $_->{content},
+      tags       => $_->{tags},
+    )->to_hash
+  } @seed_events;
+
+  for my $event (@seed_events) {
+    my $publish = _publish_nostr_event_to_relay(
+      relay_url => $relay_url,
+      event     => $event,
+    );
+    ok $publish->{accepted}, 'relay accepts seeded authoritative SASL relay state';
+  }
+
+  my $tmpdir = tempdir(CLEANUP => 1);
+  my $key_path = File::Spec->catfile($tmpdir, 'irc-server-authority-sasl-relay-key.pem');
+  my $key = Net::Nostr::Key->new;
+  $key->save_privkey($key_path);
+
+  my $runtime = Overnet::Program::Runtime->new(
+    config => {
+      adapter_id       => 'irc.authoritative.sasl.relay',
+      network          => $network,
+      listen_host      => '127.0.0.1',
+      listen_port      => 0,
+      server_name      => $server_name,
+      signing_key_file => $key_path,
+      adapter_config   => {
+        network           => $network,
+        authority_profile => 'nip29',
+        group_host        => $group_host,
+        channel_groups    => {
+          $channel => $group_id,
+        },
+      },
+      authority_relay => {
+        url              => $relay_url,
+        poll_interval_ms => 50,
+      },
+    },
+  );
+  ok $runtime->register_adapter_definition(
+    adapter_id => 'irc.authoritative.sasl.relay',
+    definition => {
+      kind             => 'class',
+      class            => 'Overnet::Adapter::IRC',
+      lib_dirs         => [$irc_lib],
+      constructor_args => {},
+    },
+  ), 'runtime can register the real authoritative IRC adapter for SASL relay coverage';
+
+  my $host = Overnet::Program::Host->new(
+    command     => [$^X, $program_path],
+    runtime     => $runtime,
+    program_id  => 'overnet.program.irc_server',
+    permissions => [
+      'adapters.use',
+      'events.append',
+      'events.read',
+      'nostr.read',
+      'nostr.write',
+      'subscriptions.read',
+      'overnet.emit_event',
+      'overnet.emit_state',
+      'overnet.emit_private_message',
+      'overnet.emit_capabilities',
+    ],
+    services => {
+      'adapters.open_session'            => {},
+      'adapters.map_input'               => {},
+      'adapters.derive'                  => {},
+      'adapters.close_session'           => {},
+      'events.append'                    => {},
+      'events.read'                      => {},
+      'nostr.publish_event'              => {},
+      'nostr.query_events'               => {},
+      'nostr.open_subscription'          => {},
+      'nostr.read_subscription_snapshot' => {},
+      'nostr.close_subscription'         => {},
+      'subscriptions.open'               => {},
+      'subscriptions.close'              => {},
+      'overnet.emit_event'               => {},
+      'overnet.emit_state'               => {},
+      'overnet.emit_private_message'     => {},
+      'overnet.emit_capabilities'        => {},
+    },
+    startup_timeout_ms  => 1_000,
+    shutdown_timeout_ms => 1_000,
+  );
+
+  $host->start;
+  is $host->state, 'ready', 'authoritative SASL relay server reaches ready state';
+
+  my $ready_details = _wait_for_ready_details($host);
+  ok $ready_details, 'authoritative SASL relay server publishes ready health details';
+
+  my $alice = _connect_irc_client($ready_details->{listen_port});
+
+  _write_client_line($alice, 'CAP LS 302');
+  like _read_client_line($alice, 1_000),
+    qr/\A:\Q$server_name\E CAP \* LS :(?:overnet-e2ee sasl|sasl overnet-e2ee|sasl)\z/,
+    'authoritative SASL relay server advertises the sasl capability';
+
+  _write_client_line($alice, 'CAP REQ :sasl');
+  is _read_client_line($alice, 1_000), ":$server_name CAP * ACK :sasl",
+    'authoritative SASL relay server ACKs CAP REQ :sasl';
+
+  _write_client_line($alice, 'NICK alice');
+  _write_client_line($alice, 'USER alice 0 * :Alice Relay');
+  is _read_client_line_optional($alice, 200), undef,
+    'relay-backed registration is deferred while SASL capability negotiation remains active';
+
+  _write_client_line($alice, 'AUTHENTICATE NOSTR');
+  my $challenge_payload = _read_authenticate_payload($alice, 1_000);
+  like $challenge_payload->{challenge}, qr/\A[0-9a-f]{64}\z/,
+    'relay-backed SASL challenge carries a random challenge token';
+  is $challenge_payload->{scope}, _authoritative_auth_scope(
+    server_name => $server_name,
+    network     => $network,
+  ), 'relay-backed SASL challenge carries the authoritative auth scope';
+  is $challenge_payload->{relay_url}, $relay_url,
+    'relay-backed SASL challenge carries the relay URL';
+  is $challenge_payload->{grant_kind}, _authoritative_grant_kind(),
+    'relay-backed SASL challenge carries the delegation grant kind';
+  like $challenge_payload->{delegate_pubkey}, qr/\A[0-9a-f]{64}\z/,
+    'relay-backed SASL challenge carries a delegated signing pubkey';
+  like $challenge_payload->{session_id}, qr/\A[0-9a-f]{64}\z/,
+    'relay-backed SASL challenge carries a delegation session id';
+  like $challenge_payload->{expires_at}, qr/\A\d+\z/,
+    'relay-backed SASL challenge carries a delegation expiration';
+
+  my $sasl_response_payload = encode_base64(
+    encode_json({
+      auth_event => _build_authoritative_auth_event_hash(
+        key       => $alice_key,
+        challenge => $challenge_payload->{challenge},
+        scope     => $challenge_payload->{scope},
+      ),
+      delegate_event => _build_authoritative_delegate_event_hash(
+        key             => $alice_key,
+        relay_url       => $challenge_payload->{relay_url},
+        scope           => $challenge_payload->{scope},
+        delegate_pubkey => $challenge_payload->{delegate_pubkey},
+        session_id      => $challenge_payload->{session_id},
+        expires_at      => $challenge_payload->{expires_at},
+        nick            => 'alice',
+      ),
+    }),
+    '',
+  );
+  _write_authenticate_payload($alice, $sasl_response_payload);
+  ok $host->pump(timeout_ms => $relay_host_pump_ms) >= 0,
+    'authoritative SASL relay host pumps the SASL response and delegation publish';
+  is _read_client_line($alice, 3_000), ":$server_name 903 alice :SASL authentication successful",
+    'relay-backed SASL NOSTR binds the authenticated pubkey and delegation successfully';
+
+  ok _pump_hosts_until(
+    hosts      => [ $host ],
+    pump_timeout_ms => $relay_host_pump_ms,
+    timeout_ms => $relay_propagation_timeout_ms,
+    condition  => sub {
+      my $grant_events = _query_nostr_events_from_relay(
+        relay_url => $relay_url,
+        filters   => [
+          {
+            kinds   => [ _authoritative_grant_kind() ],
+            authors => [$alice_pubkey],
+            limit   => 20,
+          },
+        ],
+      );
+      return scalar(@{$grant_events || []}) ? 1 : 0;
+    },
+  ), 'relay-backed SASL publishes the delegation grant to the relay';
+
+  _write_client_line($alice, 'CAP END');
+  _assert_registration_prelude(
+    client      => $alice,
+    nick        => 'alice',
+    network     => $network,
+    server_name => $server_name,
+    timeout_ms  => 3_000,
+  );
+  ok _wait_for_dm_subscription_count($host, 1),
+    'alice registration completes its DM subscription open after relay-backed SASL success';
+
+  _write_client_line($alice, "JOIN $channel");
+  ok $host->pump(timeout_ms => $relay_host_pump_ms) >= 0,
+    'authoritative SASL relay host pumps alice join requests';
+  is _read_client_line($alice, 1_000), ":alice JOIN $channel",
+    'alice receives her relay-backed JOIN echo after SASL authentication';
+  is _read_client_line($alice, 3_000), ":$server_name 353 alice = $channel :\@alice",
+    'relay-backed SASL JOIN bootstrap prefixes the operator nick';
+  is _read_client_line($alice, 3_000), ":$server_name 366 alice $channel :End of /NAMES list.",
+    'alice receives end-of-names after relay-backed SASL JOIN';
+
+  ok !defined(_last_request_matching(
+    $host->transcript,
+    'from_program',
+    'adapters.map_input',
+    sub {
+      ref($_[0]{input}) eq 'HASH'
+        && (($_[0]{input}{command} || '') eq 'JOIN')
+        && (($_[0]{input}{target} || '') eq $channel);
+    },
+  )), 'member-authorized relay-backed JOIN remains local until an invite-mediated admission requires a control write';
+
+  _write_client_line($alice, "TOPIC $channel :Relay topic via SASL");
+  ok $host->pump(timeout_ms => $relay_host_pump_ms) >= 0,
+    'authoritative SASL relay host pumps TOPIC writes';
+  ok _pump_hosts_until(
+    hosts      => [ $host ],
+    pump_timeout_ms => $relay_host_pump_ms,
+    timeout_ms => $relay_propagation_timeout_ms,
+    condition  => sub {
+      return defined _last_request_matching(
+        $host->transcript,
+        'from_program',
+        'adapters.map_input',
+        sub {
+          ref($_[0]{input}) eq 'HASH'
+            && (($_[0]{input}{command} || '') eq 'TOPIC')
+            && (($_[0]{input}{target} || '') eq $channel);
+        },
+      ) ? 1 : 0;
+    },
+  ), 'relay-backed SASL TOPIC produces an authoritative adapter mapping request';
+  ok _pump_hosts_until(
+    hosts      => [ $host ],
+    pump_timeout_ms => $relay_host_pump_ms,
+    timeout_ms => $relay_propagation_timeout_ms,
+    condition  => sub {
+      my $line = _read_client_line_optional($alice, 50);
+      return defined($line) && $line eq ":alice TOPIC $channel :Relay topic via SASL" ? 1 : 0;
+    },
+  ), 'SASL-authenticated relay-backed TOPIC succeeds';
+
+  my $topic_request = _last_request_matching(
+    $host->transcript,
+    'from_program',
+    'adapters.map_input',
+    sub {
+      ref($_[0]{input}) eq 'HASH'
+        && (($_[0]{input}{command} || '') eq 'TOPIC')
+        && (($_[0]{input}{target} || '') eq $channel);
+    },
+  );
+  ok $topic_request, 'program routes SASL-authenticated relay-backed TOPIC through the adapter';
+  like $topic_request->{input}{signing_pubkey}, qr/\A[0-9a-f]{64}\z/,
+    'SASL-authenticated relay-backed TOPIC includes a delegated signing pubkey';
+  like $topic_request->{input}{authority_event_id}, qr/\A[0-9a-f]{64}\z/,
+    'SASL-authenticated relay-backed TOPIC includes a delegation grant reference';
+  like $topic_request->{input}{authority_sequence}, qr/\A[1-9]\d*\z/,
+    'SASL-authenticated relay-backed TOPIC includes a session delegation sequence';
+
+  my $shutdown = $host->request_shutdown(reason => 'authoritative sasl relay test complete');
+  is $shutdown->{state}, 'shutdown_complete', 'authoritative SASL relay server handles runtime shutdown';
+  is $shutdown->{exit_code}, 0, 'authoritative SASL relay server exits cleanly';
+
+  close $alice->{socket};
+  _stop_authoritative_nip29_relay($relay);
+};
+
 subtest 'IRC server program relay-publishes authoritative NIP-29 writes across two instances' => sub {
   my $network = 'irc.authority.relay.test';
   my $channel = '#ops';
@@ -3695,6 +4376,7 @@ subtest 'IRC server program relay-publishes authoritative NIP-29 writes across t
         'events.append'                => {},
         'events.read'                  => {},
         'nostr.publish_event'          => {},
+        'nostr.query_events'           => {},
         'nostr.open_subscription'      => {},
         'nostr.read_subscription_snapshot' => {},
         'nostr.close_subscription'     => {},
@@ -4441,9 +5123,6 @@ subtest 'IRC server program relay-publishes authoritative NIP-29 writes across t
   is _read_client_line($bob_b, 3_000), ":$server_name_b 366 bob $channel :End of /NAMES list.",
     'instance B bob receives end-of-names after rejoining through a fresh invite';
 
-  _write_client_line($alice_a, "MODE $channel +v bob");
-  ok $host_a->pump(timeout_ms => $relay_host_pump_ms) >= 0,
-    'instance A pumps relay-backed MODE write';
   my $mode_request_count_before = _request_count_matching(
     $host_a->transcript,
     'from_program',
@@ -4453,7 +5132,7 @@ subtest 'IRC server program relay-publishes authoritative NIP-29 writes across t
         && (($_[0]{input}{command} || '') eq 'MODE')
         && (($_[0]{input}{target} || '') eq $channel);
     },
-  ) - 1;
+  );
   my $mode_publish_count_before = _request_count_matching(
     $host_a->transcript,
     'from_program',
@@ -4463,6 +5142,9 @@ subtest 'IRC server program relay-publishes authoritative NIP-29 writes across t
         && (($_[0]{event}{kind} || 0) == 9000);
     },
   );
+  _write_client_line($alice_a, "MODE $channel +v bob");
+  ok $host_a->pump(timeout_ms => $relay_host_pump_ms) >= 0,
+    'instance A pumps relay-backed MODE write';
   ok _pump_hosts_until(
     hosts      => [ $host_a, $host_b ],
     pump_timeout_ms => $relay_host_pump_ms,

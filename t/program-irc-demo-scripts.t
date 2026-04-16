@@ -26,6 +26,8 @@ open my $server_fh, '<', $scripts[0]
 my $server_source = do { local $/; <$server_fh> };
 close $server_fh;
 like($server_source, qr/SSL_CERT_FILE=/, 'local server prints a verified HexChat TLS example');
+like($server_source, qr/ircs:\/\/%s:%d\/#overnet/, 'local server prints the HexChat channel URI without percent-encoding the hash');
+unlike($server_source, qr/%23overnet/, 'local server does not percent-encode the HexChat channel hash');
 
 my $client_help = qx{$perl $scripts[1] --help};
 like($client_help, qr/--tls\b/, 'local client help advertises TLS support');
