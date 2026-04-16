@@ -1,5 +1,6 @@
 use strict;
 use warnings;
+use AnyEvent;
 use Test::More;
 use JSON::PP qw(decode_json encode_json);
 use File::Spec;
@@ -9,19 +10,26 @@ use IO::Select;
 use IO::Socket::INET;
 use IO::Socket::SSL qw(SSL_VERIFY_NONE);
 use IO::Socket::SSL::Utils qw(CERT_create PEM_cert2file PEM_key2file);
+use IPC::Open3 qw(open3);
 use MIME::Base64 qw(decode_base64 encode_base64);
-use Time::HiRes qw(time);
+use POSIX qw(WNOHANG);
+use Symbol qw(gensym);
+use Time::HiRes qw(sleep time);
 
+use Net::Nostr::Client;
 use Net::Nostr::DirectMessage;
 use Net::Nostr::Event;
+use Net::Nostr::Filter;
 use Net::Nostr::Group;
 use Net::Nostr::Key;
+use Overnet::Core::Nostr;
 use Overnet::Program::Host;
 use Overnet::Program::Runtime;
 
 my $program_path = File::Spec->catfile($FindBin::Bin, '..', '..', 'overnet-program-irc', 'bin', 'overnet-irc-server.pl');
 my $irc_lib = File::Spec->catdir($FindBin::Bin, '..', '..', 'overnet-adapter-irc', 'lib');
 my $spec_irc_dir = File::Spec->catdir($FindBin::Bin, '..', '..', 'overnet-spec', 'fixtures', 'irc');
+my $authoritative_relay_script = File::Spec->catfile($FindBin::Bin, 'authoritative-nip29-relay.pl');
 
 sub _load_irc_fixture {
   my ($name) = @_;
@@ -196,9 +204,10 @@ sub _assert_registration_prelude {
   my $nick = $args{nick};
   my $network = $args{network};
   my $server_name = $args{server_name} || 'overnet.irc.local';
+  my $timeout_ms = $args{timeout_ms} || 1_000;
 
   is_deeply [
-    _read_client_lines($client, 3, 1_000),
+    _read_client_lines($client, 3, $timeout_ms),
   ], [
     sprintf(':%s 001 %s :Welcome to Overnet IRC', $server_name, $nick),
     sprintf(':%s 005 %s CASEMAPPING=rfc1459 CHANTYPES=#& NETWORK=%s :are supported by this server', $server_name, $nick, $network),
@@ -274,6 +283,10 @@ sub _authoritative_auth_scope {
   return sprintf('irc://%s/%s', $args{server_name}, $args{network});
 }
 
+sub _authoritative_grant_kind {
+  return 14142;
+}
+
 sub _build_authoritative_auth_payload {
   my (%args) = @_;
   my $key = $args{key};
@@ -292,6 +305,163 @@ sub _build_authoritative_auth_payload {
   );
 
   return encode_base64(encode_json($event->to_hash), '');
+}
+
+sub _build_authoritative_delegate_payload {
+  my (%args) = @_;
+  my $key = $args{key};
+  my $relay_url = $args{relay_url};
+  my $scope = $args{scope};
+  my $delegate_pubkey = $args{delegate_pubkey};
+  my $session_id = $args{session_id};
+  my $expires_at = $args{expires_at};
+  my $nick = $args{nick};
+  my $created_at = exists $args{created_at} ? $args{created_at} : 1_744_301_100;
+
+  my $event = $key->create_event(
+    kind       => _authoritative_grant_kind(),
+    created_at => $created_at,
+    content    => '',
+    tags       => [
+      [ 'relay', $relay_url ],
+      [ 'server', $scope ],
+      [ 'delegate', $delegate_pubkey ],
+      [ 'session', $session_id ],
+      [ 'expires_at', $expires_at ],
+      (defined $nick ? ([ 'nick', $nick ]) : ()),
+    ],
+  );
+
+  return encode_base64(encode_json($event->to_hash), '');
+}
+
+sub _free_port {
+  my $sock = IO::Socket::INET->new(
+    Listen    => 1,
+    LocalAddr => '127.0.0.1',
+    LocalPort => 0,
+    Proto     => 'tcp',
+    ReuseAddr => 1,
+  ) or die "Can't allocate free TCP port: $!";
+
+  my $port = $sock->sockport;
+  close $sock;
+  return $port;
+}
+
+sub _spawn_authoritative_nip29_relay {
+  my (%args) = @_;
+  my $stderr = gensym();
+  my $pid = open3(
+    my $stdin,
+    my $stdout,
+    $stderr,
+    $^X,
+    $authoritative_relay_script,
+    '--host', '127.0.0.1',
+    '--port', $args{port},
+    '--relay-url', $args{relay_url},
+    '--grant-kind', _authoritative_grant_kind(),
+  );
+
+  close $stdin;
+  return {
+    pid       => $pid,
+    stdout    => $stdout,
+    stderr    => $stderr,
+    port      => $args{port},
+    relay_url => $args{relay_url},
+  };
+}
+
+sub _stop_authoritative_nip29_relay {
+  my ($proc) = @_;
+  return unless $proc && $proc->{pid};
+
+  kill 'TERM', $proc->{pid};
+  my $deadline = time() + 5;
+  while (time() < $deadline) {
+    my $reaped = waitpid($proc->{pid}, WNOHANG);
+    last if $reaped == $proc->{pid};
+    sleep 0.05;
+  }
+
+  if (waitpid($proc->{pid}, WNOHANG) == 0) {
+    kill 'KILL', $proc->{pid};
+    waitpid($proc->{pid}, 0);
+  }
+
+  close $proc->{stdout} if $proc->{stdout};
+  close $proc->{stderr} if $proc->{stderr};
+}
+
+sub _wait_for_authoritative_nip29_relay_ready {
+  my ($relay_url) = @_;
+  my $deadline = time() + 5;
+
+  while (time() < $deadline) {
+    my $ok = eval {
+      my $client = Net::Nostr::Client->new;
+      $client->connect($relay_url);
+      $client->disconnect;
+      1;
+    };
+    return 1 if $ok;
+    sleep 0.05;
+  }
+
+  die "authoritative NIP-29 relay did not become ready at $relay_url\n";
+}
+
+sub _publish_nostr_event_to_relay {
+  my (%args) = @_;
+  my $relay_url = $args{relay_url};
+  my $event_hash = $args{event};
+  my $event = Net::Nostr::Event->from_wire($event_hash);
+  my $client = Net::Nostr::Client->new;
+  my $cv = AnyEvent->condvar;
+
+  $client->on(ok => sub {
+    my ($event_id, $accepted, $message) = @_;
+    return unless $event_id eq $event->id;
+    $cv->send({
+      accepted => $accepted ? 1 : 0,
+      message  => $message,
+    });
+  });
+
+  $client->connect($relay_url);
+  $client->publish($event);
+  my $result = $cv->recv;
+  $client->disconnect;
+
+  return $result;
+}
+
+sub _query_nostr_events_from_relay {
+  my (%args) = @_;
+  return Overnet::Core::Nostr->query_events(
+    relay_url => $args{relay_url},
+    filters   => $args{filters},
+  );
+}
+
+sub _pump_hosts_until {
+  my (%args) = @_;
+  my $hosts = $args{hosts} || [];
+  my $timeout_ms = $args{timeout_ms} || 1_000;
+  my $condition = $args{condition} || sub { 0 };
+  my $deadline = time() + ($timeout_ms / 1000);
+
+  while (time() < $deadline) {
+    for my $host (@{$hosts}) {
+      $host->pump(timeout_ms => 50);
+    }
+    return 1 if $condition->();
+    sleep 0.05;
+  }
+
+  return 0;
 }
 
 sub _decode_e2ee_transport_from_line {
@@ -3251,6 +3421,510 @@ subtest 'IRC server program admits an invited user to a closed authoritative cha
   close $alice->{socket};
   close $bob->{socket};
   close $carol->{socket};
+};
+
+subtest 'IRC server program relay-publishes authoritative NIP-29 writes across two instances' => sub {
+  my $network = 'irc.authority.relay.test';
+  my $channel = '#ops';
+  my $group_host = 'groups.example.test';
+  my $group_id = 'ops';
+  my $relay_port = _free_port();
+  my $relay_url = "ws://127.0.0.1:$relay_port";
+  my $server_name_a = 'overnet-a.irc.local';
+  my $server_name_b = 'overnet-b.irc.local';
+
+  my $alice_key = Net::Nostr::Key->new;
+  my $bob_key   = Net::Nostr::Key->new;
+  my $alice_pubkey = $alice_key->pubkey_hex;
+  my $bob_pubkey   = $bob_key->pubkey_hex;
+
+  my $relay = _spawn_authoritative_nip29_relay(
+    port      => $relay_port,
+    relay_url => $relay_url,
+  );
+  _wait_for_authoritative_nip29_relay_ready($relay_url);
+
+  my @seed_events = (
+    Net::Nostr::Group->metadata(
+      pubkey     => 'f' x 64,
+      group_id   => $group_id,
+      created_at => 1_744_301_040,
+      closed     => 1,
+    )->to_hash,
+    Net::Nostr::Group->admins(
+      pubkey     => 'f' x 64,
+      group_id   => $group_id,
+      created_at => 1_744_301_041,
+      members    => [
+        {
+          pubkey => $alice_pubkey,
+          roles  => ['irc.operator'],
+        },
+      ],
+    )->to_hash,
+    Net::Nostr::Group->members(
+      pubkey     => 'f' x 64,
+      group_id   => $group_id,
+      created_at => 1_744_301_042,
+      members    => [
+        $alice_pubkey,
+      ],
+    )->to_hash,
+    Net::Nostr::Group->roles(
+      pubkey     => 'f' x 64,
+      group_id   => $group_id,
+      created_at => 1_744_301_043,
+      roles      => [
+        { name => 'irc.operator' },
+        { name => 'irc.voice' },
+      ],
+    )->to_hash,
+  );
+  my $seed_key = Net::Nostr::Key->new;
+  @seed_events = map {
+    $seed_key->create_event(
+      kind       => $_->{kind},
+      created_at => $_->{created_at},
+      content    => $_->{content},
+      tags       => $_->{tags},
+    )->to_hash
+  } @seed_events;
+
+  for my $event (@seed_events) {
+    my $publish = _publish_nostr_event_to_relay(
+      relay_url => $relay_url,
+      event     => $event,
+    );
+    ok $publish->{accepted}, 'relay accepts seeded authoritative NIP-29 state';
+  }
+
+  my $build_runtime = sub {
+    my (%args) = @_;
+    my $tmpdir = tempdir(CLEANUP => 1);
+    my $key_path = File::Spec->catfile($tmpdir, $args{name} . '-irc-server-key.pem');
+    my $key = Net::Nostr::Key->new;
+    $key->save_privkey($key_path);
+
+    my $runtime = Overnet::Program::Runtime->new(
+      config => {
+        adapter_id       => $args{adapter_id},
+        network          => $network,
+        listen_host      => '127.0.0.1',
+        listen_port      => 0,
+        server_name      => $args{server_name},
+        signing_key_file => $key_path,
+        adapter_config   => {
+          network           => $network,
+          authority_profile => 'nip29',
+          group_host        => $group_host,
+          channel_groups    => {
+            $channel => $group_id,
+          },
+        },
+        authority_relay => {
+          url              => $relay_url,
+          poll_interval_ms => 50,
+        },
+      },
+    );
+    ok $runtime->register_adapter_definition(
+      adapter_id => $args{adapter_id},
+      definition => {
+        kind             => 'class',
+        class            => 'Overnet::Adapter::IRC',
+        lib_dirs         => [$irc_lib],
+        constructor_args => {},
+      },
+    ), "$args{name} runtime can register the real authoritative IRC adapter";
+
+    my $host = Overnet::Program::Host->new(
+      command     => [$^X, $program_path],
+      runtime     => $runtime,
+      program_id  => 'overnet.program.irc_server',
+      permissions => [
+        'adapters.use',
+        'events.append',
+        'events.read',
+        'subscriptions.read',
+        'overnet.emit_event',
+        'overnet.emit_state',
+        'overnet.emit_private_message',
+        'overnet.emit_capabilities',
+      ],
+      services => {
+        'adapters.open_session'        => {},
+        'adapters.map_input'           => {},
+        'adapters.derive'              => {},
+        'adapters.close_session'       => {},
+        'events.append'                => {},
+        'events.read'                  => {},
+        'subscriptions.open'           => {},
+        'subscriptions.close'          => {},
+        'overnet.emit_event'           => {},
+        'overnet.emit_state'           => {},
+        'overnet.emit_private_message' => {},
+        'overnet.emit_capabilities'    => {},
+      },
+      startup_timeout_ms  => 1_000,
+      shutdown_timeout_ms => 1_000,
+    );
+
+    $host->start;
+    is $host->state, 'ready', "$args{name} relay-backed authoritative server reaches ready state";
+    my $ready = _wait_for_ready_details($host);
+    ok $ready, "$args{name} relay-backed authoritative server publishes ready health details";
+
+    return ($runtime, $host, $ready);
+  };
+
+  my ($runtime_a, $host_a, $ready_a) = $build_runtime->(
+    name        => 'instance-a',
+    adapter_id  => 'irc.authoritative.relay.a',
+    server_name => $server_name_a,
+  );
+  my ($runtime_b, $host_b, $ready_b) = $build_runtime->(
+    name        => 'instance-b',
+    adapter_id  => 'irc.authoritative.relay.b',
+    server_name => $server_name_b,
+  );
+
+  my $alice_a = _connect_irc_client($ready_a->{listen_port});
+  my $bob_a   = _connect_irc_client($ready_a->{listen_port});
+  my $bob_b   = _connect_irc_client($ready_b->{listen_port});
+
+  my $register = sub {
+    my (%args) = @_;
+    _write_client_line($args{client}, "NICK $args{nick}");
+    _write_client_line($args{client}, "USER $args{nick} 0 * :$args{realname}");
+    _assert_registration_prelude(
+      client      => $args{client},
+      nick        => $args{nick},
+      network     => $network,
+      server_name => $args{server_name},
+      timeout_ms  => 3_000,
+    );
+  };
+
+  my $authenticate = sub {
+    my (%args) = @_;
+    _write_client_line($args{client}, 'OVERNETAUTH CHALLENGE');
+    my $challenge_line = _read_client_line($args{client}, 1_000);
+    like $challenge_line, qr/\A:\Q$args{server_name}\E NOTICE \Q$args{nick}\E :OVERNETAUTH CHALLENGE [0-9a-f]{64}\z/,
+      "$args{nick} receives an authoritative auth challenge on $args{name}";
+    $challenge_line =~ /([0-9a-f]{64})\z/;
+    my $challenge = $1;
+    _write_client_line($args{client}, 'OVERNETAUTH AUTH ' . _build_authoritative_auth_payload(
+      key       => $args{key},
+      challenge => $challenge,
+      scope     => _authoritative_auth_scope(
+        server_name => $args{server_name},
+        network     => $network,
+      ),
+    ));
+    is _read_client_line($args{client}, 1_000),
+      ":$args{server_name} NOTICE $args{nick} :OVERNETAUTH AUTH $args{pubkey}",
+      "$args{nick} authenticates an authoritative pubkey on $args{name}";
+  };
+  my $delegate = sub {
+    my (%args) = @_;
+    _write_client_line($args{client}, 'OVERNETAUTH DELEGATE');
+    my $delegate_line = _read_client_line($args{client}, 3_000);
+    like $delegate_line,
+      qr/\A:\Q$args{server_name}\E NOTICE \Q$args{nick}\E :OVERNETAUTH DELEGATE ([0-9a-f]{64}) ([0-9a-f]{64}) \Q$relay_url\E (\d+)\z/,
+      "$args{nick} receives session delegation parameters on $args{name}";
+    my ($delegate_pubkey, $session_id, $expires_at) = $delegate_line =~ /([0-9a-f]{64}) ([0-9a-f]{64}) \Q$relay_url\E (\d+)\z/;
+    _write_client_line($args{client}, 'OVERNETAUTH DELEGATE ' . _build_authoritative_delegate_payload(
+      key             => $args{key},
+      relay_url       => $relay_url,
+      scope           => _authoritative_auth_scope(
+        server_name => $args{server_name},
+        network     => $network,
+      ),
+      delegate_pubkey => $delegate_pubkey,
+      session_id      => $session_id,
+      expires_at      => $expires_at,
+      nick            => $args{nick},
+    ));
+    is _read_client_line($args{client}, 3_000),
+      ":$args{server_name} NOTICE $args{nick} :OVERNETAUTH DELEGATE",
+      "$args{nick} establishes a session delegation grant on $args{name}";
+  };
+
+  $register->(
+    client      => $alice_a,
+    nick        => 'alice',
+    realname    => 'Alice Relay',
+    server_name => $server_name_a,
+  );
+  ok _wait_for_dm_subscription_count($host_a, 1),
+    'instance A alice registration completes its DM subscription open';
+
+  $register->(
+    client      => $bob_a,
+    nick        => 'bob',
+    realname    => 'Bob Relay A',
+    server_name => $server_name_a,
+  );
+  ok _wait_for_dm_subscription_count($host_a, 2),
+    'instance A bob registration completes its DM subscription open';
+
+  $register->(
+    client      => $bob_b,
+    nick        => 'bob',
+    realname    => 'Bob Relay B',
+    server_name => $server_name_b,
+  );
+  ok _wait_for_dm_subscription_count($host_b, 1),
+    'instance B bob registration completes its DM subscription open';
+
+  $authenticate->(
+    name        => 'instance A',
+    client      => $alice_a,
+    nick        => 'alice',
+    key         => $alice_key,
+    pubkey      => $alice_pubkey,
+    server_name => $server_name_a,
+  );
+  $authenticate->(
+    name        => 'instance A',
+    client      => $bob_a,
+    nick        => 'bob',
+    key         => $bob_key,
+    pubkey      => $bob_pubkey,
+    server_name => $server_name_a,
+  );
+  $authenticate->(
+    name        => 'instance B',
+    client      => $bob_b,
+    nick        => 'bob',
+    key         => $bob_key,
+    pubkey      => $bob_pubkey,
+    server_name => $server_name_b,
+  );
+  $delegate->(
+    name        => 'instance A',
+    client      => $alice_a,
+    nick        => 'alice',
+    key         => $alice_key,
+    server_name => $server_name_a,
+  );
+  $delegate->(
+    name        => 'instance A',
+    client      => $bob_a,
+    nick        => 'bob',
+    key         => $bob_key,
+    server_name => $server_name_a,
+  );
+  $delegate->(
+    name        => 'instance B',
+    client      => $bob_b,
+    nick        => 'bob',
+    key         => $bob_key,
+    server_name => $server_name_b,
+  );
+
+  _write_client_line($alice_a, "JOIN $channel");
+  ok $host_a->pump(timeout_ms => 200) >= 0,
+    'instance A pumps alice relay-backed join request';
+  is _read_client_line($alice_a, 1_000), ":alice JOIN $channel",
+    'alice receives her relay-backed JOIN echo on instance A';
+  is _read_client_line($alice_a, 3_000), ":$server_name_a 353 alice = $channel :\@alice",
+    'alice sees operator bootstrap on instance A';
+  is _read_client_line($alice_a, 3_000), ":$server_name_a 366 alice $channel :End of /NAMES list.",
+    'alice receives end-of-names on instance A';
+
+  _write_client_line($bob_b, "JOIN $channel");
+  ok $host_b->pump(timeout_ms => 200) >= 0,
+    'instance B pumps bob pre-invite join request';
+  is _read_client_line($bob_b, 3_000), ":$server_name_b 473 bob $channel :Cannot join channel (+i)",
+    'instance B rejects bob before the relay-backed invite';
+
+  _write_client_line($alice_a, "INVITE bob $channel");
+  ok $host_a->pump(timeout_ms => 200) >= 0,
+    'instance A pumps relay-backed INVITE write';
+  my $local_invite_numeric = _read_client_line_optional($alice_a, 3_000);
+  ok !defined($local_invite_numeric) || $local_invite_numeric eq ":$server_name_a 341 alice bob $channel",
+    'instance A either emits or suppresses the local INVITE confirmation numeric consistently';
+  my $local_invite_line = _read_client_line_optional($bob_a, 3_000);
+  ok !defined($local_invite_line) || $local_invite_line eq ":alice INVITE bob :$channel",
+    'instance A either emits or suppresses the local same-instance INVITE line consistently';
+  my $relay_invite_request = _last_request_matching(
+    $host_a->transcript,
+    'from_program',
+    'adapters.map_input',
+    sub {
+      ref($_[0]{input}) eq 'HASH'
+        && (($_[0]{input}{command} || '') eq 'INVITE')
+        && (($_[0]{input}{target} || '') eq $channel);
+    },
+  );
+  ok $relay_invite_request, 'instance A routes the relay-backed INVITE through the adapter';
+  is $relay_invite_request->{input}{actor_pubkey}, $alice_pubkey,
+    'instance A relay-backed INVITE includes actor_pubkey';
+  is $relay_invite_request->{input}{target_pubkey}, $bob_pubkey,
+    'instance A relay-backed INVITE includes target_pubkey';
+  like $relay_invite_request->{input}{signing_pubkey}, qr/\A[0-9a-f]{64}\z/,
+    'instance A relay-backed INVITE includes a delegated signing pubkey';
+  like $relay_invite_request->{input}{authority_event_id}, qr/\A[0-9a-f]{64}\z/,
+    'instance A relay-backed INVITE includes a delegation grant reference';
+  like $relay_invite_request->{input}{authority_sequence}, qr/\A[1-9]\d*\z/,
+    'instance A relay-backed INVITE includes a session-scoped delegation sequence';
+  my $relay_invites = _query_nostr_events_from_relay(
+    relay_url => $relay_url,
+    filters   => [
+      {
+        kinds => [9009],
+        '#h'  => [$group_id],
+        limit => 20,
+      },
+    ],
+  );
+  ok(
+    scalar(grep {
+      my %tags = _first_tag_values($_->{tags});
+      defined($tags{p}) && $tags{p} eq $bob_pubkey
+    } @{$relay_invites}),
+    'the relay exposes the delegated authoritative INVITE event',
+  );
+
+  ok _pump_hosts_until(
+    hosts      => [ $host_a, $host_b ],
+    timeout_ms => 1_500,
+    condition  => sub {
+      my $line = _read_client_line_optional($bob_b, 50);
+      return defined($line) && $line eq ":alice INVITE bob :$channel" ? 1 : 0;
+    },
+  ), 'instance B receives the propagated relay-backed INVITE';
+
+  _write_client_line($bob_b, "JOIN $channel");
+  ok $host_b->pump(timeout_ms => 200) >= 0,
+    'instance B pumps bob relay-backed invited join';
+  my $relay_join_request = _last_request_matching(
+    $host_b->transcript,
+    'from_program',
+    'adapters.map_input',
+    sub {
+      ref($_[0]{input}) eq 'HASH'
+        && (($_[0]{input}{command} || '') eq 'JOIN')
+        && (($_[0]{input}{target} || '') eq $channel);
+    },
+  );
+  ok $relay_join_request, 'instance B routes the relay-backed JOIN through the adapter when invite admission is available';
+  like $relay_join_request->{input}{signing_pubkey}, qr/\A[0-9a-f]{64}\z/,
+    'instance B relay-backed JOIN includes a delegated signing pubkey';
+  like $relay_join_request->{input}{authority_event_id}, qr/\A[0-9a-f]{64}\z/,
+    'instance B relay-backed JOIN includes a delegation grant reference';
+  like $relay_join_request->{input}{authority_sequence}, qr/\A[1-9]\d*\z/,
+    'instance B relay-backed JOIN includes a session-scoped delegation sequence';
+  is _read_client_line($bob_b, 3_000), ":bob JOIN $channel",
+    'bob receives his relay-backed JOIN echo on instance B';
+  is _read_client_line($bob_b, 3_000), ":$server_name_b 353 bob = $channel :bob",
+    'instance B NAMES bootstrap reflects the invited local member after the relay-backed join';
+  is _read_client_line($bob_b, 3_000), ":$server_name_b 366 bob $channel :End of /NAMES list.",
+    'instance B bob receives end-of-names after the relay-backed join';
+  my $relay_joins = _query_nostr_events_from_relay(
+    relay_url => $relay_url,
+    filters   => [
+      {
+        kinds => [9021],
+        '#h'  => [$group_id],
+        limit => 20,
+      },
+    ],
+  );
+  ok(
+    scalar(grep {
+      my %tags = _first_tag_values($_->{tags});
+      defined($tags{overnet_actor}) && $tags{overnet_actor} eq $bob_pubkey
+    } @{$relay_joins}),
+    'the relay exposes the delegated authoritative JOIN event',
+  );
+
+  _write_client_line($alice_a, "NAMES $channel");
+  ok _pump_hosts_until(
+    hosts      => [ $host_a, $host_b ],
+    timeout_ms => 1_500,
+    condition  => sub {
+      my $line = _read_client_line_optional($alice_a, 50);
+      return defined($line) && $line eq ":$server_name_a 353 alice = $channel :\@alice bob" ? 1 : 0;
+    },
+  ), 'instance A authoritative NAMES sees bob after the relay-backed join on instance B';
+  is _read_client_line($alice_a, 3_000), ":$server_name_a 366 alice $channel :End of /NAMES list.",
+    'instance A authoritative NAMES terminates after the propagated join';
+
+  _write_client_line($alice_a, "MODE $channel +v bob");
+  ok $host_a->pump(timeout_ms => 200) >= 0,
+    'instance A pumps relay-backed MODE write';
+  is _read_client_line($alice_a, 3_000), ":alice MODE $channel +v bob",
+    'alice sees the relay-backed MODE line on instance A';
+
+  _write_client_line($bob_b, "NAMES $channel");
+  ok _pump_hosts_until(
+    hosts      => [ $host_a, $host_b ],
+    timeout_ms => 1_500,
+    condition  => sub {
+      my $line = _read_client_line_optional($bob_b, 50);
+      return defined($line) && $line eq ":$server_name_b 353 bob = $channel :+bob" ? 1 : 0;
+    },
+  ), 'instance B authoritative NAMES reflects bob voice after the relay-backed MODE';
+  is _read_client_line($bob_b, 3_000), ":$server_name_b 366 bob $channel :End of /NAMES list.",
+    'instance B authoritative NAMES terminates after the propagated MODE';
+
+  _write_client_line($alice_a, "KICK $channel bob :relay kick");
+  ok $host_a->pump(timeout_ms => 200) >= 0,
+    'instance A pumps relay-backed KICK write';
+  is _read_client_line($alice_a, 3_000), ":alice KICK $channel bob :relay kick",
+    'alice sees the relay-backed KICK line on instance A';
+  my $relay_kicks = _query_nostr_events_from_relay(
+    relay_url => $relay_url,
+    filters   => [
+      {
+        kinds => [9001],
+        '#h'  => [$group_id],
+        limit => 20,
+      },
+    ],
+  );
+  ok(
+    scalar(grep {
+      my %tags = _first_tag_values($_->{tags});
+      defined($tags{p}) && $tags{p} eq $bob_pubkey
+        && defined($tags{overnet_actor}) && $tags{overnet_actor} eq $alice_pubkey
+        && defined($tags{overnet_authority}) && $tags{overnet_authority} =~ /\A[0-9a-f]{64}\z/
+        && defined($tags{overnet_sequence}) && $tags{overnet_sequence} =~ /\A[1-9]\d*\z/
+    } @{$relay_kicks}),
+    'the relay exposes the delegated authoritative KICK event',
+  );
+
+  ok _pump_hosts_until(
+    hosts      => [ $host_a, $host_b ],
+    timeout_ms => 1_500,
+    condition  => sub {
+      my $line = _read_client_line_optional($bob_b, 50);
+      return defined($line) && $line =~ /\A:[^ ]+ KICK \Q$channel\E bob(?: :relay kick)?\z/ ? 1 : 0;
+    },
+  ), 'instance B bob receives the propagated relay-backed KICK';
+
+  _write_client_line($bob_b, "NAMES $channel");
+  ok $host_b->pump(timeout_ms => 200) >= 0,
+    'instance B pumps post-KICK authoritative NAMES';
+  is _read_client_line($bob_b, 3_000), ":$server_name_b 353 bob = $channel :",
+    'instance B authoritative NAMES removes bob after the relay-backed KICK';
+  is _read_client_line($bob_b, 3_000), ":$server_name_b 366 bob $channel :End of /NAMES list.",
+    'instance B authoritative NAMES terminates after the relay-backed KICK';
+
+  my $shutdown_a = $host_a->request_shutdown(reason => 'relay-backed authoritative test complete A');
+  is $shutdown_a->{state}, 'shutdown_complete', 'instance A relay-backed authoritative server handles runtime shutdown';
+  is $shutdown_a->{exit_code}, 0, 'instance A relay-backed authoritative server exits cleanly';
+
+  my $shutdown_b = $host_b->request_shutdown(reason => 'relay-backed authoritative test complete B');
+  is $shutdown_b->{state}, 'shutdown_complete', 'instance B relay-backed authoritative server handles runtime shutdown';
+  is $shutdown_b->{exit_code}, 0, 'instance B relay-backed authoritative server exits cleanly';
+
+  close $alice_a->{socket};
+  close $bob_a->{socket};
+  close $bob_b->{socket};
+  _stop_authoritative_nip29_relay($relay);
 };
 
 subtest 'IRC program entrypoints do not import Net::Nostr directly' => sub {
