@@ -638,6 +638,8 @@ sub _assert_opaque_private_message_metadata {
         closed           => $source->{closed} ? 1 : 0,
         moderated        => $source->{moderated} ? 1 : 0,
         topic_restricted => $source->{topic_restricted} ? 1 : 0,
+        (exists $source->{topic} ? (topic => $source->{topic}) : ()),
+        (exists $source->{topic_actor_pubkey} ? (topic_actor_pubkey => $source->{topic_actor_pubkey}) : ()),
         members          => \%members,
         present          => {},
       };
@@ -719,6 +721,18 @@ sub _assert_opaque_private_message_metadata {
       return { valid => 1 };
     }
 
+    if (($args{command} || '') eq 'TOPIC') {
+      if (defined $args{text}) {
+        $state->{topic} = $args{text};
+        $state->{topic_actor_pubkey} = $args{actor_pubkey}
+          if defined $args{actor_pubkey};
+      } else {
+        delete $state->{topic};
+        delete $state->{topic_actor_pubkey};
+      }
+      return { valid => 1 };
+    }
+
     return { valid => 1 };
   }
 
@@ -796,6 +810,8 @@ sub _assert_opaque_private_message_metadata {
             object_type       => 'chat.channel',
             object_id         => 'irc:' . ($session->{network} || 'irc.test') . ':' . $channel,
             channel_modes     => $channel_modes,
+            (exists($state->{topic}) ? (topic => $state->{topic}) : ()),
+            (exists($state->{topic_actor_pubkey}) ? (topic_actor_pubkey => $state->{topic_actor_pubkey}) : ()),
             supported_roles   => [],
             members           => \@members,
             present_members   => \@present_members,
@@ -815,6 +831,8 @@ sub _assert_opaque_private_message_metadata {
           object_type       => 'chat.channel',
           object_id         => 'irc:' . ($session->{network} || 'irc.test') . ':' . $channel,
           channel_modes     => $channel_modes,
+          (exists($state->{topic}) ? (topic => $state->{topic}) : ()),
+          (exists($state->{topic_actor_pubkey}) ? (topic_actor_pubkey => $state->{topic_actor_pubkey}) : ()),
           members           => \@members,
         },
       ],
@@ -2590,6 +2608,20 @@ subtest 'IRC server program uses authoritative hosted-channel state for moderate
   is _read_client_line($bob, 1_000), ":overnet.irc.local 482 bob $channel :You're not channel operator",
     'topic-restricted authoritative channels reject non-operators';
 
+  _write_client_line($alice, "TOPIC $channel :Authoritative topic");
+  ok $host->pump(timeout_ms => 200) >= 0,
+    'authoritative host pumps TOPIC writes';
+  is _read_client_line($alice, 1_000), ":alice TOPIC $channel :Authoritative topic",
+    'authoritative TOPIC writes are broadcast to the actor';
+  is _read_client_line($bob, 1_000), ":alice TOPIC $channel :Authoritative topic",
+    'authoritative TOPIC writes are broadcast to other joined channel members';
+
+  _write_client_line($bob, "TOPIC $channel");
+  ok $host->pump(timeout_ms => 200) >= 0,
+    'authoritative host pumps TOPIC query requests';
+  is _read_client_line($bob, 1_000), ":overnet.irc.local 332 bob $channel :Authoritative topic",
+    'authoritative TOPIC query returns the current authoritative topic';
+
   _write_client_line($alice, "MODE $channel +v bob");
   ok $host->pump(timeout_ms => 200) >= 0,
     'authoritative host pumps MODE writes';
@@ -2649,6 +2681,23 @@ subtest 'IRC server program uses authoritative hosted-channel state for moderate
   is $mode_request->{input}{actor_pubkey}, $alice_pubkey, 'authoritative MODE writes include actor_pubkey';
   is $mode_request->{input}{target_pubkey}, $bob_pubkey, 'authoritative MODE writes include target_pubkey';
   is_deeply $mode_request->{input}{current_roles}, [], 'authoritative MODE writes include current target roles';
+
+  my $topic_request = _last_request_matching(
+    $host->transcript,
+    'from_program',
+    'adapters.map_input',
+    sub {
+      ref($_[0]{input}) eq 'HASH'
+        && (($_[0]{input}{command} || '') eq 'TOPIC')
+        && (($_[0]{input}{target} || '') eq $channel);
+    },
+  );
+  ok $topic_request, 'program routes authoritative TOPIC through the adapter';
+  is $topic_request->{input}{actor_pubkey}, $alice_pubkey, 'authoritative TOPIC includes actor_pubkey';
+  is $topic_request->{input}{text}, 'Authoritative topic', 'authoritative TOPIC includes the new topic text';
+  ok ref($topic_request->{input}{group_metadata}) eq 'HASH', 'authoritative TOPIC includes current group metadata';
+  ok $topic_request->{input}{group_metadata}{moderated}, 'authoritative TOPIC preserves the moderated metadata flag';
+  ok $topic_request->{input}{group_metadata}{topic_restricted}, 'authoritative TOPIC preserves the topic-restricted metadata flag';
 
   my $kick_request = _last_request_matching(
     $host->transcript,
@@ -2902,6 +2951,20 @@ subtest 'IRC server program uses the real IRC adapter for authoritative NIP-29 c
     'real authoritative host pumps topic privilege checks';
   is _read_client_line($bob, 1_000), ":overnet.irc.local 482 bob $channel :You're not channel operator",
     'real authoritative topic-restricted channels reject non-operators';
+
+  _write_client_line($alice, "TOPIC $channel :Real authoritative topic");
+  ok $host->pump(timeout_ms => 200) >= 0,
+    'real authoritative host pumps TOPIC writes';
+  is _read_client_line($alice, 1_000), ":alice TOPIC $channel :Real authoritative topic",
+    'real authoritative TOPIC writes are broadcast to the actor';
+  is _read_client_line($bob, 1_000), ":alice TOPIC $channel :Real authoritative topic",
+    'real authoritative TOPIC writes are broadcast to other joined members';
+
+  _write_client_line($bob, "TOPIC $channel");
+  ok $host->pump(timeout_ms => 200) >= 0,
+    'real authoritative host pumps TOPIC query requests';
+  is _read_client_line($bob, 1_000), ":overnet.irc.local 332 bob $channel :Real authoritative topic",
+    'real authoritative TOPIC query returns the current authoritative topic';
 
   _write_client_line($alice, "MODE $channel +v bob");
   ok $host->pump(timeout_ms => 200) >= 0,
@@ -3821,6 +3884,67 @@ subtest 'IRC server program relay-publishes authoritative NIP-29 writes across t
   is _read_client_line($bob_b, 3_000), ":$server_name_b 473 bob $channel :Cannot join channel (+i)",
     'instance B rejects bob before the relay-backed invite';
 
+  _write_client_line($alice_a, "TOPIC $channel :Relay-backed topic");
+  ok $host_a->pump(timeout_ms => $relay_host_pump_ms) >= 0,
+    'instance A pumps relay-backed TOPIC write';
+  ok _pump_hosts_until(
+    hosts      => [ $host_a, $host_b ],
+    pump_timeout_ms => $relay_host_pump_ms,
+    timeout_ms => $relay_propagation_timeout_ms,
+    condition  => sub {
+      my $line = _read_client_line_optional($alice_a, 50);
+      return defined($line) && $line eq ":alice TOPIC $channel :Relay-backed topic" ? 1 : 0;
+    },
+  ), 'alice sees the relay-backed TOPIC line on instance A';
+  my $relay_topic_request = _last_request_matching(
+    $host_a->transcript,
+    'from_program',
+    'adapters.map_input',
+    sub {
+      ref($_[0]{input}) eq 'HASH'
+        && (($_[0]{input}{command} || '') eq 'TOPIC')
+        && (($_[0]{input}{target} || '') eq $channel);
+    },
+  );
+  ok $relay_topic_request, 'instance A routes the relay-backed TOPIC through the adapter';
+  is $relay_topic_request->{input}{actor_pubkey}, $alice_pubkey,
+    'instance A relay-backed TOPIC includes actor_pubkey';
+  is $relay_topic_request->{input}{text}, 'Relay-backed topic',
+    'instance A relay-backed TOPIC includes the new topic text';
+  like $relay_topic_request->{input}{signing_pubkey}, qr/\A[0-9a-f]{64}\z/,
+    'instance A relay-backed TOPIC includes a delegated signing pubkey';
+  like $relay_topic_request->{input}{authority_event_id}, qr/\A[0-9a-f]{64}\z/,
+    'instance A relay-backed TOPIC includes a delegation grant reference';
+  like $relay_topic_request->{input}{authority_sequence}, qr/\A[1-9]\d*\z/,
+    'instance A relay-backed TOPIC includes a session-scoped delegation sequence';
+  ok(
+    _pump_hosts_until(
+      hosts      => [ $host_a, $host_b ],
+      pump_timeout_ms => $relay_host_pump_ms,
+      timeout_ms => $relay_propagation_timeout_ms,
+      condition  => sub {
+        my $relay_topics = _query_nostr_events_from_relay(
+          relay_url => $relay_url,
+          filters   => [
+            {
+              kinds => [9002],
+              '#h'  => [$group_id],
+              limit => 20,
+            },
+          ],
+        );
+        return scalar(grep {
+          my %tags = _first_tag_values($_->{tags});
+          defined($tags{topic}) && $tags{topic} eq 'Relay-backed topic'
+            && defined($tags{overnet_actor}) && $tags{overnet_actor} eq $alice_pubkey
+            && defined($tags{overnet_authority}) && $tags{overnet_authority} =~ /\A[0-9a-f]{64}\z/
+            && defined($tags{overnet_sequence}) && $tags{overnet_sequence} =~ /\A[1-9]\d*\z/
+        } @{$relay_topics}) ? 1 : 0;
+      },
+    ),
+    'the relay exposes the delegated authoritative TOPIC event',
+  );
+
   _write_client_line($alice_a, "INVITE bob $channel");
   ok $host_a->pump(timeout_ms => $relay_host_pump_ms) >= 0,
     'instance A pumps relay-backed INVITE write';
@@ -3830,6 +3954,23 @@ subtest 'IRC server program relay-publishes authoritative NIP-29 writes across t
   my $local_invite_line = _read_client_line_optional($bob_a, 3_000);
   ok !defined($local_invite_line) || $local_invite_line eq ":alice INVITE bob :$channel",
     'instance A either emits or suppresses the local same-instance INVITE line consistently';
+  ok _pump_hosts_until(
+    hosts      => [ $host_a, $host_b ],
+    pump_timeout_ms => $relay_host_pump_ms,
+    timeout_ms => $relay_propagation_timeout_ms,
+    condition  => sub {
+      return defined _last_request_matching(
+        $host_a->transcript,
+        'from_program',
+        'adapters.map_input',
+        sub {
+          ref($_[0]{input}) eq 'HASH'
+            && (($_[0]{input}{command} || '') eq 'INVITE')
+            && (($_[0]{input}{target} || '') eq $channel);
+        },
+      ) ? 1 : 0;
+    },
+  ), 'instance A records the relay-backed INVITE mapping request';
   my $relay_invite_request = _last_request_matching(
     $host_a->transcript,
     'from_program',
@@ -3980,10 +4121,19 @@ subtest 'IRC server program relay-publishes authoritative NIP-29 writes across t
               ) || {}
             ),
       );
+  like _read_client_line($bob_b, 3_000),
+    qr/\A:(?:alice|\Q$server_name_b\E) TOPIC \Q$channel\E :Relay-backed topic\z/,
+    'instance B join bootstrap replays the propagated authoritative topic';
   is _read_client_line($bob_b, 3_000), ":$server_name_b 353 bob = $channel :bob",
     'instance B NAMES bootstrap reflects the invited local member after the relay-backed join';
   is _read_client_line($bob_b, 3_000), ":$server_name_b 366 bob $channel :End of /NAMES list.",
     'instance B bob receives end-of-names after the relay-backed join';
+
+  _write_client_line($bob_b, "TOPIC $channel");
+  ok $host_b->pump(timeout_ms => $relay_host_pump_ms) >= 0,
+    'instance B pumps propagated authoritative TOPIC query';
+  is _read_client_line($bob_b, 3_000), ":$server_name_b 332 bob $channel :Relay-backed topic",
+    'instance B authoritative TOPIC query returns the propagated topic';
 
   _write_client_line($bob_b, "PART $channel :later");
   ok $host_b->pump(timeout_ms => $relay_host_pump_ms) >= 0,
@@ -4028,6 +4178,22 @@ subtest 'IRC server program relay-publishes authoritative NIP-29 writes across t
   );
   ok $host_a->pump(timeout_ms => $relay_host_pump_ms) >= 0,
     'instance A pumps relay-backed PART propagation before the fresh INVITE';
+  my @alice_a_post_part_lines;
+  ok _pump_hosts_until(
+    hosts      => [ $host_a, $host_b ],
+    pump_timeout_ms => $relay_host_pump_ms,
+    timeout_ms => $relay_propagation_timeout_ms,
+    condition  => sub {
+      my $line = _read_client_line_optional($alice_a, 50);
+      return 0 unless defined $line;
+      push @alice_a_post_part_lines, $line;
+      return $line eq ":bob PART $channel :later" ? 1 : 0;
+    },
+  ), 'instance A alice receives the propagated relay-backed PART'
+    or diag(
+      'instance A post-PART lines: '
+        . (@alice_a_post_part_lines ? join(' | ', @alice_a_post_part_lines) : '(none)'),
+    );
 
   _write_client_line($bob_b, "JOIN $channel");
   ok $host_b->pump(timeout_ms => $relay_host_pump_ms) >= 0,
@@ -4195,6 +4361,7 @@ subtest 'IRC server program relay-publishes authoritative NIP-29 writes across t
           ) || {}
         ),
   );
+  $fresh_local_invite_numeric ||= _read_client_line_optional($alice_a, 500);
   my $bob_b_saw_fresh_invite = _pump_hosts_until(
     hosts      => [ $host_a, $host_b ],
     pump_timeout_ms => $relay_host_pump_ms,
@@ -4264,6 +4431,11 @@ subtest 'IRC server program relay-publishes authoritative NIP-29 writes across t
         'instance B fresh-invite lines: '
           . (@bob_b_reinvite_lines ? join(' | ', @bob_b_reinvite_lines) : '(none)'),
       );
+  ok !defined($fresh_local_invite_numeric) || $fresh_local_invite_numeric eq ":$server_name_a 341 alice bob $channel",
+    'instance A either emits or suppresses the fresh local INVITE confirmation numeric consistently';
+  like _read_client_line($bob_b, 3_000),
+    qr/\A:(?:alice|\Q$server_name_b\E) TOPIC \Q$channel\E :Relay-backed topic\z/,
+    'instance B join bootstrap replays the propagated authoritative topic after the fresh invite';
   is _read_client_line($bob_b, 3_000), ":$server_name_b 353 bob = $channel :bob",
     'instance B NAMES bootstrap restores bob after the fresh relay-backed INVITE';
   is _read_client_line($bob_b, 3_000), ":$server_name_b 366 bob $channel :End of /NAMES list.",
@@ -4272,15 +4444,69 @@ subtest 'IRC server program relay-publishes authoritative NIP-29 writes across t
   _write_client_line($alice_a, "MODE $channel +v bob");
   ok $host_a->pump(timeout_ms => $relay_host_pump_ms) >= 0,
     'instance A pumps relay-backed MODE write';
+  my $mode_request_count_before = _request_count_matching(
+    $host_a->transcript,
+    'from_program',
+    'adapters.map_input',
+    sub {
+      ref($_[0]{input}) eq 'HASH'
+        && (($_[0]{input}{command} || '') eq 'MODE')
+        && (($_[0]{input}{target} || '') eq $channel);
+    },
+  ) - 1;
+  my $mode_publish_count_before = _request_count_matching(
+    $host_a->transcript,
+    'from_program',
+    'nostr.publish_event',
+    sub {
+      ref($_[0]{event}) eq 'HASH'
+        && (($_[0]{event}{kind} || 0) == 9000);
+    },
+  );
+  ok _pump_hosts_until(
+    hosts      => [ $host_a, $host_b ],
+    pump_timeout_ms => $relay_host_pump_ms,
+    timeout_ms => $relay_propagation_timeout_ms,
+    condition  => sub {
+      my $mode_request_count_after = _request_count_matching(
+        $host_a->transcript,
+        'from_program',
+        'adapters.map_input',
+        sub {
+          ref($_[0]{input}) eq 'HASH'
+            && (($_[0]{input}{command} || '') eq 'MODE')
+            && (($_[0]{input}{target} || '') eq $channel);
+        },
+      );
+      my $mode_publish_count_after = _request_count_matching(
+        $host_a->transcript,
+        'from_program',
+        'nostr.publish_event',
+        sub {
+          ref($_[0]{event}) eq 'HASH'
+            && (($_[0]{event}{kind} || 0) == 9000);
+        },
+      );
+      return $mode_request_count_after > $mode_request_count_before
+        && $mode_publish_count_after > $mode_publish_count_before
+        ? 1 : 0;
+    },
+  ), 'instance A routes and publishes the relay-backed MODE write';
+  my @alice_a_mode_lines;
   ok _pump_hosts_until(
     hosts      => [ $host_a, $host_b ],
     pump_timeout_ms => $relay_host_pump_ms,
     timeout_ms => $relay_propagation_timeout_ms,
     condition  => sub {
       my $line = _read_client_line_optional($alice_a, 50);
+      push @alice_a_mode_lines, $line if defined $line;
       return defined($line) && $line eq ":alice MODE $channel +v bob" ? 1 : 0;
     },
-  ), 'alice sees the relay-backed MODE line on instance A';
+  ), 'alice sees the relay-backed MODE line on instance A'
+    or diag(
+      'instance A post-MODE lines: '
+        . (@alice_a_mode_lines ? join(' | ', @alice_a_mode_lines) : '(none)'),
+    );
 
   _write_client_line($bob_b, "NAMES $channel");
   ok _pump_hosts_until(
