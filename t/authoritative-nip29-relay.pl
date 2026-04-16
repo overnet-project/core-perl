@@ -5,7 +5,9 @@ use warnings;
 use FindBin;
 use Getopt::Long qw(GetOptions);
 use lib "$FindBin::Bin/../local/lib/perl5";
+use lib "$FindBin::Bin/../lib";
 
+use Overnet::Authority::HostedChannel ();
 use Net::Nostr::Relay;
 
 my %opt = (
@@ -137,10 +139,15 @@ sub _authorize_join_request {
 
   return (1, '')
     if $state->{members}{$actor};
+
+  my %tags = _first_tag_values($event->tags);
+  if (_irc_mask_is_banned($state->{ban_masks}, $tags{overnet_irc_mask})) {
+    return (0, 'unauthorized: actor is banned from the group');
+  }
+
   return (1, '')
     unless $state->{closed};
 
-  my %tags = _first_tag_values($event->tags);
   my $code = $tags{code};
   return (0, 'unauthorized: closed groups require an invite code')
     unless defined $code && length($code);
@@ -163,6 +170,7 @@ sub _derive_group_state {
   my %members;
   my %invites;
   my $closed = 0;
+  my @ban_masks;
 
   for my $event (_group_events($relay, $group_id)) {
     my $kind = $event->kind;
@@ -170,6 +178,7 @@ sub _derive_group_state {
     if ($kind == 39000 || $kind == 9002) {
       my %metadata = _metadata_from_tags($event->tags);
       $closed = $metadata{closed} ? 1 : 0;
+      @ban_masks = @{$metadata{ban_masks} || []};
       next;
     }
 
@@ -256,9 +265,10 @@ sub _derive_group_state {
   }
 
   return {
-    closed  => $closed,
-    members => \%members,
-    invites => \%invites,
+    closed    => $closed,
+    ban_masks => [ @ban_masks ],
+    members   => \%members,
+    invites   => \%invites,
   };
 }
 
@@ -423,16 +433,40 @@ sub _event_sort_rank {
 sub _metadata_from_tags {
   my ($tags) = @_;
   my %metadata = (
-    closed => 0,
+    closed    => 0,
+    ban_masks => [],
   );
 
   for my $tag (@{$tags || []}) {
     next unless ref($tag) eq 'ARRAY' && @{$tag} >= 1;
     $metadata{closed} = 1 if ($tag->[0] || '') eq 'closed';
     $metadata{closed} = 0 if ($tag->[0] || '') eq 'open';
+    push @{$metadata{ban_masks}}, $tag->[1]
+      if ($tag->[0] || '') eq 'ban' && @{$tag} >= 2;
   }
 
+  my %seen;
+  $metadata{ban_masks} = [
+    sort grep {
+      defined($_) && !ref($_) && length($_) && !$seen{$_}++
+    } @{$metadata{ban_masks}}
+  ];
   return %metadata;
+}
+
+sub _irc_mask_is_banned {
+  my ($ban_masks, $actor_mask) = @_;
+  return 0 unless defined $actor_mask && !ref($actor_mask) && length($actor_mask);
+
+  for my $ban_mask (@{$ban_masks || []}) {
+    next unless defined $ban_mask && !ref($ban_mask) && length($ban_mask);
+    return 1 if Overnet::Authority::HostedChannel::irc_mask_matches(
+      mask  => $ban_mask,
+      value => $actor_mask,
+    );
+  }
+
+  return 0;
 }
 
 sub _target_and_roles_from_put_user {

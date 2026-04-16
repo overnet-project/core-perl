@@ -13,6 +13,40 @@ sub irc_casefold {
   return $folded;
 }
 
+sub irc_user_mask {
+  my (%args) = @_;
+  for my $field (qw(nick user host)) {
+    return undef
+      unless defined $args{$field} && !ref($args{$field}) && length($args{$field});
+  }
+
+  return join('',
+    $args{nick},
+    '!',
+    $args{user},
+    '@',
+    $args{host},
+  );
+}
+
+sub irc_mask_matches {
+  my (%args) = @_;
+  my $mask = $args{mask};
+  my $value = $args{value};
+  return 0 unless defined $mask && !ref($mask) && length($mask);
+  return 0 unless defined $value && !ref($value) && length($value);
+
+  my $folded_mask = irc_casefold($mask);
+  my $folded_value = irc_casefold($value);
+  return 0 unless defined $folded_mask && defined $folded_value;
+
+  my $pattern = quotemeta($folded_mask);
+  $pattern =~ s/\\\*/.*/g;
+  $pattern =~ s/\\\?/./g;
+
+  return $folded_value =~ /\A$pattern\z/ ? 1 : 0;
+}
+
 sub authoritative_group_id {
   my (%args) = @_;
   my $network = $args{network};

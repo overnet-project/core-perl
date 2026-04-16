@@ -37,4 +37,22 @@ subtest 'authoritative discovery prefers the channel name tag when it matches th
     'authoritative discovery preserves the presentational channel spelling from metadata';
 };
 
+subtest 'IRC mask helpers build and match presentational user masks' => sub {
+  is Overnet::Authority::HostedChannel::irc_user_mask(
+    nick => 'Bob',
+    user => 'bob',
+    host => '127.0.0.1',
+  ), 'Bob!bob@127.0.0.1', 'the helper renders a standard IRC nick!user@host mask';
+
+  ok Overnet::Authority::HostedChannel::irc_mask_matches(
+    mask  => 'bob!*@127.0.0.1',
+    value => 'Bob!bob@127.0.0.1',
+  ), 'IRC mask matching uses RFC1459-style case folding and wildcards';
+
+  ok !Overnet::Authority::HostedChannel::irc_mask_matches(
+    mask  => 'alice!*@127.0.0.1',
+    value => 'Bob!bob@127.0.0.1',
+  ), 'non-matching IRC masks are rejected';
+};
+
 done_testing;

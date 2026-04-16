@@ -5892,6 +5892,470 @@ subtest 'IRC server program creates and discovers authoritative hosted channels 
   _stop_authoritative_nip29_relay($relay);
 };
 
+subtest 'IRC server program enforces authoritative bans across two instances' => sub {
+  my $network = 'irc.authority.ban.test';
+  my $channel = '#ops';
+  my $group_host = 'groups.example.test';
+  my $group_id = 'ops';
+  my $relay_host_pump_ms = 1_500;
+  my $relay_propagation_timeout_ms = 5_000;
+  my $relay_port = _free_port();
+  my $relay_url = "ws://127.0.0.1:$relay_port";
+  my $server_name_a = 'overnet-ban-a.irc.local';
+  my $server_name_b = 'overnet-ban-b.irc.local';
+  my $bob_mask = 'bob!bob@127.0.0.1';
+
+  my $alice_key = Net::Nostr::Key->new;
+  my $bob_key   = Net::Nostr::Key->new;
+  my $alice_pubkey = $alice_key->pubkey_hex;
+  my $bob_pubkey   = $bob_key->pubkey_hex;
+
+  my $relay = _spawn_authoritative_nip29_relay(
+    port      => $relay_port,
+    relay_url => $relay_url,
+  );
+  _wait_for_authoritative_nip29_relay_ready($relay_url);
+
+  my @seed_events = (
+    Net::Nostr::Group->metadata(
+      pubkey     => 'f' x 64,
+      group_id   => $group_id,
+      created_at => 1_744_301_300,
+    )->to_hash,
+    Net::Nostr::Group->admins(
+      pubkey     => 'f' x 64,
+      group_id   => $group_id,
+      created_at => 1_744_301_301,
+      members    => [
+        {
+          pubkey => $alice_pubkey,
+          roles  => ['irc.operator'],
+        },
+      ],
+    )->to_hash,
+    Net::Nostr::Group->members(
+      pubkey     => 'f' x 64,
+      group_id   => $group_id,
+      created_at => 1_744_301_302,
+      members    => [
+        $alice_pubkey,
+      ],
+    )->to_hash,
+    Net::Nostr::Group->roles(
+      pubkey     => 'f' x 64,
+      group_id   => $group_id,
+      created_at => 1_744_301_303,
+      roles      => [
+        { name => 'irc.operator' },
+        { name => 'irc.voice' },
+      ],
+    )->to_hash,
+  );
+  my $seed_key = Net::Nostr::Key->new;
+  @seed_events = map {
+    $seed_key->create_event(
+      kind       => $_->{kind},
+      created_at => $_->{created_at},
+      content    => $_->{content},
+      tags       => $_->{tags},
+    )->to_hash
+  } @seed_events;
+
+  for my $event (@seed_events) {
+    my $publish = _publish_nostr_event_to_relay(
+      relay_url => $relay_url,
+      event     => $event,
+    );
+    ok $publish->{accepted}, 'relay accepts seeded authoritative state for the ban test';
+  }
+
+  my $build_runtime = sub {
+    my (%args) = @_;
+    my $tmpdir = tempdir(CLEANUP => 1);
+    my $key_path = File::Spec->catfile($tmpdir, $args{name} . '-irc-server-key.pem');
+    my $key = Net::Nostr::Key->new;
+    $key->save_privkey($key_path);
+
+    my $runtime = Overnet::Program::Runtime->new(
+      config => {
+        adapter_id       => $args{adapter_id},
+        network          => $network,
+        listen_host      => '127.0.0.1',
+        listen_port      => 0,
+        server_name      => $args{server_name},
+        signing_key_file => $key_path,
+        adapter_config   => {
+          network           => $network,
+          authority_profile => 'nip29',
+          group_host        => $group_host,
+          channel_groups    => {
+            $channel => $group_id,
+          },
+        },
+        authority_relay => {
+          url              => $relay_url,
+          poll_interval_ms => 50,
+        },
+      },
+    );
+    ok $runtime->register_adapter_definition(
+      adapter_id => $args{adapter_id},
+      definition => {
+        kind             => 'class',
+        class            => 'Overnet::Adapter::IRC',
+        lib_dirs         => [$irc_lib],
+        constructor_args => {},
+      },
+    ), "$args{name} runtime can register the real authoritative IRC adapter";
+
+    my $host = Overnet::Program::Host->new(
+      command     => [$^X, $program_path],
+      runtime     => $runtime,
+      program_id  => 'overnet.program.irc_server',
+      permissions => [
+        'adapters.use',
+        'events.append',
+        'events.read',
+        'nostr.read',
+        'nostr.write',
+        'subscriptions.read',
+        'overnet.emit_event',
+        'overnet.emit_state',
+        'overnet.emit_private_message',
+        'overnet.emit_capabilities',
+      ],
+      services => {
+        'adapters.open_session'        => {},
+        'adapters.map_input'           => {},
+        'adapters.derive'              => {},
+        'adapters.close_session'       => {},
+        'events.append'                => {},
+        'events.read'                  => {},
+        'nostr.publish_event'          => {},
+        'nostr.query_events'           => {},
+        'nostr.open_subscription'      => {},
+        'nostr.read_subscription_snapshot' => {},
+        'nostr.close_subscription'     => {},
+        'subscriptions.open'           => {},
+        'subscriptions.close'          => {},
+        'overnet.emit_event'           => {},
+        'overnet.emit_state'           => {},
+        'overnet.emit_private_message' => {},
+        'overnet.emit_capabilities'    => {},
+      },
+      startup_timeout_ms  => 1_000,
+      shutdown_timeout_ms => 1_000,
+    );
+
+    $host->start;
+    is $host->state, 'ready', "$args{name} authoritative ban server reaches ready state";
+    my $ready = _wait_for_ready_details($host);
+    ok $ready, "$args{name} authoritative ban server publishes ready health details";
+
+    return ($runtime, $host, $ready);
+  };
+
+  my ($runtime_a, $host_a, $ready_a) = $build_runtime->(
+    name        => 'ban-instance-a',
+    adapter_id  => 'irc.authoritative.ban.a',
+    server_name => $server_name_a,
+  );
+  my ($runtime_b, $host_b, $ready_b) = $build_runtime->(
+    name        => 'ban-instance-b',
+    adapter_id  => 'irc.authoritative.ban.b',
+    server_name => $server_name_b,
+  );
+
+  my $alice_a = _connect_irc_client($ready_a->{listen_port});
+  my $bob_b   = _connect_irc_client($ready_b->{listen_port});
+
+  my $register = sub {
+    my (%args) = @_;
+    _write_client_line($args{client}, "NICK $args{nick}");
+    _write_client_line($args{client}, "USER $args{nick} 0 * :$args{realname}");
+    _assert_registration_prelude(
+      client      => $args{client},
+      nick        => $args{nick},
+      network     => $network,
+      server_name => $args{server_name},
+      timeout_ms  => 3_000,
+    );
+  };
+
+  my $authenticate = sub {
+    my (%args) = @_;
+    _write_client_line($args{client}, 'OVERNETAUTH CHALLENGE');
+    my $challenge_line = _read_client_line($args{client}, 1_000);
+    like $challenge_line, qr/\A:\Q$args{server_name}\E NOTICE \Q$args{nick}\E :OVERNETAUTH CHALLENGE [0-9a-f]{64}\z/,
+      "$args{nick} receives an authoritative auth challenge on $args{name}";
+    $challenge_line =~ /([0-9a-f]{64})\z/;
+    my $challenge = $1;
+    _write_client_line($args{client}, 'OVERNETAUTH AUTH ' . _build_authoritative_auth_payload(
+      key       => $args{key},
+      challenge => $challenge,
+      scope     => _authoritative_auth_scope(
+        server_name => $args{server_name},
+        network     => $network,
+      ),
+    ));
+    is _read_client_line($args{client}, 1_000),
+      ":$args{server_name} NOTICE $args{nick} :OVERNETAUTH AUTH $args{pubkey}",
+      "$args{nick} authenticates an authoritative pubkey on $args{name}";
+  };
+
+  my $delegate = sub {
+    my (%args) = @_;
+    _write_client_line($args{client}, 'OVERNETAUTH DELEGATE');
+    my $delegate_line = _read_client_line($args{client}, 3_000);
+    like $delegate_line,
+      qr/\A:\Q$args{server_name}\E NOTICE \Q$args{nick}\E :OVERNETAUTH DELEGATE ([0-9a-f]{64}) ([0-9a-f]{64}) \Q$relay_url\E (\d+)\z/,
+      "$args{nick} receives session delegation parameters on $args{name}";
+    my ($delegate_pubkey, $session_id, $expires_at) = $delegate_line =~ /([0-9a-f]{64}) ([0-9a-f]{64}) \Q$relay_url\E (\d+)\z/;
+    _write_client_line($args{client}, 'OVERNETAUTH DELEGATE ' . _build_authoritative_delegate_payload(
+      key             => $args{key},
+      relay_url       => $relay_url,
+      scope           => _authoritative_auth_scope(
+        server_name => $args{server_name},
+        network     => $network,
+      ),
+      delegate_pubkey => $delegate_pubkey,
+      session_id      => $session_id,
+      expires_at      => $expires_at,
+      nick            => $args{nick},
+    ));
+    ok $args{host}->pump(timeout_ms => $relay_host_pump_ms) >= 0,
+      "$args{nick} pumps the authoritative delegation publish on $args{name}";
+    is _read_client_line($args{client}, 3_000),
+      ":$args{server_name} NOTICE $args{nick} :OVERNETAUTH DELEGATE",
+      "$args{nick} establishes a session delegation grant on $args{name}";
+  };
+
+  $register->(
+    client      => $alice_a,
+    nick        => 'alice',
+    realname    => 'Alice Ban',
+    server_name => $server_name_a,
+  );
+  ok _wait_for_dm_subscription_count($host_a, 1),
+    'instance A alice registration completes its DM subscription open';
+
+  $register->(
+    client      => $bob_b,
+    nick        => 'bob',
+    realname    => 'Bob Ban',
+    server_name => $server_name_b,
+  );
+  ok _wait_for_dm_subscription_count($host_b, 1),
+    'instance B bob registration completes its DM subscription open';
+
+  $authenticate->(
+    name        => 'instance A',
+    client      => $alice_a,
+    nick        => 'alice',
+    key         => $alice_key,
+    pubkey      => $alice_pubkey,
+    server_name => $server_name_a,
+  );
+  $authenticate->(
+    name        => 'instance B',
+    client      => $bob_b,
+    nick        => 'bob',
+    key         => $bob_key,
+    pubkey      => $bob_pubkey,
+    server_name => $server_name_b,
+  );
+  $delegate->(
+    name        => 'instance A',
+    client      => $alice_a,
+    host        => $host_a,
+    nick        => 'alice',
+    key         => $alice_key,
+    server_name => $server_name_a,
+  );
+  $delegate->(
+    name        => 'instance B',
+    client      => $bob_b,
+    host        => $host_b,
+    nick        => 'bob',
+    key         => $bob_key,
+    server_name => $server_name_b,
+  );
+
+  _write_client_line($alice_a, "JOIN $channel");
+  ok $host_a->pump(timeout_ms => $relay_host_pump_ms) >= 0,
+    'instance A pumps the operator join before setting bans';
+  my $alice_ban_join_bootstrap = _pump_hosts_until_client_lines(
+    hosts           => [$host_a],
+    client          => $alice_a,
+    count           => 3,
+    pump_timeout_ms => $relay_host_pump_ms,
+    timeout_ms      => $relay_propagation_timeout_ms,
+  );
+  ok $alice_ban_join_bootstrap,
+    'instance A emits the operator bootstrap before authoritative bans';
+  is_deeply $alice_ban_join_bootstrap, [
+    ":alice JOIN $channel",
+    ":$server_name_a 353 alice = $channel :\@alice",
+    ":$server_name_a 366 alice $channel :End of /NAMES list.",
+  ], 'alice receives JOIN plus operator-prefixed NAMES bootstrap on instance A';
+
+  _write_client_line($bob_b, "JOIN $channel");
+  ok $host_b->pump(timeout_ms => $relay_host_pump_ms) >= 0,
+    'instance B pumps the initial open-channel join before banning bob';
+  my $bob_ban_join_bootstrap = _pump_hosts_until_client_lines(
+    hosts           => [ $host_a, $host_b ],
+    client          => $bob_b,
+    count           => 3,
+    pump_timeout_ms => $relay_host_pump_ms,
+    timeout_ms      => $relay_propagation_timeout_ms,
+  );
+  ok $bob_ban_join_bootstrap,
+    'instance B emits the initial open-channel JOIN bootstrap before the ban';
+  is_deeply $bob_ban_join_bootstrap, [
+    ":bob JOIN $channel",
+    ":$server_name_b 353 bob = $channel :bob",
+    ":$server_name_b 366 bob $channel :End of /NAMES list.",
+  ], 'bob receives the initial JOIN bootstrap on instance B before the ban';
+
+  _write_client_line($alice_a, "MODE $channel +b $bob_mask");
+  ok $host_a->pump(timeout_ms => $relay_host_pump_ms) >= 0,
+    'instance A pumps authoritative MODE +b';
+  ok _pump_hosts_until(
+    hosts           => [ $host_a, $host_b ],
+    pump_timeout_ms => $relay_host_pump_ms,
+    timeout_ms      => $relay_propagation_timeout_ms,
+    condition       => sub {
+      my $line = _read_client_line_optional($alice_a, 50);
+      return defined($line) && $line eq ":alice MODE $channel +b $bob_mask" ? 1 : 0;
+    },
+  ), 'alice sees the authoritative +b MODE line on instance A';
+  ok _pump_hosts_until(
+    hosts           => [ $host_a, $host_b ],
+    pump_timeout_ms => $relay_host_pump_ms,
+    timeout_ms      => $relay_propagation_timeout_ms,
+    condition       => sub {
+      my $line = _read_client_line_optional($bob_b, 50);
+      return defined($line) && $line eq ":alice MODE $channel +b $bob_mask" ? 1 : 0;
+    },
+  ), 'bob sees the propagated authoritative +b MODE line on instance B';
+
+  my $relay_ban_events = _query_nostr_events_from_relay(
+    relay_url => $relay_url,
+    filters   => [
+      {
+        kinds => [9002],
+        '#h'  => [$group_id],
+        limit => 20,
+      },
+    ],
+  );
+  ok(
+    scalar(grep {
+      my %tags = _first_tag_values($_->{tags});
+      my @ban_tags = map { $_->[1] }
+        grep { ref($_) eq 'ARRAY' && (($_->[0] || '') eq 'ban') && defined $_->[1] }
+        @{$_->{tags} || []};
+      defined($tags{overnet_actor}) && $tags{overnet_actor} eq $alice_pubkey
+        && scalar(grep { $_ eq $bob_mask } @ban_tags);
+    } @{$relay_ban_events}),
+    'the relay exposes an authoritative metadata edit carrying the new ban mask',
+  );
+
+  _write_client_line($bob_b, "MODE $channel +b");
+  ok $host_b->pump(timeout_ms => $relay_host_pump_ms) >= 0,
+    'instance B pumps the authoritative ban-list query';
+  is _read_client_line($bob_b, 3_000), ":$server_name_b 367 bob $channel $bob_mask $server_name_b 0",
+    'instance B renders the propagated authoritative ban list entry';
+  is _read_client_line($bob_b, 3_000), ":$server_name_b 368 bob $channel :End of channel ban list",
+    'instance B terminates the authoritative ban-list query';
+
+  _write_client_line($bob_b, "PART $channel :bye");
+  ok $host_b->pump(timeout_ms => $relay_host_pump_ms) >= 0,
+    'instance B pumps the authoritative PART before the banned rejoin';
+  is _read_client_line($bob_b, 3_000), ":bob PART $channel :bye",
+    'bob receives his authoritative PART echo before rejoining';
+
+  _write_client_line($bob_b, "JOIN $channel");
+  ok $host_b->pump(timeout_ms => $relay_host_pump_ms) >= 0,
+    'instance B pumps the banned rejoin attempt';
+  is _read_client_line($bob_b, 3_000), ":$server_name_b 474 bob $channel :Cannot join channel (+b)",
+    'instance B rejects the banned authoritative JOIN with 474';
+
+  _write_client_line($alice_a, "MODE $channel -b $bob_mask");
+  ok $host_a->pump(timeout_ms => $relay_host_pump_ms) >= 0,
+    'instance A pumps authoritative MODE -b';
+  ok _pump_hosts_until(
+    hosts           => [ $host_a, $host_b ],
+    pump_timeout_ms => $relay_host_pump_ms,
+    timeout_ms      => $relay_propagation_timeout_ms,
+    condition       => sub {
+      my $line = _read_client_line_optional($alice_a, 50);
+      return defined($line) && $line eq ":alice MODE $channel -b $bob_mask" ? 1 : 0;
+    },
+  ), 'alice sees the authoritative -b MODE line on instance A';
+
+  my $propagated_part_before_unban_query = _read_client_line_optional($alice_a, 250);
+  ok !defined($propagated_part_before_unban_query) || $propagated_part_before_unban_query eq ":bob PART $channel :bye",
+    'instance A either consumes or has already rendered the propagated PART before the empty ban-list query';
+
+  _write_client_line($alice_a, "MODE $channel +b");
+  ok $host_a->pump(timeout_ms => $relay_host_pump_ms) >= 0,
+    'instance A pumps the post-unban ban-list query';
+  is _read_client_line($alice_a, 3_000), ":$server_name_a 368 alice $channel :End of channel ban list",
+    'instance A reports an empty authoritative ban list after -b';
+
+  my $relay_unban_events = _query_nostr_events_from_relay(
+    relay_url => $relay_url,
+    filters   => [
+      {
+        kinds => [9002],
+        '#h'  => [$group_id],
+        limit => 20,
+      },
+    ],
+  );
+  my @sorted_unban_events = sort {
+    (($a->{created_at} || 0) <=> ($b->{created_at} || 0))
+      || (($a->{id} || '') cmp ($b->{id} || ''))
+  } @{$relay_unban_events};
+  my $latest_unban_event = $sorted_unban_events[-1];
+  ok $latest_unban_event, 'a latest authoritative metadata edit exists after -b';
+  ok !scalar(grep {
+    ref($_) eq 'ARRAY' && (($_->[0] || '') eq 'ban') && defined($_->[1]) && $_->[1] eq $bob_mask
+  } @{$latest_unban_event->{tags} || []}),
+    'the latest authoritative metadata edit no longer carries the removed ban mask';
+
+  _write_client_line($bob_b, "JOIN $channel");
+  ok $host_b->pump(timeout_ms => $relay_host_pump_ms) >= 0,
+    'instance B pumps the post-unban rejoin';
+  my $bob_unban_join_bootstrap = _pump_hosts_until_client_lines(
+    hosts           => [ $host_a, $host_b ],
+    client          => $bob_b,
+    count           => 3,
+    pump_timeout_ms => $relay_host_pump_ms,
+    timeout_ms      => $relay_propagation_timeout_ms,
+  );
+  ok $bob_unban_join_bootstrap,
+    'instance B emits the post-unban JOIN bootstrap';
+  is_deeply $bob_unban_join_bootstrap, [
+    ":bob JOIN $channel",
+    ":$server_name_b 353 bob = $channel :bob",
+    ":$server_name_b 366 bob $channel :End of /NAMES list.",
+  ], 'bob can rejoin the authoritative channel after the propagated -b';
+
+  my $shutdown_a = $host_a->request_shutdown(reason => 'relay-backed authoritative ban test complete A');
+  is $shutdown_a->{state}, 'shutdown_complete', 'instance A authoritative ban server handles runtime shutdown';
+  is $shutdown_a->{exit_code}, 0, 'instance A authoritative ban server exits cleanly';
+
+  my $shutdown_b = $host_b->request_shutdown(reason => 'relay-backed authoritative ban test complete B');
+  is $shutdown_b->{state}, 'shutdown_complete', 'instance B authoritative ban server handles runtime shutdown';
+  is $shutdown_b->{exit_code}, 0, 'instance B authoritative ban server exits cleanly';
+
+  close $alice_a->{socket};
+  close $bob_b->{socket};
+  _stop_authoritative_nip29_relay($relay);
+};
+
 subtest 'IRC program entrypoints do not import Net::Nostr directly' => sub {
   my @paths = (
     File::Spec->catfile(
