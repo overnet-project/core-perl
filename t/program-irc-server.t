@@ -3852,6 +3852,90 @@ subtest 'IRC server program relay-publishes authoritative NIP-29 writes across t
   is _read_client_line($alice_a, 3_000), ":$server_name_a 366 alice $channel :End of /NAMES list.",
     'instance A authoritative NAMES terminates after the propagated join';
 
+  _write_client_line($bob_b, "PART $channel :later");
+  ok $host_b->pump(timeout_ms => 200) >= 0,
+    'instance B pumps bob relay-backed PART';
+  my $relay_part_request = _last_request_matching(
+    $host_b->transcript,
+    'from_program',
+    'adapters.map_input',
+    sub {
+      ref($_[0]{input}) eq 'HASH'
+        && (($_[0]{input}{command} || '') eq 'PART')
+        && (($_[0]{input}{target} || '') eq $channel);
+    },
+  );
+  ok $relay_part_request, 'instance B routes the relay-backed PART through the adapter';
+  like $relay_part_request->{input}{signing_pubkey}, qr/\A[0-9a-f]{64}\z/,
+    'instance B relay-backed PART includes a delegated signing pubkey';
+  like $relay_part_request->{input}{authority_event_id}, qr/\A[0-9a-f]{64}\z/,
+    'instance B relay-backed PART includes a delegation grant reference';
+  like $relay_part_request->{input}{authority_sequence}, qr/\A[1-9]\d*\z/,
+    'instance B relay-backed PART includes a session-scoped delegation sequence';
+  is _read_client_line($bob_b, 3_000), ":bob PART $channel :later",
+    'bob receives his relay-backed PART echo on instance B';
+  my $relay_parts = _query_nostr_events_from_relay(
+    relay_url => $relay_url,
+    filters   => [
+      {
+        kinds => [9022],
+        '#h'  => [$group_id],
+        limit => 20,
+      },
+    ],
+  );
+  ok(
+    scalar(grep {
+      my %tags = _first_tag_values($_->{tags});
+      defined($tags{overnet_actor}) && $tags{overnet_actor} eq $bob_pubkey
+        && defined($tags{overnet_authority}) && $tags{overnet_authority} =~ /\A[0-9a-f]{64}\z/
+        && defined($tags{overnet_sequence}) && $tags{overnet_sequence} =~ /\A[1-9]\d*\z/
+    } @{$relay_parts}),
+    'the relay exposes the delegated authoritative PART event',
+  );
+
+  _write_client_line($alice_a, "NAMES $channel");
+  ok _pump_hosts_until(
+    hosts      => [ $host_a, $host_b ],
+    timeout_ms => 1_500,
+    condition  => sub {
+      my $line = _read_client_line_optional($alice_a, 50);
+      return defined($line) && $line eq ":$server_name_a 353 alice = $channel :\@alice" ? 1 : 0;
+    },
+  ), 'instance A authoritative NAMES removes bob after the relay-backed PART';
+  is _read_client_line($alice_a, 3_000), ":$server_name_a 366 alice $channel :End of /NAMES list.",
+    'instance A authoritative NAMES terminates after the propagated PART';
+
+  _write_client_line($bob_b, "JOIN $channel");
+  ok $host_b->pump(timeout_ms => 200) >= 0,
+    'instance B pumps bob post-PART rejoin attempt';
+  is _read_client_line($bob_b, 3_000), ":$server_name_b 473 bob $channel :Cannot join channel (+i)",
+    'instance B requires a fresh invite after relay-backed PART on a closed channel';
+
+  _write_client_line($alice_a, "INVITE bob $channel");
+  ok $host_a->pump(timeout_ms => 200) >= 0,
+    'instance A pumps a fresh relay-backed INVITE after PART';
+  _read_client_line_optional($alice_a, 3_000);
+  _read_client_line_optional($bob_a, 3_000);
+  ok _pump_hosts_until(
+    hosts      => [ $host_a, $host_b ],
+    timeout_ms => 1_500,
+    condition  => sub {
+      my $line = _read_client_line_optional($bob_b, 50);
+      return defined($line) && $line eq ":alice INVITE bob :$channel" ? 1 : 0;
+    },
+  ), 'instance B receives a fresh relay-backed INVITE after PART';
+
+  _write_client_line($bob_b, "JOIN $channel");
+  ok $host_b->pump(timeout_ms => 200) >= 0,
+    'instance B pumps bob rejoin after the fresh relay-backed INVITE';
+  is _read_client_line($bob_b, 3_000), ":bob JOIN $channel",
+    'bob receives his JOIN echo after the fresh relay-backed INVITE';
+  is _read_client_line($bob_b, 3_000), ":$server_name_b 353 bob = $channel :bob",
+    'instance B NAMES bootstrap restores bob after the fresh relay-backed INVITE';
+  is _read_client_line($bob_b, 3_000), ":$server_name_b 366 bob $channel :End of /NAMES list.",
+    'instance B bob receives end-of-names after rejoining through a fresh invite';
+
   _write_client_line($alice_a, "MODE $channel +v bob");
   ok $host_a->pump(timeout_ms => 200) >= 0,
     'instance A pumps relay-backed MODE write';
