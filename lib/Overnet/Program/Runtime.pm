@@ -5,6 +5,7 @@ use warnings;
 use JSON::PP ();
 use Net::Nostr::Event;
 use Time::HiRes qw(time);
+use Overnet::Core::Nostr;
 use Overnet::Core::PrivateMessaging ();
 use Overnet::Core::Validator ();
 use Overnet::Program::AdapterRegistry;
@@ -70,6 +71,7 @@ sub new {
     timers           => {},
     emitted_items    => [],
     subscriptions    => {},
+    nostr_subscriptions => {},
     runtime_notifications => {},
   }, $class;
 }
@@ -273,6 +275,7 @@ sub release_session_resources {
   my %released = (
     adapter_sessions_closed => 0,
     subscriptions_closed    => 0,
+    nostr_subscriptions_closed => 0,
     timers_canceled         => 0,
     notifications_cleared   => 0,
   );
@@ -291,6 +294,11 @@ sub release_session_resources {
   if (exists $self->{subscriptions}{$session_id}) {
     $released{subscriptions_closed} = scalar keys %{$self->{subscriptions}{$session_id} || {}};
     delete $self->{subscriptions}{$session_id};
+  }
+
+  if (exists $self->{nostr_subscriptions}{$session_id}) {
+    $released{nostr_subscriptions_closed} = scalar keys %{$self->{nostr_subscriptions}{$session_id} || {}};
+    delete $self->{nostr_subscriptions}{$session_id};
   }
 
   if (exists $self->{timers}{$session_id}) {
@@ -349,6 +357,18 @@ sub has_subscription {
   return 0 unless defined $session_id && defined $subscription_id;
   return exists $self->{subscriptions}{$session_id}
     && exists $self->{subscriptions}{$session_id}{$subscription_id}
+    ? 1
+    : 0;
+}
+
+sub has_nostr_subscription {
+  my ($self, %args) = @_;
+  my $session_id = $args{session_id};
+  my $subscription_id = $args{subscription_id};
+
+  return 0 unless defined $session_id && defined $subscription_id;
+  return exists $self->{nostr_subscriptions}{$session_id}
+    && exists $self->{nostr_subscriptions}{$session_id}{$subscription_id}
     ? 1
     : 0;
 }
@@ -492,9 +512,147 @@ sub close_subscription {
   return 1;
 }
 
+sub publish_nostr_event {
+  my ($self, %args) = @_;
+  my $relay_url = _require_string_arg(relay_url => $args{relay_url});
+  my $event = $args{event};
+
+  die "event must be an object\n"
+    unless ref($event) eq 'HASH';
+
+  my %publish_args = (
+    relay_url => $relay_url,
+    event     => _clone_json($event),
+  );
+  if (exists $args{timeout_ms}) {
+    my $timeout_ms = $args{timeout_ms};
+    die "timeout_ms must be a positive integer\n"
+      unless defined $timeout_ms && !ref($timeout_ms) && $timeout_ms =~ /\A[1-9]\d*\z/;
+    $publish_args{timeout_ms} = 0 + $timeout_ms;
+  }
+
+  return Overnet::Core::Nostr->publish_event(%publish_args);
+}
+
+sub query_nostr_events {
+  my ($self, %args) = @_;
+  my $relay_url = _require_string_arg(relay_url => $args{relay_url});
+  my $filters = $args{filters};
+
+  die "filters must be a non-empty array\n"
+    unless ref($filters) eq 'ARRAY' && @{$filters};
+
+  my %query_args = (
+    relay_url => $relay_url,
+    filters   => _clone_json($filters),
+  );
+  if (exists $args{timeout_ms}) {
+    my $timeout_ms = $args{timeout_ms};
+    die "timeout_ms must be a positive integer\n"
+      unless defined $timeout_ms && !ref($timeout_ms) && $timeout_ms =~ /\A[1-9]\d*\z/;
+    $query_args{timeout_ms} = 0 + $timeout_ms;
+  }
+
+  return Overnet::Core::Nostr->query_events(%query_args);
+}
+
+sub open_nostr_subscription {
+  my ($self, %args) = @_;
+  my $session_id = _require_string_arg(session_id => $args{session_id});
+  my $subscription_id = _require_string_arg(subscription_id => $args{subscription_id});
+  my $relay_url = _require_string_arg(relay_url => $args{relay_url});
+  my $filters = $args{filters};
+
+  die "filters must be a non-empty array\n"
+    unless ref($filters) eq 'ARRAY' && @{$filters};
+  die "Duplicate subscription_id: $subscription_id\n"
+    if $self->has_nostr_subscription(
+      session_id      => $session_id,
+      subscription_id => $subscription_id,
+    );
+
+  my $timeout_ms = exists $args{timeout_ms}
+    ? $args{timeout_ms}
+    : 250;
+  die "timeout_ms must be a positive integer\n"
+    unless defined $timeout_ms && !ref($timeout_ms) && $timeout_ms =~ /\A[1-9]\d*\z/;
+
+  my $events = Overnet::Core::Nostr->query_events(
+    relay_url  => $relay_url,
+    filters    => _clone_json($filters),
+    timeout_ms => 0 + $timeout_ms,
+  );
+  my %seen_ids = map { ($_->{id} || '') => 1 } grep { ref($_) eq 'HASH' && defined $_->{id} } @{$events || []};
+
+  $self->{nostr_subscriptions}{$session_id}{$subscription_id} = {
+    session_id      => $session_id,
+    subscription_id => $subscription_id,
+    relay_url       => $relay_url,
+    filters         => _clone_json($filters),
+    timeout_ms      => 0 + $timeout_ms,
+    poll_timeout_ms => (0 + $timeout_ms) > 250 ? 250 : 0 + $timeout_ms,
+    snapshot        => _clone_json($events || []),
+    seen_event_ids  => \%seen_ids,
+  };
+
+  return {
+    subscription_id => $subscription_id,
+    events          => _clone_json($events || []),
+  };
+}
+
+sub read_nostr_subscription_snapshot {
+  my ($self, %args) = @_;
+  my $session_id = _require_string_arg(session_id => $args{session_id});
+  my $subscription_id = _require_string_arg(subscription_id => $args{subscription_id});
+  my $refresh = $args{refresh} ? 1 : 0;
+
+  my $subscription = $self->{nostr_subscriptions}{$session_id}{$subscription_id};
+  die "Unknown subscription_id: $subscription_id\n"
+    unless ref($subscription) eq 'HASH';
+
+  $self->_refresh_nostr_subscription(
+    session_id          => $session_id,
+    subscription_id     => $subscription_id,
+    subscription        => $subscription,
+    queue_notifications => 0,
+    timeout_ms          => (($subscription->{timeout_ms} || 250) < 1_000 ? 1_000 : $subscription->{timeout_ms}),
+  ) if $refresh;
+
+  return {
+    events => _clone_json($subscription->{snapshot} || []),
+  };
+}
+
+sub close_nostr_subscription {
+  my ($self, %args) = @_;
+  my $session_id = _require_string_arg(session_id => $args{session_id});
+  my $subscription_id = _require_string_arg(subscription_id => $args{subscription_id});
+
+  my $subscription = delete $self->{nostr_subscriptions}{$session_id}{$subscription_id};
+  die "Unknown subscription_id: $subscription_id\n"
+    unless defined $subscription;
+  delete $self->{nostr_subscriptions}{$session_id}
+    unless keys %{$self->{nostr_subscriptions}{$session_id} || {}};
+
+  my $queue = $self->{runtime_notifications}{$session_id} || [];
+  @{$queue} = grep {
+    !(
+      ($_->{method} || '') eq 'runtime.subscription_event'
+      && ref($_->{params}) eq 'HASH'
+      && ($_->{params}{subscription_id} || '') eq $subscription_id
+    )
+  } @{$queue};
+
+  return {
+    closed => JSON::PP::true,
+  };
+}
+
 sub drain_runtime_notifications {
   my ($self, $session_id) = @_;
   _require_string_arg(session_id => $session_id);
+  $self->_refresh_nostr_subscriptions;
   $self->_queue_due_timer_notifications;
 
   my $notifications = delete $self->{runtime_notifications}{$session_id} || [];
@@ -878,6 +1036,73 @@ sub _queue_due_timer_notifications {
   }
 
   return 1;
+}
+
+sub _refresh_nostr_subscriptions {
+  my ($self) = @_;
+
+  for my $session_id (sort keys %{$self->{nostr_subscriptions}}) {
+    for my $subscription_id (sort keys %{$self->{nostr_subscriptions}{$session_id} || {}}) {
+      my $subscription = $self->{nostr_subscriptions}{$session_id}{$subscription_id};
+      next unless ref($subscription) eq 'HASH';
+      $self->_refresh_nostr_subscription(
+        session_id          => $session_id,
+        subscription_id     => $subscription_id,
+        subscription        => $subscription,
+        queue_notifications => 1,
+      );
+    }
+  }
+
+  return 1;
+}
+
+sub _refresh_nostr_subscription {
+  my ($self, %args) = @_;
+  my $session_id = $args{session_id};
+  my $subscription_id = $args{subscription_id};
+  my $subscription = $args{subscription};
+  my $queue_notifications = $args{queue_notifications} ? 1 : 0;
+  my $timeout_ms = defined $args{timeout_ms}
+    ? $args{timeout_ms}
+    : $queue_notifications
+    ? ($subscription->{poll_timeout_ms} || 250)
+    : $subscription->{timeout_ms};
+  return [] unless ref($subscription) eq 'HASH';
+
+  my $events = eval {
+    Overnet::Core::Nostr->query_events(
+      relay_url  => $subscription->{relay_url},
+      filters    => _clone_json($subscription->{filters}),
+      timeout_ms => $timeout_ms,
+    );
+  };
+  return [] unless ref($events) eq 'ARRAY';
+
+  my @new_events;
+  for my $event (@{$events}) {
+    next unless ref($event) eq 'HASH';
+    next unless defined $event->{id} && !ref($event->{id}) && length($event->{id});
+    next if $subscription->{seen_event_ids}{$event->{id}}++;
+    push @new_events, _clone_json($event);
+  }
+
+  $subscription->{snapshot} = _clone_json($events);
+
+  if ($queue_notifications) {
+    for my $event (@new_events) {
+      push @{$self->{runtime_notifications}{$session_id} ||= []}, {
+        method => 'runtime.subscription_event',
+        params => {
+          subscription_id => $subscription_id,
+          item_type       => 'nostr.event',
+          data            => _clone_json($event),
+        },
+      };
+    }
+  }
+
+  return [ @new_events ];
 }
 
 sub _require_string_arg {

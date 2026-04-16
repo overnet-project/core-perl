@@ -34,6 +34,11 @@ my %SERVICE_REQUEST_METHODS = map { $_ => 1 } qw(
   events.read
   subscriptions.open
   subscriptions.close
+  nostr.publish_event
+  nostr.query_events
+  nostr.open_subscription
+  nostr.read_subscription_snapshot
+  nostr.close_subscription
   timers.schedule
   timers.cancel
   adapters.open_session

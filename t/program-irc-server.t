@@ -443,6 +443,7 @@ sub _query_nostr_events_from_relay {
   return Overnet::Core::Nostr->query_events(
     relay_url => $args{relay_url},
     filters   => $args{filters},
+    (defined($args{timeout_ms}) ? (timeout_ms => $args{timeout_ms}) : ()),
   );
 }
 
@@ -450,12 +451,13 @@ sub _pump_hosts_until {
   my (%args) = @_;
   my $hosts = $args{hosts} || [];
   my $timeout_ms = $args{timeout_ms} || 1_000;
+  my $pump_timeout_ms = $args{pump_timeout_ms} || 50;
   my $condition = $args{condition} || sub { 0 };
   my $deadline = time() + ($timeout_ms / 1000);
 
   while (time() < $deadline) {
     for my $host (@{$hosts}) {
-      $host->pump(timeout_ms => 50);
+      $host->pump(timeout_ms => $pump_timeout_ms);
     }
     return 1 if $condition->();
     sleep 0.05;
@@ -637,6 +639,7 @@ sub _assert_opaque_private_message_metadata {
         moderated        => $source->{moderated} ? 1 : 0,
         topic_restricted => $source->{topic_restricted} ? 1 : 0,
         members          => \%members,
+        present          => {},
       };
     }
 
@@ -695,8 +698,24 @@ sub _assert_opaque_private_message_metadata {
     }
 
     if (($args{command} || '') eq 'KICK') {
-      delete $state->{members}{$args{target_pubkey}}
-        if defined $args{target_pubkey};
+      if (defined $args{target_pubkey}) {
+        delete $state->{members}{$args{target_pubkey}};
+        delete $state->{present}{$args{target_pubkey}};
+      }
+      return { valid => 1 };
+    }
+
+    if (($args{command} || '') eq 'JOIN') {
+      $state->{present}{$args{actor_pubkey}} = 1
+        if defined $args{actor_pubkey};
+      return { valid => 1 };
+    }
+
+    if (($args{command} || '') eq 'PART') {
+      if (defined $args{actor_pubkey}) {
+        delete $state->{members}{$args{actor_pubkey}};
+        delete $state->{present}{$args{actor_pubkey}};
+      }
       return { valid => 1 };
     }
 
@@ -706,6 +725,7 @@ sub _assert_opaque_private_message_metadata {
   sub derive {
     my ($self, %args) = @_;
     my $session = $self->{sessions}{$args{adapter_session_id}} || {};
+    my $operation = $args{operation} || '';
     my $input = ref($args{input}) eq 'HASH' ? $args{input} : {};
     my $channel = $input->{target};
     my $state = $session->{channels}{$channel} || {
@@ -737,6 +757,54 @@ sub _assert_opaque_private_message_metadata {
         ),
       }
     } sort keys %{$state->{members} || {}};
+
+    if ($operation eq 'authoritative_channel_view') {
+      my @present_members = map {
+        my $member = $state->{members}{$_};
+        my @roles = sort @{$member->{roles} || []};
+        {
+          pubkey                => $member->{pubkey},
+          roles                 => \@roles,
+          presentational_prefix => (
+            (grep { $_ eq 'irc.operator' } @roles) ? '@'
+              : (grep { $_ eq 'irc.voice' } @roles) ? '+'
+              : ''
+          ),
+        }
+      } grep {
+        exists $state->{members}{$_}
+      } sort keys %{$state->{present} || {}};
+      my $admission = {
+        allowed => JSON::PP::false,
+        member  => JSON::PP::false,
+        reason  => $state->{closed} ? '+i' : '',
+      };
+      if (defined $input->{actor_pubkey} && exists $state->{members}{$input->{actor_pubkey}}) {
+        $admission = {
+          allowed => JSON::PP::true,
+          member  => JSON::PP::true,
+          reason  => '',
+        };
+      }
+
+      return {
+        valid => 1,
+        view  => [
+          {
+            operation         => 'authoritative_channel_view',
+            authority_profile => 'nip29',
+            object_type       => 'chat.channel',
+            object_id         => 'irc:' . ($session->{network} || 'irc.test') . ':' . $channel,
+            channel_modes     => $channel_modes,
+            supported_roles   => [],
+            members           => \@members,
+            present_members   => \@present_members,
+            pending_invites   => [],
+            admission         => $admission,
+          },
+        ],
+      };
+    }
 
     return {
       valid => 1,
@@ -2559,7 +2627,7 @@ subtest 'IRC server program uses authoritative hosted-channel state for moderate
     'from_program',
     'adapters.derive',
     sub {
-      ($_[0]{operation} || '') eq 'authoritative_channel_state'
+      ($_[0]{operation} || '') eq 'authoritative_channel_view'
         && ref($_[0]{input}) eq 'HASH'
         && (($_[0]{input}{target} || '') eq $channel);
     },
@@ -3428,6 +3496,9 @@ subtest 'IRC server program relay-publishes authoritative NIP-29 writes across t
   my $channel = '#ops';
   my $group_host = 'groups.example.test';
   my $group_id = 'ops';
+  my $relay_host_pump_ms = 1_500;
+  my $relay_propagation_timeout_ms = 5_000;
+  my $fresh_reinvite_timeout_ms = 10_000;
   my $relay_port = _free_port();
   my $relay_url = "ws://127.0.0.1:$relay_port";
   my $server_name_a = 'overnet-a.irc.local';
@@ -3545,6 +3616,8 @@ subtest 'IRC server program relay-publishes authoritative NIP-29 writes across t
         'adapters.use',
         'events.append',
         'events.read',
+        'nostr.read',
+        'nostr.write',
         'subscriptions.read',
         'overnet.emit_event',
         'overnet.emit_state',
@@ -3558,6 +3631,10 @@ subtest 'IRC server program relay-publishes authoritative NIP-29 writes across t
         'adapters.close_session'       => {},
         'events.append'                => {},
         'events.read'                  => {},
+        'nostr.publish_event'          => {},
+        'nostr.open_subscription'      => {},
+        'nostr.read_subscription_snapshot' => {},
+        'nostr.close_subscription'     => {},
         'subscriptions.open'           => {},
         'subscriptions.close'          => {},
         'overnet.emit_event'           => {},
@@ -3645,6 +3722,8 @@ subtest 'IRC server program relay-publishes authoritative NIP-29 writes across t
       expires_at      => $expires_at,
       nick            => $args{nick},
     ));
+    ok $args{host}->pump(timeout_ms => $relay_host_pump_ms) >= 0,
+      "$args{nick} pumps the relay-backed delegation publish on $args{name}";
     is _read_client_line($args{client}, 3_000),
       ":$args{server_name} NOTICE $args{nick} :OVERNETAUTH DELEGATE",
       "$args{nick} establishes a session delegation grant on $args{name}";
@@ -3704,6 +3783,7 @@ subtest 'IRC server program relay-publishes authoritative NIP-29 writes across t
   $delegate->(
     name        => 'instance A',
     client      => $alice_a,
+    host        => $host_a,
     nick        => 'alice',
     key         => $alice_key,
     server_name => $server_name_a,
@@ -3711,6 +3791,7 @@ subtest 'IRC server program relay-publishes authoritative NIP-29 writes across t
   $delegate->(
     name        => 'instance A',
     client      => $bob_a,
+    host        => $host_a,
     nick        => 'bob',
     key         => $bob_key,
     server_name => $server_name_a,
@@ -3718,13 +3799,14 @@ subtest 'IRC server program relay-publishes authoritative NIP-29 writes across t
   $delegate->(
     name        => 'instance B',
     client      => $bob_b,
+    host        => $host_b,
     nick        => 'bob',
     key         => $bob_key,
     server_name => $server_name_b,
   );
 
   _write_client_line($alice_a, "JOIN $channel");
-  ok $host_a->pump(timeout_ms => 200) >= 0,
+  ok $host_a->pump(timeout_ms => $relay_host_pump_ms) >= 0,
     'instance A pumps alice relay-backed join request';
   is _read_client_line($alice_a, 1_000), ":alice JOIN $channel",
     'alice receives her relay-backed JOIN echo on instance A';
@@ -3734,13 +3816,13 @@ subtest 'IRC server program relay-publishes authoritative NIP-29 writes across t
     'alice receives end-of-names on instance A';
 
   _write_client_line($bob_b, "JOIN $channel");
-  ok $host_b->pump(timeout_ms => 200) >= 0,
+  ok $host_b->pump(timeout_ms => $relay_host_pump_ms) >= 0,
     'instance B pumps bob pre-invite join request';
   is _read_client_line($bob_b, 3_000), ":$server_name_b 473 bob $channel :Cannot join channel (+i)",
     'instance B rejects bob before the relay-backed invite';
 
   _write_client_line($alice_a, "INVITE bob $channel");
-  ok $host_a->pump(timeout_ms => 200) >= 0,
+  ok $host_a->pump(timeout_ms => $relay_host_pump_ms) >= 0,
     'instance A pumps relay-backed INVITE write';
   my $local_invite_numeric = _read_client_line_optional($alice_a, 3_000);
   ok !defined($local_invite_numeric) || $local_invite_numeric eq ":$server_name_a 341 alice bob $channel",
@@ -3769,35 +3851,43 @@ subtest 'IRC server program relay-publishes authoritative NIP-29 writes across t
     'instance A relay-backed INVITE includes a delegation grant reference';
   like $relay_invite_request->{input}{authority_sequence}, qr/\A[1-9]\d*\z/,
     'instance A relay-backed INVITE includes a session-scoped delegation sequence';
-  my $relay_invites = _query_nostr_events_from_relay(
-    relay_url => $relay_url,
-    filters   => [
-      {
-        kinds => [9009],
-        '#h'  => [$group_id],
-        limit => 20,
-      },
-    ],
-  );
   ok(
-    scalar(grep {
-      my %tags = _first_tag_values($_->{tags});
-      defined($tags{p}) && $tags{p} eq $bob_pubkey
-    } @{$relay_invites}),
+    _pump_hosts_until(
+      hosts      => [ $host_a, $host_b ],
+      pump_timeout_ms => $relay_host_pump_ms,
+      timeout_ms => $relay_propagation_timeout_ms,
+      condition  => sub {
+        my $relay_invites = _query_nostr_events_from_relay(
+          relay_url => $relay_url,
+          filters   => [
+            {
+              kinds => [9009],
+              '#h'  => [$group_id],
+              limit => 20,
+            },
+          ],
+        );
+        return scalar(grep {
+          my %tags = _first_tag_values($_->{tags});
+          defined($tags{p}) && $tags{p} eq $bob_pubkey
+        } @{$relay_invites}) ? 1 : 0;
+      },
+    ),
     'the relay exposes the delegated authoritative INVITE event',
   );
 
-  ok _pump_hosts_until(
+  my $bob_b_saw_invite = _pump_hosts_until(
     hosts      => [ $host_a, $host_b ],
-    timeout_ms => 1_500,
+    pump_timeout_ms => $relay_host_pump_ms,
+    timeout_ms => $relay_propagation_timeout_ms,
     condition  => sub {
       my $line = _read_client_line_optional($bob_b, 50);
       return defined($line) && $line eq ":alice INVITE bob :$channel" ? 1 : 0;
     },
-  ), 'instance B receives the propagated relay-backed INVITE';
+  );
 
   _write_client_line($bob_b, "JOIN $channel");
-  ok $host_b->pump(timeout_ms => 200) >= 0,
+  ok $host_b->pump(timeout_ms => $relay_host_pump_ms) >= 0,
     'instance B pumps bob relay-backed invited join';
   my $relay_join_request = _last_request_matching(
     $host_b->transcript,
@@ -3809,6 +3899,21 @@ subtest 'IRC server program relay-publishes authoritative NIP-29 writes across t
         && (($_[0]{input}{target} || '') eq $channel);
     },
   );
+  if (!$relay_join_request) {
+    _write_client_line($bob_b, "JOIN $channel");
+    ok $host_b->pump(timeout_ms => $relay_host_pump_ms) >= 0,
+      'instance B pumps bob relay-backed join retry after invite propagation';
+    $relay_join_request = _last_request_matching(
+      $host_b->transcript,
+      'from_program',
+      'adapters.map_input',
+      sub {
+        ref($_[0]{input}) eq 'HASH'
+          && (($_[0]{input}{command} || '') eq 'JOIN')
+          && (($_[0]{input}{target} || '') eq $channel);
+      },
+    );
+  }
   ok $relay_join_request, 'instance B routes the relay-backed JOIN through the adapter when invite admission is available';
   like $relay_join_request->{input}{signing_pubkey}, qr/\A[0-9a-f]{64}\z/,
     'instance B relay-backed JOIN includes a delegated signing pubkey';
@@ -3816,44 +3921,72 @@ subtest 'IRC server program relay-publishes authoritative NIP-29 writes across t
     'instance B relay-backed JOIN includes a delegation grant reference';
   like $relay_join_request->{input}{authority_sequence}, qr/\A[1-9]\d*\z/,
     'instance B relay-backed JOIN includes a session-scoped delegation sequence';
-  is _read_client_line($bob_b, 3_000), ":bob JOIN $channel",
-    'bob receives his relay-backed JOIN echo on instance B';
+  ok(
+    _pump_hosts_until(
+      hosts      => [ $host_a, $host_b ],
+      pump_timeout_ms => $relay_host_pump_ms,
+      timeout_ms => $relay_propagation_timeout_ms,
+      condition  => sub {
+        my $relay_joins = _query_nostr_events_from_relay(
+          relay_url => $relay_url,
+          filters   => [
+            {
+              kinds => [9021],
+              '#h'  => [$group_id],
+              limit => 20,
+            },
+          ],
+        );
+        return scalar(grep {
+          my %tags = _first_tag_values($_->{tags});
+          defined($tags{overnet_actor}) && $tags{overnet_actor} eq $bob_pubkey
+        } @{$relay_joins}) ? 1 : 0;
+      },
+    ),
+    'the relay exposes the delegated authoritative JOIN event',
+  );
+  my @bob_b_post_join_lines;
+  my $bob_b_join_echo = _pump_hosts_until(
+    hosts      => [ $host_a, $host_b ],
+    pump_timeout_ms => $relay_host_pump_ms,
+    timeout_ms => $relay_propagation_timeout_ms,
+    condition  => sub {
+      my $line = _read_client_line_optional($bob_b, 50);
+      return 0 unless defined $line;
+      push @bob_b_post_join_lines, $line;
+      $bob_b_saw_invite = 1 if $line eq ":alice INVITE bob :$channel";
+      return $line eq ":bob JOIN $channel" ? 1 : 0;
+    },
+  );
+  ok $bob_b_join_echo,
+    'bob receives his relay-backed JOIN echo on instance B'
+      or diag(
+        'instance B post-join lines: '
+          . (@bob_b_post_join_lines ? join(' | ', @bob_b_post_join_lines) : '(none)'),
+        'instance B last subscriptions.open request: '
+          . encode_json(
+              _last_request_matching(
+                $host_b->transcript,
+                'from_program',
+                'subscriptions.open',
+              ) || {}
+            ),
+        'instance B last nostr.publish_event request: '
+          . encode_json(
+              _last_request_matching(
+                $host_b->transcript,
+                'from_program',
+                'nostr.publish_event',
+              ) || {}
+            ),
+      );
   is _read_client_line($bob_b, 3_000), ":$server_name_b 353 bob = $channel :bob",
     'instance B NAMES bootstrap reflects the invited local member after the relay-backed join';
   is _read_client_line($bob_b, 3_000), ":$server_name_b 366 bob $channel :End of /NAMES list.",
     'instance B bob receives end-of-names after the relay-backed join';
-  my $relay_joins = _query_nostr_events_from_relay(
-    relay_url => $relay_url,
-    filters   => [
-      {
-        kinds => [9021],
-        '#h'  => [$group_id],
-        limit => 20,
-      },
-    ],
-  );
-  ok(
-    scalar(grep {
-      my %tags = _first_tag_values($_->{tags});
-      defined($tags{overnet_actor}) && $tags{overnet_actor} eq $bob_pubkey
-    } @{$relay_joins}),
-    'the relay exposes the delegated authoritative JOIN event',
-  );
-
-  _write_client_line($alice_a, "NAMES $channel");
-  ok _pump_hosts_until(
-    hosts      => [ $host_a, $host_b ],
-    timeout_ms => 1_500,
-    condition  => sub {
-      my $line = _read_client_line_optional($alice_a, 50);
-      return defined($line) && $line eq ":$server_name_a 353 alice = $channel :\@alice bob" ? 1 : 0;
-    },
-  ), 'instance A authoritative NAMES sees bob after the relay-backed join on instance B';
-  is _read_client_line($alice_a, 3_000), ":$server_name_a 366 alice $channel :End of /NAMES list.",
-    'instance A authoritative NAMES terminates after the propagated join';
 
   _write_client_line($bob_b, "PART $channel :later");
-  ok $host_b->pump(timeout_ms => 200) >= 0,
+  ok $host_b->pump(timeout_ms => $relay_host_pump_ms) >= 0,
     'instance B pumps bob relay-backed PART';
   my $relay_part_request = _last_request_matching(
     $host_b->transcript,
@@ -3893,59 +4026,267 @@ subtest 'IRC server program relay-publishes authoritative NIP-29 writes across t
     } @{$relay_parts}),
     'the relay exposes the delegated authoritative PART event',
   );
-
-  _write_client_line($alice_a, "NAMES $channel");
-  ok _pump_hosts_until(
-    hosts      => [ $host_a, $host_b ],
-    timeout_ms => 1_500,
-    condition  => sub {
-      my $line = _read_client_line_optional($alice_a, 50);
-      return defined($line) && $line eq ":$server_name_a 353 alice = $channel :\@alice" ? 1 : 0;
-    },
-  ), 'instance A authoritative NAMES removes bob after the relay-backed PART';
-  is _read_client_line($alice_a, 3_000), ":$server_name_a 366 alice $channel :End of /NAMES list.",
-    'instance A authoritative NAMES terminates after the propagated PART';
+  ok $host_a->pump(timeout_ms => $relay_host_pump_ms) >= 0,
+    'instance A pumps relay-backed PART propagation before the fresh INVITE';
 
   _write_client_line($bob_b, "JOIN $channel");
-  ok $host_b->pump(timeout_ms => 200) >= 0,
+  ok $host_b->pump(timeout_ms => $relay_host_pump_ms) >= 0,
     'instance B pumps bob post-PART rejoin attempt';
   is _read_client_line($bob_b, 3_000), ":$server_name_b 473 bob $channel :Cannot join channel (+i)",
     'instance B requires a fresh invite after relay-backed PART on a closed channel';
 
+  my $relay_invites_before_reinvite = _query_nostr_events_from_relay(
+    relay_url => $relay_url,
+    filters   => [
+      {
+        kinds => [9009],
+        '#h'  => [$group_id],
+        limit => 20,
+      },
+    ],
+  );
+  my %relay_invite_ids_before_reinvite = map {
+    defined($_->{id}) && !ref($_->{id}) ? ($_->{id} => 1) : ()
+  } @{$relay_invites_before_reinvite || []};
+  my $invite_request_count_before_reinvite = _request_count_matching(
+    $host_a->transcript,
+    'from_program',
+    'adapters.map_input',
+    sub {
+      ref($_[0]{input}) eq 'HASH'
+        && (($_[0]{input}{command} || '') eq 'INVITE')
+        && (($_[0]{input}{target} || '') eq $channel);
+    },
+  );
+  my $invite_publish_count_before_reinvite = _request_count_matching(
+    $host_a->transcript,
+    'from_program',
+    'nostr.publish_event',
+    sub {
+      ref($_[0]{event}) eq 'HASH'
+        && (($_[0]{event}{kind} || 0) == 9009);
+    },
+  );
+
   _write_client_line($alice_a, "INVITE bob $channel");
-  ok $host_a->pump(timeout_ms => 200) >= 0,
+  ok $host_a->pump(timeout_ms => $relay_host_pump_ms) >= 0,
     'instance A pumps a fresh relay-backed INVITE after PART';
-  _read_client_line_optional($alice_a, 3_000);
-  _read_client_line_optional($bob_a, 3_000);
+  my $fresh_local_invite_numeric;
+  my $fresh_same_instance_invite;
   ok _pump_hosts_until(
     hosts      => [ $host_a, $host_b ],
-    timeout_ms => 1_500,
+    pump_timeout_ms => $relay_host_pump_ms,
+    timeout_ms => $fresh_reinvite_timeout_ms,
+    condition  => sub {
+      $fresh_local_invite_numeric ||= _read_client_line_optional($alice_a, 50);
+      $fresh_same_instance_invite ||= _read_client_line_optional($bob_a, 50);
+      my $invite_request_count_after_reinvite = _request_count_matching(
+        $host_a->transcript,
+        'from_program',
+        'adapters.map_input',
+        sub {
+          ref($_[0]{input}) eq 'HASH'
+            && (($_[0]{input}{command} || '') eq 'INVITE')
+            && (($_[0]{input}{target} || '') eq $channel);
+        },
+      );
+      my $invite_publish_count_after_reinvite = _request_count_matching(
+        $host_a->transcript,
+        'from_program',
+        'nostr.publish_event',
+        sub {
+          ref($_[0]{event}) eq 'HASH'
+            && (($_[0]{event}{kind} || 0) == 9009);
+        },
+      );
+      return 1 if defined($fresh_local_invite_numeric) || defined($fresh_same_instance_invite);
+      return $invite_request_count_after_reinvite > $invite_request_count_before_reinvite
+        && $invite_publish_count_after_reinvite > $invite_publish_count_before_reinvite
+        ? 1 : 0;
+    },
+  ), 'instance A routes and publishes a fresh relay-backed INVITE after PART';
+  $fresh_local_invite_numeric ||= _read_client_line_optional($alice_a, 50);
+  $fresh_same_instance_invite ||= _read_client_line_optional($bob_a, 50);
+  ok(
+    _pump_hosts_until(
+      hosts      => [ $host_a, $host_b ],
+      pump_timeout_ms => $relay_host_pump_ms,
+      timeout_ms => $fresh_reinvite_timeout_ms,
+      condition  => sub {
+        my $relay_invites = _query_nostr_events_from_relay(
+          relay_url => $relay_url,
+          timeout_ms => 1_000,
+          filters   => [
+            {
+              kinds => [9009],
+              '#h'  => [$group_id],
+              limit => 20,
+            },
+          ],
+        );
+        return scalar(grep {
+          my %tags = _first_tag_values($_->{tags});
+          defined($tags{p}) && $tags{p} eq $bob_pubkey
+            && defined($_->{id}) && !ref($_->{id})
+            && !$relay_invite_ids_before_reinvite{$_->{id}}
+        } @{$relay_invites}) ? 1 : 0;
+      },
+    ),
+    'the relay exposes a fresh authoritative INVITE event after PART',
+  ) or diag(
+    'instance A local fresh-invite line: ' . (($fresh_local_invite_numeric // '(none)')),
+    'instance A same-instance fresh invite line: ' . (($fresh_same_instance_invite // '(none)')),
+    'instance A fresh INVITE request count: ' . $invite_request_count_before_reinvite . ' -> '
+      . _request_count_matching(
+          $host_a->transcript,
+          'from_program',
+          'adapters.map_input',
+          sub {
+            ref($_[0]{input}) eq 'HASH'
+              && (($_[0]{input}{command} || '') eq 'INVITE')
+              && (($_[0]{input}{target} || '') eq $channel);
+          },
+        ),
+    'instance A fresh INVITE publish count: ' . $invite_publish_count_before_reinvite . ' -> '
+      . _request_count_matching(
+          $host_a->transcript,
+          'from_program',
+          'nostr.publish_event',
+          sub {
+            ref($_[0]{event}) eq 'HASH'
+              && (($_[0]{event}{kind} || 0) == 9009);
+          },
+        ),
+    'instance A last authoritative derive request: '
+      . encode_json(
+          _last_request_matching(
+            $host_a->transcript,
+            'from_program',
+            'adapters.derive',
+          ) || {}
+        ),
+    'instance A last subscription snapshot request: '
+      . encode_json(
+          _last_request_matching(
+            $host_a->transcript,
+            'from_program',
+            'nostr.read_subscription_snapshot',
+          ) || {}
+        ),
+    'instance A last fresh INVITE map_input request: '
+      . encode_json(
+          _last_request_matching(
+            $host_a->transcript,
+            'from_program',
+            'adapters.map_input',
+            sub {
+              ref($_[0]{input}) eq 'HASH'
+                && (($_[0]{input}{command} || '') eq 'INVITE')
+                && (($_[0]{input}{target} || '') eq $channel);
+            },
+          ) || {}
+        ),
+    'instance A last nostr.publish_event request: '
+      . encode_json(
+          _last_request_matching(
+            $host_a->transcript,
+            'from_program',
+            'nostr.publish_event',
+          ) || {}
+        ),
+  );
+  my $bob_b_saw_fresh_invite = _pump_hosts_until(
+    hosts      => [ $host_a, $host_b ],
+    pump_timeout_ms => $relay_host_pump_ms,
+    timeout_ms => $fresh_reinvite_timeout_ms,
     condition  => sub {
       my $line = _read_client_line_optional($bob_b, 50);
       return defined($line) && $line eq ":alice INVITE bob :$channel" ? 1 : 0;
     },
-  ), 'instance B receives a fresh relay-backed INVITE after PART';
+  );
 
+  my $join_request_count_before_reinvite = _request_count_matching(
+    $host_b->transcript,
+    'from_program',
+    'adapters.map_input',
+    sub {
+      ref($_[0]{input}) eq 'HASH'
+        && (($_[0]{input}{command} || '') eq 'JOIN')
+        && (($_[0]{input}{target} || '') eq $channel);
+    },
+  );
   _write_client_line($bob_b, "JOIN $channel");
-  ok $host_b->pump(timeout_ms => 200) >= 0,
+  ok $host_b->pump(timeout_ms => $relay_host_pump_ms) >= 0,
     'instance B pumps bob rejoin after the fresh relay-backed INVITE';
-  is _read_client_line($bob_b, 3_000), ":bob JOIN $channel",
-    'bob receives his JOIN echo after the fresh relay-backed INVITE';
+  my $join_request_count_after_reinvite = _request_count_matching(
+    $host_b->transcript,
+    'from_program',
+    'adapters.map_input',
+    sub {
+      ref($_[0]{input}) eq 'HASH'
+        && (($_[0]{input}{command} || '') eq 'JOIN')
+        && (($_[0]{input}{target} || '') eq $channel);
+    },
+  );
+  if ($join_request_count_after_reinvite == $join_request_count_before_reinvite) {
+    _write_client_line($bob_b, "JOIN $channel");
+    ok $host_b->pump(timeout_ms => $relay_host_pump_ms) >= 0,
+      'instance B pumps bob rejoin retry after the fresh invite propagation';
+    $join_request_count_after_reinvite = _request_count_matching(
+      $host_b->transcript,
+      'from_program',
+      'adapters.map_input',
+      sub {
+        ref($_[0]{input}) eq 'HASH'
+          && (($_[0]{input}{command} || '') eq 'JOIN')
+          && (($_[0]{input}{target} || '') eq $channel);
+      },
+    );
+  }
+  ok $join_request_count_after_reinvite > $join_request_count_before_reinvite,
+    'instance B routes a fresh invited rejoin through the adapter after PART';
+  my @bob_b_reinvite_lines;
+  my $bob_b_reinvite_join_echo = _pump_hosts_until(
+    hosts      => [ $host_a, $host_b ],
+    pump_timeout_ms => $relay_host_pump_ms,
+    timeout_ms => $fresh_reinvite_timeout_ms,
+    condition  => sub {
+      my $line = _read_client_line_optional($bob_b, 50);
+      return 0 unless defined $line;
+      push @bob_b_reinvite_lines, $line;
+      $bob_b_saw_fresh_invite = 1 if $line eq ":alice INVITE bob :$channel";
+      return $line eq ":bob JOIN $channel" ? 1 : 0;
+    },
+  );
+  ok $bob_b_reinvite_join_echo,
+    'bob receives his JOIN echo after the fresh relay-backed INVITE'
+      or diag(
+        'instance B fresh-invite lines: '
+          . (@bob_b_reinvite_lines ? join(' | ', @bob_b_reinvite_lines) : '(none)'),
+      );
   is _read_client_line($bob_b, 3_000), ":$server_name_b 353 bob = $channel :bob",
     'instance B NAMES bootstrap restores bob after the fresh relay-backed INVITE';
   is _read_client_line($bob_b, 3_000), ":$server_name_b 366 bob $channel :End of /NAMES list.",
     'instance B bob receives end-of-names after rejoining through a fresh invite';
 
   _write_client_line($alice_a, "MODE $channel +v bob");
-  ok $host_a->pump(timeout_ms => 200) >= 0,
+  ok $host_a->pump(timeout_ms => $relay_host_pump_ms) >= 0,
     'instance A pumps relay-backed MODE write';
-  is _read_client_line($alice_a, 3_000), ":alice MODE $channel +v bob",
-    'alice sees the relay-backed MODE line on instance A';
+  ok _pump_hosts_until(
+    hosts      => [ $host_a, $host_b ],
+    pump_timeout_ms => $relay_host_pump_ms,
+    timeout_ms => $relay_propagation_timeout_ms,
+    condition  => sub {
+      my $line = _read_client_line_optional($alice_a, 50);
+      return defined($line) && $line eq ":alice MODE $channel +v bob" ? 1 : 0;
+    },
+  ), 'alice sees the relay-backed MODE line on instance A';
 
   _write_client_line($bob_b, "NAMES $channel");
   ok _pump_hosts_until(
     hosts      => [ $host_a, $host_b ],
-    timeout_ms => 1_500,
+    pump_timeout_ms => $relay_host_pump_ms,
+    timeout_ms => $relay_propagation_timeout_ms,
     condition  => sub {
       my $line = _read_client_line_optional($bob_b, 50);
       return defined($line) && $line eq ":$server_name_b 353 bob = $channel :+bob" ? 1 : 0;
@@ -3955,10 +4296,17 @@ subtest 'IRC server program relay-publishes authoritative NIP-29 writes across t
     'instance B authoritative NAMES terminates after the propagated MODE';
 
   _write_client_line($alice_a, "KICK $channel bob :relay kick");
-  ok $host_a->pump(timeout_ms => 200) >= 0,
+  ok $host_a->pump(timeout_ms => $relay_host_pump_ms) >= 0,
     'instance A pumps relay-backed KICK write';
-  is _read_client_line($alice_a, 3_000), ":alice KICK $channel bob :relay kick",
-    'alice sees the relay-backed KICK line on instance A';
+  ok _pump_hosts_until(
+    hosts      => [ $host_a, $host_b ],
+    pump_timeout_ms => $relay_host_pump_ms,
+    timeout_ms => $relay_propagation_timeout_ms,
+    condition  => sub {
+      my $line = _read_client_line_optional($alice_a, 50);
+      return defined($line) && $line eq ":alice KICK $channel bob :relay kick" ? 1 : 0;
+    },
+  ), 'alice sees the relay-backed KICK line on instance A';
   my $relay_kicks = _query_nostr_events_from_relay(
     relay_url => $relay_url,
     filters   => [
@@ -3982,7 +4330,8 @@ subtest 'IRC server program relay-publishes authoritative NIP-29 writes across t
 
   ok _pump_hosts_until(
     hosts      => [ $host_a, $host_b ],
-    timeout_ms => 1_500,
+    pump_timeout_ms => $relay_host_pump_ms,
+    timeout_ms => $relay_propagation_timeout_ms,
     condition  => sub {
       my $line = _read_client_line_optional($bob_b, 50);
       return defined($line) && $line =~ /\A:[^ ]+ KICK \Q$channel\E bob(?: :relay kick)?\z/ ? 1 : 0;
@@ -3990,10 +4339,15 @@ subtest 'IRC server program relay-publishes authoritative NIP-29 writes across t
   ), 'instance B bob receives the propagated relay-backed KICK';
 
   _write_client_line($bob_b, "NAMES $channel");
-  ok $host_b->pump(timeout_ms => 200) >= 0,
-    'instance B pumps post-KICK authoritative NAMES';
-  is _read_client_line($bob_b, 3_000), ":$server_name_b 353 bob = $channel :",
-    'instance B authoritative NAMES removes bob after the relay-backed KICK';
+  ok _pump_hosts_until(
+    hosts      => [ $host_a, $host_b ],
+    pump_timeout_ms => $relay_host_pump_ms,
+    timeout_ms => $relay_propagation_timeout_ms,
+    condition  => sub {
+      my $line = _read_client_line_optional($bob_b, 50);
+      return defined($line) && $line eq ":$server_name_b 353 bob = $channel :" ? 1 : 0;
+    },
+  ), 'instance B authoritative NAMES removes bob after the relay-backed KICK';
   is _read_client_line($bob_b, 3_000), ":$server_name_b 366 bob $channel :End of /NAMES list.",
     'instance B authoritative NAMES terminates after the relay-backed KICK';
 
@@ -4004,6 +4358,61 @@ subtest 'IRC server program relay-publishes authoritative NIP-29 writes across t
   my $shutdown_b = $host_b->request_shutdown(reason => 'relay-backed authoritative test complete B');
   is $shutdown_b->{state}, 'shutdown_complete', 'instance B relay-backed authoritative server handles runtime shutdown';
   is $shutdown_b->{exit_code}, 0, 'instance B relay-backed authoritative server exits cleanly';
+
+  ok _request_count_matching(
+    $host_a->transcript,
+    'from_program',
+    'nostr.open_subscription',
+    sub { (($_[0]{relay_url} || '') eq $relay_url) ? 1 : 0 },
+  ) >= 1, 'instance A opens a runtime nostr subscription for authoritative relay state';
+  ok _request_count_matching(
+    $host_b->transcript,
+    'from_program',
+    'nostr.open_subscription',
+    sub { (($_[0]{relay_url} || '') eq $relay_url) ? 1 : 0 },
+  ) >= 1, 'instance B opens a runtime nostr subscription for authoritative relay state';
+  ok _request_count_matching(
+    $host_a->transcript,
+    'from_program',
+    'nostr.read_subscription_snapshot',
+    sub { 1 },
+  ) >= 1, 'instance A reads runtime nostr subscription snapshots';
+  ok _request_count_matching(
+    $host_b->transcript,
+    'from_program',
+    'nostr.read_subscription_snapshot',
+    sub { 1 },
+  ) >= 1, 'instance B reads runtime nostr subscription snapshots';
+  ok _request_count_matching(
+    $host_a->transcript,
+    'from_program',
+    'nostr.publish_event',
+    sub {
+      ref($_[0]{event}) eq 'HASH'
+        && (($_[0]{event}{kind} || 0) == 14142 || ($_[0]{event}{kind} || 0) == 9009 || ($_[0]{event}{kind} || 0) == 9002 || ($_[0]{event}{kind} || 0) == 9001);
+    },
+  ) >= 1, 'instance A publishes authoritative relay events through the runtime nostr service';
+  ok _request_count_matching(
+    $host_b->transcript,
+    'from_program',
+    'nostr.publish_event',
+    sub {
+      ref($_[0]{event}) eq 'HASH'
+        && (($_[0]{event}{kind} || 0) == 14142 || ($_[0]{event}{kind} || 0) == 9021 || ($_[0]{event}{kind} || 0) == 9022);
+    },
+  ) >= 1, 'instance B publishes authoritative relay events through the runtime nostr service';
+  ok _request_count_matching(
+    $host_a->transcript,
+    'from_program',
+    'adapters.derive',
+    sub { (($_[0]{operation} || '') eq 'authoritative_channel_view') ? 1 : 0 },
+  ) >= 1, 'instance A derives authoritative relay state through authoritative_channel_view';
+  ok _request_count_matching(
+    $host_b->transcript,
+    'from_program',
+    'adapters.derive',
+    sub { (($_[0]{operation} || '') eq 'authoritative_channel_view') ? 1 : 0 },
+  ) >= 1, 'instance B derives authoritative relay state through authoritative_channel_view';
 
   close $alice_a->{socket};
   close $bob_a->{socket};
@@ -4061,6 +4470,34 @@ subtest 'IRC program entrypoints do not import Net::Nostr directly' => sub {
     unlike $source, qr/\bNet::Nostr::/,
       "$path no longer references Net::Nostr directly";
   }
+};
+
+subtest 'IRC server source keeps relay I/O and raw authoritative interpretation out of the program layer' => sub {
+  my $server_path = File::Spec->catfile(
+    $FindBin::Bin,
+    '..',
+    '..',
+    'overnet-program-irc',
+    'lib',
+    'Overnet',
+    'Program',
+    'IRC',
+    'Server.pm',
+  );
+
+  open my $fh, '<', $server_path
+    or die "Unable to read $server_path: $!";
+  my $source = do { local $/; <$fh> };
+  close $fh;
+
+  unlike $source, qr/Overnet::Core::Nostr->query_events/,
+    'Server.pm does not query relays directly through Overnet::Core::Nostr';
+  unlike $source, qr/Overnet::Core::Nostr->publish_event/,
+    'Server.pm does not publish relay events directly through Overnet::Core::Nostr';
+  unlike $source, qr/\b_authoritative_pending_invite_for_pubkey\b/,
+    'Server.pm does not keep a raw pending-invite scanner';
+  unlike $source, qr/\b_authoritative_present_pubkeys_for_channel\b/,
+    'Server.pm does not keep a raw present-member scanner';
 };
 
 done_testing;

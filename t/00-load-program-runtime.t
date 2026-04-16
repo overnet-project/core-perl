@@ -4,6 +4,7 @@ use Test::More;
 
 use_ok('Overnet');
 use_ok('Overnet::Core::Nostr');
+use_ok('Overnet::Authority::Delegation');
 use_ok('Overnet::Program::Runtime');
 use_ok('Overnet::Program::Protocol');
 use_ok('Overnet::Program::Services');

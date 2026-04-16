@@ -69,7 +69,8 @@ sub _authorize_event {
     || $kind == 9001
     || $kind == 9002
     || $kind == 9009
-    || $kind == 9021;
+    || $kind == 9021
+    || $kind == 9022;
 
   my %tags = _first_tag_values($event->tags);
   my $group_id = $tags{h};
@@ -98,6 +99,12 @@ sub _authorize_event {
       actor      => $actor_pubkey,
       state      => $state,
     );
+  }
+
+  if ($kind == 9022) {
+    return (1, '')
+      if $state->{members}{$actor_pubkey};
+    return (0, 'unauthorized: actor is not a group member');
   }
 
   my $member = $state->{members}{$actor_pubkey};
@@ -223,6 +230,14 @@ sub _derive_group_state {
       delete $invites{$code};
       next;
     }
+
+    if ($kind == 9022) {
+      my %tags = _first_tag_values($event->tags);
+      my $leaver = $tags{overnet_actor};
+      next unless defined $leaver && $leaver =~ /\A[0-9a-f]{64}\z/;
+      delete $members{$leaver};
+      next;
+    }
   }
 
   return {
@@ -245,7 +260,8 @@ sub _group_events {
       || $kind == 9001
       || $kind == 9002
       || $kind == 9009
-      || $kind == 9021;
+      || $kind == 9021
+      || $kind == 9022;
 
     my %tags = _first_tag_values($event->tags);
     next unless (defined $tags{d} && $tags{d} eq $group_id)
@@ -303,8 +319,9 @@ sub _event_sort_rank {
   return 4 if $kind == 9002;
   return 5 if $kind == 9009;
   return 6 if $kind == 9021;
-  return 7 if $kind == 9000;
-  return 8 if $kind == 9001;
+  return 7 if $kind == 9022;
+  return 8 if $kind == 9000;
+  return 9 if $kind == 9001;
   return 99;
 }
 

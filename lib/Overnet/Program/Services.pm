@@ -2,6 +2,7 @@ package Overnet::Program::Services;
 
 use strict;
 use warnings;
+use Overnet::Core::Nostr;
 use Overnet::Program::Permissions;
 use Overnet::Program::Runtime;
 
@@ -18,6 +19,11 @@ my %SERVICE_METHODS = map { $_ => 1 } qw(
   events.read
   subscriptions.open
   subscriptions.close
+  nostr.publish_event
+  nostr.query_events
+  nostr.open_subscription
+  nostr.read_subscription_snapshot
+  nostr.close_subscription
   timers.schedule
   timers.cancel
   adapters.open_session
@@ -296,6 +302,133 @@ sub close_subscription {
   return {};
 }
 
+sub publish_nostr_event {
+  my ($self, %args) = @_;
+  my $relay_url = _require_string_param('relay_url', $args{relay_url});
+  _require_present_param('event', \%args);
+  my $event = _require_object_param('event', $args{event});
+
+  my %publish_args = (
+    relay_url => $relay_url,
+    event     => $event,
+  );
+  if (exists $args{timeout_ms}) {
+    $publish_args{timeout_ms} = _require_positive_integer_param('timeout_ms', $args{timeout_ms});
+  }
+
+  return $self->{runtime}->publish_nostr_event(%publish_args);
+}
+
+sub open_nostr_subscription {
+  my ($self, %args) = @_;
+  my $session_id = _require_string_param('session_id', $args{session_id});
+  my $subscription_id = _require_string_param('subscription_id', $args{subscription_id});
+  my $relay_url = _require_string_param('relay_url', $args{relay_url});
+  _require_present_param('filters', \%args);
+  my $filters = _require_array_param('filters', $args{filters});
+
+  _validate_nostr_filters($filters);
+  _invalid_params(
+    "Duplicate subscription_id: $subscription_id",
+    {
+      param           => 'subscription_id',
+      subscription_id => $subscription_id,
+    },
+  ) if $self->{runtime}->has_nostr_subscription(
+    session_id      => $session_id,
+    subscription_id => $subscription_id,
+  );
+
+  my %open_args = (
+    session_id      => $session_id,
+    subscription_id => $subscription_id,
+    relay_url       => $relay_url,
+    filters         => $filters,
+  );
+  if (exists $args{timeout_ms}) {
+    $open_args{timeout_ms} = _require_positive_integer_param('timeout_ms', $args{timeout_ms});
+  }
+
+  return $self->{runtime}->open_nostr_subscription(%open_args);
+}
+
+sub query_nostr_events {
+  my ($self, %args) = @_;
+  my $relay_url = _require_string_param('relay_url', $args{relay_url});
+  my $filters = _require_array_param('filters', $args{filters});
+  _invalid_params(
+    'filters must be a non-empty array',
+    { param => 'filters' },
+  ) unless @{$filters};
+
+  my %query_args = (
+    relay_url => $relay_url,
+    filters   => $filters,
+  );
+  if (exists $args{timeout_ms}) {
+    $query_args{timeout_ms} = _require_positive_integer_param('timeout_ms', $args{timeout_ms});
+  }
+
+  return {
+    events => $self->{runtime}->query_nostr_events(%query_args),
+  };
+}
+
+sub read_nostr_subscription_snapshot {
+  my ($self, %args) = @_;
+  my $session_id = _require_string_param('session_id', $args{session_id});
+  my $subscription_id = _require_string_param('subscription_id', $args{subscription_id});
+
+  _invalid_params(
+    "Unknown subscription_id: $subscription_id",
+    {
+      param           => 'subscription_id',
+      subscription_id => $subscription_id,
+    },
+  ) unless $self->{runtime}->has_nostr_subscription(
+    session_id      => $session_id,
+    subscription_id => $subscription_id,
+  );
+
+  my %read_args = (
+    session_id      => $session_id,
+    subscription_id => $subscription_id,
+  );
+  if (exists $args{refresh}) {
+    _invalid_params(
+      'refresh must be 0 or 1',
+      { param => 'refresh' },
+    ) unless defined $args{refresh}
+      && !ref($args{refresh})
+      && ($args{refresh} eq '0' || $args{refresh} eq '1' || $args{refresh} == 0 || $args{refresh} == 1);
+    $read_args{refresh} = $args{refresh} ? 1 : 0;
+  }
+
+  return $self->{runtime}->read_nostr_subscription_snapshot(%read_args);
+}
+
+sub close_nostr_subscription {
+  my ($self, %args) = @_;
+  my $session_id = _require_string_param('session_id', $args{session_id});
+  my $subscription_id = _require_string_param('subscription_id', $args{subscription_id});
+
+  _invalid_params(
+    "Unknown subscription_id: $subscription_id",
+    {
+      param           => 'subscription_id',
+      subscription_id => $subscription_id,
+    },
+  ) unless $self->{runtime}->has_nostr_subscription(
+    session_id      => $session_id,
+    subscription_id => $subscription_id,
+  );
+
+  return $self->{runtime}->close_nostr_subscription(
+    session_id      => $session_id,
+    subscription_id => $subscription_id,
+  );
+}
+
 sub schedule_timer {
   my ($self, %args) = @_;
   my $session_id = _require_string_param('session_id', $args{session_id});
@@ -439,6 +572,11 @@ sub dispatch_request {
     'events.read'             => sub { $self->read_event_entries(%{$params}) },
     'subscriptions.open'      => sub { $self->open_subscription(%{$params}, session_id => $args{session_id}) },
     'subscriptions.close'     => sub { $self->close_subscription(%{$params}, session_id => $args{session_id}) },
+    'nostr.publish_event'     => sub { $self->publish_nostr_event(%{$params}) },
+    'nostr.query_events'      => sub { $self->query_nostr_events(%{$params}) },
+    'nostr.open_subscription' => sub { $self->open_nostr_subscription(%{$params}, session_id => $args{session_id}) },
+    'nostr.read_subscription_snapshot' => sub { $self->read_nostr_subscription_snapshot(%{$params}, session_id => $args{session_id}) },
+    'nostr.close_subscription' => sub { $self->close_nostr_subscription(%{$params}, session_id => $args{session_id}) },
     'timers.schedule'         => sub { $self->schedule_timer(%{$params}, session_id => $args{session_id}) },
     'timers.cancel'           => sub { $self->cancel_timer(%{$params}, session_id => $args{session_id}) },
     'adapters.open_session'  => sub {
@@ -539,6 +677,14 @@ sub _normalize_adapter_result {
     $normalized{state} = _normalized_result_array(
       name       => 'state',
       value      => $result->{state},
+      adapter_id => $adapter_id,
+      method     => $method,
+    );
+  }
+  if (exists $result->{view}) {
+    $normalized{view} = _normalized_result_array(
+      name       => 'view',
+      value      => $result->{view},
       adapter_id => $adapter_id,
       method     => $method,
     );
@@ -672,6 +818,24 @@ sub _require_storage_key {
       key   => $key,
     },
   ) unless $runtime->has_document(key => $key);
+
+  return 1;
+}
+
+sub _validate_nostr_filters {
+  my ($filters) = @_;
+
+  _invalid_params(
+    'filters must be a non-empty array',
+    { param => 'filters' },
+  ) unless ref($filters) eq 'ARRAY' && @{$filters};
+
+  for my $index (0 .. $#{$filters}) {
+    _invalid_params(
+      "filters[$index] must be an object",
+      { param => "filters.$index" },
+    ) if ref($filters->[$index]) ne 'HASH';
+  }
 
   return 1;
 }
