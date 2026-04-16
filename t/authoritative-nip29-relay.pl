@@ -103,8 +103,23 @@ sub _authorize_event {
 
   if ($kind == 9022) {
     return (1, '')
-      if $state->{members}{$actor_pubkey};
+      if $state->{members}{$actor_pubkey}
+        || _actor_membership_state(
+          relay    => $relay,
+          group_id => $group_id,
+          actor    => $actor_pubkey,
+        );
     return (0, 'unauthorized: actor is not a group member');
+  }
+
+  if ($kind == 9000) {
+    my ($target_pubkey, $roles) = _target_and_roles_from_put_user($event->tags);
+    if (!keys %{$state->{members} || {}}
+        && defined $target_pubkey
+        && $target_pubkey eq $actor_pubkey
+        && grep { $_ eq 'irc.operator' } @{$roles || []}) {
+      return (1, '');
+    }
   }
 
   my $member = $state->{members}{$actor_pubkey};
@@ -245,6 +260,86 @@ sub _derive_group_state {
     members => \%members,
     invites => \%invites,
   };
+}
+
+sub _actor_membership_state {
+  my (%args) = @_;
+  my $relay = $args{relay};
+  my $group_id = $args{group_id};
+  my $actor = $args{actor};
+  return 0 unless defined $actor && $actor =~ /\A[0-9a-f]{64}\z/;
+
+  my $closed = 0;
+  my $member = 0;
+  my %invites;
+
+  for my $event (_group_events($relay, $group_id)) {
+    my $kind = $event->kind;
+
+    if ($kind == 39000 || $kind == 9002) {
+      my %metadata = _metadata_from_tags($event->tags);
+      $closed = $metadata{closed} ? 1 : 0;
+      next;
+    }
+
+    if ($kind == 39002) {
+      my $member_info = Net::Nostr::Group->members_from_event($event);
+      my %snapshot = map { $_ => 1 } @{$member_info->{members} || []};
+      $member = $snapshot{$actor} ? 1 : 0;
+      next;
+    }
+
+    if ($kind == 9009) {
+      my ($code, $target_pubkey) = _invite_from_tags($event->tags);
+      next unless defined $code;
+      $invites{$code} = {
+        (defined $target_pubkey ? (target_pubkey => $target_pubkey) : ()),
+      };
+      next;
+    }
+
+    if ($kind == 9000) {
+      my ($target_pubkey) = _target_and_roles_from_put_user($event->tags);
+      $member = 1
+        if defined $target_pubkey && $target_pubkey eq $actor;
+      next;
+    }
+
+    if ($kind == 9001) {
+      my $target_pubkey = _target_pubkey_from_tags($event->tags);
+      $member = 0
+        if defined $target_pubkey && $target_pubkey eq $actor;
+      next;
+    }
+
+    if ($kind == 9021) {
+      my %tags = _first_tag_values($event->tags);
+      next unless defined $tags{overnet_actor} && $tags{overnet_actor} eq $actor;
+      if (!$closed) {
+        $member = 1;
+        next;
+      }
+
+      my $code = $tags{code};
+      next unless defined $code && exists $invites{$code};
+      my $invite = $invites{$code};
+      next if defined $invite->{target_pubkey}
+        && $invite->{target_pubkey} ne $actor;
+
+      $member = 1;
+      delete $invites{$code};
+      next;
+    }
+
+    if ($kind == 9022) {
+      my %tags = _first_tag_values($event->tags);
+      $member = 0
+        if defined $tags{overnet_actor} && $tags{overnet_actor} eq $actor;
+      next;
+    }
+  }
+
+  return $member;
 }
 
 sub _group_events {

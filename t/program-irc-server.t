@@ -522,6 +522,30 @@ sub _pump_hosts_until {
   return 0;
 }
 
+sub _pump_hosts_until_client_lines {
+  my (%args) = @_;
+  my $client = $args{client} || return undef;
+  my $count = $args{count} || 1;
+  my @lines;
+
+  my $ok = _pump_hosts_until(
+    hosts           => $args{hosts} || [],
+    timeout_ms      => $args{timeout_ms},
+    pump_timeout_ms => $args{pump_timeout_ms},
+    condition       => sub {
+      while (@lines < $count) {
+        my $line = _read_client_line_optional($client, 10);
+        last unless defined $line;
+        push @lines, $line;
+      }
+      return @lines >= $count;
+    },
+  );
+
+  return undef unless $ok;
+  return \@lines;
+}
+
 sub _decode_e2ee_transport_from_line {
   my ($line) = @_;
   my $body = _extract_trailing_text($line);
@@ -4161,12 +4185,20 @@ subtest 'IRC server program establishes authoritative relay delegation through S
   _write_client_line($alice, "JOIN $channel");
   ok $host->pump(timeout_ms => $relay_host_pump_ms) >= 0,
     'authoritative SASL relay host pumps alice join requests';
-  is _read_client_line($alice, 1_000), ":alice JOIN $channel",
-    'alice receives her relay-backed JOIN echo after SASL authentication';
-  is _read_client_line($alice, 3_000), ":$server_name 353 alice = $channel :\@alice",
-    'relay-backed SASL JOIN bootstrap prefixes the operator nick';
-  is _read_client_line($alice, 3_000), ":$server_name 366 alice $channel :End of /NAMES list.",
-    'alice receives end-of-names after relay-backed SASL JOIN';
+  my $relay_sasl_join_bootstrap = _pump_hosts_until_client_lines(
+    hosts           => [$host],
+    client          => $alice,
+    count           => 3,
+    pump_timeout_ms => $relay_host_pump_ms,
+    timeout_ms      => $relay_propagation_timeout_ms,
+  );
+  ok $relay_sasl_join_bootstrap,
+    'authoritative SASL relay JOIN emits the expected bootstrap';
+  is_deeply $relay_sasl_join_bootstrap, [
+    ":alice JOIN $channel",
+    ":$server_name 353 alice = $channel :\@alice",
+    ":$server_name 366 alice $channel :End of /NAMES list.",
+  ], 'alice receives JOIN plus operator-prefixed NAMES bootstrap after relay-backed SASL auth';
 
   ok !defined(_last_request_matching(
     $host->transcript,
@@ -4553,18 +4585,33 @@ subtest 'IRC server program relay-publishes authoritative NIP-29 writes across t
   _write_client_line($alice_a, "JOIN $channel");
   ok $host_a->pump(timeout_ms => $relay_host_pump_ms) >= 0,
     'instance A pumps alice relay-backed join request';
-  is _read_client_line($alice_a, 1_000), ":alice JOIN $channel",
-    'alice receives her relay-backed JOIN echo on instance A';
-  is _read_client_line($alice_a, 3_000), ":$server_name_a 353 alice = $channel :\@alice",
-    'alice sees operator bootstrap on instance A';
-  is _read_client_line($alice_a, 3_000), ":$server_name_a 366 alice $channel :End of /NAMES list.",
-    'alice receives end-of-names on instance A';
+  my $instance_a_join_bootstrap = _pump_hosts_until_client_lines(
+    hosts           => [$host_a],
+    client          => $alice_a,
+    count           => 3,
+    pump_timeout_ms => $relay_host_pump_ms,
+    timeout_ms      => $relay_propagation_timeout_ms,
+  );
+  ok $instance_a_join_bootstrap,
+    'instance A emits the initial relay-backed JOIN bootstrap';
+  is_deeply $instance_a_join_bootstrap, [
+    ":alice JOIN $channel",
+    ":$server_name_a 353 alice = $channel :\@alice",
+    ":$server_name_a 366 alice $channel :End of /NAMES list.",
+  ], 'alice receives JOIN plus operator bootstrap on instance A';
 
   _write_client_line($bob_b, "JOIN $channel");
   ok $host_b->pump(timeout_ms => $relay_host_pump_ms) >= 0,
     'instance B pumps bob pre-invite join request';
-  is _read_client_line($bob_b, 3_000), ":$server_name_b 473 bob $channel :Cannot join channel (+i)",
-    'instance B rejects bob before the relay-backed invite';
+  ok _pump_hosts_until(
+    hosts           => [ $host_a, $host_b ],
+    pump_timeout_ms => $relay_host_pump_ms,
+    timeout_ms      => $relay_propagation_timeout_ms,
+    condition       => sub {
+      my $line = _read_client_line_optional($bob_b, 50);
+      return defined($line) && $line eq ":$server_name_b 473 bob $channel :Cannot join channel (+i)" ? 1 : 0;
+    },
+  ), 'instance B rejects bob before the relay-backed invite';
 
   _write_client_line($alice_a, "TOPIC $channel :Relay-backed topic");
   ok $host_a->pump(timeout_ms => $relay_host_pump_ms) >= 0,
@@ -5324,6 +5371,523 @@ subtest 'IRC server program relay-publishes authoritative NIP-29 writes across t
 
   close $alice_a->{socket};
   close $bob_a->{socket};
+  close $bob_b->{socket};
+  _stop_authoritative_nip29_relay($relay);
+};
+
+subtest 'IRC server program creates and discovers authoritative hosted channels across two instances' => sub {
+  my $network = 'irc.authority.create.test';
+  my $channel = '#Fresh';
+  my $group_host = 'groups.example.test';
+  my $relay_host_pump_ms = 1_500;
+  my $relay_propagation_timeout_ms = 5_000;
+  my $relay_port = _free_port();
+  my $relay_url = "ws://127.0.0.1:$relay_port";
+  my $server_name_a = 'overnet-create-a.irc.local';
+  my $server_name_b = 'overnet-create-b.irc.local';
+
+  my $canonical_channel = $channel;
+  $canonical_channel =~ tr/A-Z[]\\^/a-z{}|~/;
+  my $group_id = join(
+    '-',
+    'irc',
+    unpack('H*', $network),
+    unpack('H*', $canonical_channel),
+  );
+
+  my $alice_key = Net::Nostr::Key->new;
+  my $bob_key   = Net::Nostr::Key->new;
+  my $alice_pubkey = $alice_key->pubkey_hex;
+  my $bob_pubkey   = $bob_key->pubkey_hex;
+
+  my $relay = _spawn_authoritative_nip29_relay(
+    port      => $relay_port,
+    relay_url => $relay_url,
+  );
+  _wait_for_authoritative_nip29_relay_ready($relay_url);
+
+  my $build_runtime = sub {
+    my (%args) = @_;
+    my $tmpdir = tempdir(CLEANUP => 1);
+    my $key_path = File::Spec->catfile($tmpdir, $args{name} . '-irc-server-key.pem');
+    my $key = Net::Nostr::Key->new;
+    $key->save_privkey($key_path);
+
+    my $runtime = Overnet::Program::Runtime->new(
+      config => {
+        adapter_id       => $args{adapter_id},
+        network          => $network,
+        listen_host      => '127.0.0.1',
+        listen_port      => 0,
+        server_name      => $args{server_name},
+        signing_key_file => $key_path,
+        adapter_config   => {
+          network           => $network,
+          authority_profile => 'nip29',
+          group_host        => $group_host,
+        },
+        authority_relay => {
+          url              => $relay_url,
+          poll_interval_ms => 50,
+        },
+      },
+    );
+    ok $runtime->register_adapter_definition(
+      adapter_id => $args{adapter_id},
+      definition => {
+        kind             => 'class',
+        class            => 'Overnet::Adapter::IRC',
+        lib_dirs         => [$irc_lib],
+        constructor_args => {},
+      },
+    ), "$args{name} runtime can register the real authoritative IRC adapter";
+
+    my $host = Overnet::Program::Host->new(
+      command     => [$^X, $program_path],
+      runtime     => $runtime,
+      program_id  => 'overnet.program.irc_server',
+      permissions => [
+        'adapters.use',
+        'events.append',
+        'events.read',
+        'nostr.read',
+        'nostr.write',
+        'subscriptions.read',
+        'overnet.emit_event',
+        'overnet.emit_state',
+        'overnet.emit_private_message',
+        'overnet.emit_capabilities',
+      ],
+      services => {
+        'adapters.open_session'        => {},
+        'adapters.map_input'           => {},
+        'adapters.derive'              => {},
+        'adapters.close_session'       => {},
+        'events.append'                => {},
+        'events.read'                  => {},
+        'nostr.publish_event'          => {},
+        'nostr.query_events'           => {},
+        'nostr.open_subscription'      => {},
+        'nostr.read_subscription_snapshot' => {},
+        'nostr.close_subscription'     => {},
+        'subscriptions.open'           => {},
+        'subscriptions.close'          => {},
+        'overnet.emit_event'           => {},
+        'overnet.emit_state'           => {},
+        'overnet.emit_private_message' => {},
+        'overnet.emit_capabilities'    => {},
+      },
+      startup_timeout_ms  => 1_000,
+      shutdown_timeout_ms => 1_000,
+    );
+
+    $host->start;
+    is $host->state, 'ready', "$args{name} created-channel server reaches ready state";
+    my $ready = _wait_for_ready_details($host);
+    ok $ready, "$args{name} created-channel server publishes ready health details";
+
+    return ($runtime, $host, $ready);
+  };
+
+  my ($runtime_a, $host_a, $ready_a) = $build_runtime->(
+    name        => 'create-instance-a',
+    adapter_id  => 'irc.authoritative.create.a',
+    server_name => $server_name_a,
+  );
+  my ($runtime_b, $host_b, $ready_b) = $build_runtime->(
+    name        => 'create-instance-b',
+    adapter_id  => 'irc.authoritative.create.b',
+    server_name => $server_name_b,
+  );
+
+  my $alice_a = _connect_irc_client($ready_a->{listen_port});
+  my $bob_b   = _connect_irc_client($ready_b->{listen_port});
+
+  my $register = sub {
+    my (%args) = @_;
+    _write_client_line($args{client}, "NICK $args{nick}");
+    _write_client_line($args{client}, "USER $args{nick} 0 * :$args{realname}");
+    _assert_registration_prelude(
+      client      => $args{client},
+      nick        => $args{nick},
+      network     => $network,
+      server_name => $args{server_name},
+      timeout_ms  => 3_000,
+    );
+  };
+
+  my $authenticate = sub {
+    my (%args) = @_;
+    _write_client_line($args{client}, 'OVERNETAUTH CHALLENGE');
+    my $challenge_line = _read_client_line($args{client}, 1_000);
+    like $challenge_line, qr/\A:\Q$args{server_name}\E NOTICE \Q$args{nick}\E :OVERNETAUTH CHALLENGE [0-9a-f]{64}\z/,
+      "$args{nick} receives an authoritative auth challenge on $args{name}";
+    $challenge_line =~ /([0-9a-f]{64})\z/;
+    my $challenge = $1;
+    _write_client_line($args{client}, 'OVERNETAUTH AUTH ' . _build_authoritative_auth_payload(
+      key       => $args{key},
+      challenge => $challenge,
+      scope     => _authoritative_auth_scope(
+        server_name => $args{server_name},
+        network     => $network,
+      ),
+    ));
+    is _read_client_line($args{client}, 1_000),
+      ":$args{server_name} NOTICE $args{nick} :OVERNETAUTH AUTH $args{pubkey}",
+      "$args{nick} authenticates an authoritative pubkey on $args{name}";
+  };
+
+  my $delegate = sub {
+    my (%args) = @_;
+    _write_client_line($args{client}, 'OVERNETAUTH DELEGATE');
+    my $delegate_line = _read_client_line($args{client}, 3_000);
+    like $delegate_line,
+      qr/\A:\Q$args{server_name}\E NOTICE \Q$args{nick}\E :OVERNETAUTH DELEGATE ([0-9a-f]{64}) ([0-9a-f]{64}) \Q$relay_url\E (\d+)\z/,
+      "$args{nick} receives session delegation parameters on $args{name}";
+    my ($delegate_pubkey, $session_id, $expires_at) = $delegate_line =~ /([0-9a-f]{64}) ([0-9a-f]{64}) \Q$relay_url\E (\d+)\z/;
+    _write_client_line($args{client}, 'OVERNETAUTH DELEGATE ' . _build_authoritative_delegate_payload(
+      key             => $args{key},
+      relay_url       => $relay_url,
+      scope           => _authoritative_auth_scope(
+        server_name => $args{server_name},
+        network     => $network,
+      ),
+      delegate_pubkey => $delegate_pubkey,
+      session_id      => $session_id,
+      expires_at      => $expires_at,
+      nick            => $args{nick},
+    ));
+    ok $args{host}->pump(timeout_ms => $relay_host_pump_ms) >= 0,
+      "$args{nick} pumps the created-channel delegation publish on $args{name}";
+    is _read_client_line($args{client}, 3_000),
+      ":$args{server_name} NOTICE $args{nick} :OVERNETAUTH DELEGATE",
+      "$args{nick} establishes a session delegation grant on $args{name}";
+  };
+
+  $register->(
+    client      => $alice_a,
+    nick        => 'alice',
+    realname    => 'Alice Create',
+    server_name => $server_name_a,
+  );
+  ok _wait_for_dm_subscription_count($host_a, 1),
+    'instance A alice registration completes its DM subscription open';
+
+  $register->(
+    client      => $bob_b,
+    nick        => 'bob',
+    realname    => 'Bob Create',
+    server_name => $server_name_b,
+  );
+  ok _wait_for_dm_subscription_count($host_b, 1),
+    'instance B bob registration completes its DM subscription open';
+
+  $authenticate->(
+    name        => 'instance A',
+    client      => $alice_a,
+    nick        => 'alice',
+    key         => $alice_key,
+    pubkey      => $alice_pubkey,
+    server_name => $server_name_a,
+  );
+  $authenticate->(
+    name        => 'instance B',
+    client      => $bob_b,
+    nick        => 'bob',
+    key         => $bob_key,
+    pubkey      => $bob_pubkey,
+    server_name => $server_name_b,
+  );
+  $delegate->(
+    name        => 'instance A',
+    client      => $alice_a,
+    host        => $host_a,
+    nick        => 'alice',
+    key         => $alice_key,
+    server_name => $server_name_a,
+  );
+  $delegate->(
+    name        => 'instance B',
+    client      => $bob_b,
+    host        => $host_b,
+    nick        => 'bob',
+    key         => $bob_key,
+    server_name => $server_name_b,
+  );
+
+  _write_client_line($alice_a, "JOIN $channel");
+  ok $host_a->pump(timeout_ms => $relay_host_pump_ms) >= 0,
+    'instance A pumps hosted-channel creation JOIN';
+  my $alice_creation_bootstrap = _pump_hosts_until_client_lines(
+    hosts           => [$host_a],
+    client          => $alice_a,
+    count           => 3,
+    pump_timeout_ms => $relay_host_pump_ms,
+    timeout_ms      => $relay_propagation_timeout_ms,
+  );
+  ok $alice_creation_bootstrap,
+    'instance A emits the hosted-channel creation bootstrap';
+  is_deeply $alice_creation_bootstrap, [
+    ":alice JOIN $channel",
+    ":$server_name_a 353 alice = $channel :\@alice",
+    ":$server_name_a 366 alice $channel :End of /NAMES list.",
+  ], 'alice receives JOIN plus operator-seeded NAMES bootstrap for the created hosted channel';
+
+  ok(
+    _pump_hosts_until(
+      hosts           => [ $host_a, $host_b ],
+      pump_timeout_ms => $relay_host_pump_ms,
+      timeout_ms      => $relay_propagation_timeout_ms,
+      condition       => sub {
+        my $metadata_events = _query_nostr_events_from_relay(
+          relay_url => $relay_url,
+          filters   => [
+            {
+              kinds => [39000],
+              '#d'  => [$group_id],
+              limit => 20,
+            },
+          ],
+        );
+        my $role_events = _query_nostr_events_from_relay(
+          relay_url => $relay_url,
+          filters   => [
+            {
+              kinds => [9000],
+              '#h'  => [$group_id],
+              limit => 20,
+            },
+          ],
+        );
+        my $join_events = _query_nostr_events_from_relay(
+          relay_url => $relay_url,
+          filters   => [
+            {
+              kinds => [9021],
+              '#h'  => [$group_id],
+              limit => 20,
+            },
+          ],
+        );
+        my $has_metadata = scalar(@{$metadata_events}) ? 1 : 0;
+        my $has_operator = scalar(grep {
+          my %tags = _first_tag_values($_->{tags});
+          defined($tags{p}) && $tags{p} eq $alice_pubkey
+            && defined($tags{overnet_actor}) && $tags{overnet_actor} eq $alice_pubkey
+        } @{$role_events}) ? 1 : 0;
+        my $has_join = scalar(grep {
+          my %tags = _first_tag_values($_->{tags});
+          defined($tags{overnet_actor}) && $tags{overnet_actor} eq $alice_pubkey
+        } @{$join_events}) ? 1 : 0;
+        return $has_metadata && $has_operator && $has_join ? 1 : 0;
+      },
+    ),
+    'the relay exposes metadata, operator bootstrap, and join events for the created hosted channel',
+  );
+
+  _write_client_line($bob_b, "LIST $channel");
+  ok $host_b->pump(timeout_ms => $relay_host_pump_ms) >= 0,
+    'instance B pumps LIST against the created hosted channel';
+  my $discovered_list_lines = _pump_hosts_until_client_lines(
+    hosts           => [$host_b],
+    client          => $bob_b,
+    count           => 3,
+    pump_timeout_ms => $relay_host_pump_ms,
+    timeout_ms      => $relay_propagation_timeout_ms,
+  );
+  ok $discovered_list_lines,
+    'instance B emits the LIST response for the discovered hosted channel';
+  is $discovered_list_lines->[0], ":$server_name_b 321 bob Channel :Users Name",
+    'instance B LIST starts normally for discovered hosted channels';
+  like $discovered_list_lines->[1],
+    qr/\A:\Q$server_name_b\E 322 bob \Q$channel\E 1 :\z/,
+    'instance B LIST discovers the created hosted channel before bob joins';
+  is $discovered_list_lines->[2], ":$server_name_b 323 bob :End of /LIST",
+    'instance B LIST ends normally for discovered hosted channels';
+
+  _write_client_line($bob_b, "JOIN $channel");
+  ok $host_b->pump(timeout_ms => $relay_host_pump_ms) >= 0,
+    'instance B pumps bob join against the discovered hosted channel';
+  my $discovered_join_bootstrap = _pump_hosts_until_client_lines(
+    hosts           => [$host_b],
+    client          => $bob_b,
+    count           => 3,
+    pump_timeout_ms => $relay_host_pump_ms,
+    timeout_ms      => $relay_propagation_timeout_ms,
+  );
+  ok $discovered_join_bootstrap,
+    'instance B emits the join bootstrap for the discovered hosted channel';
+  is_deeply $discovered_join_bootstrap, [
+    ":bob JOIN $channel",
+    ":$server_name_b 353 bob = $channel :\@alice bob",
+    ":$server_name_b 366 bob $channel :End of /NAMES list.",
+  ], 'bob receives JOIN plus discovered remote operator state on the hosted channel';
+  my $discovered_join_request = _last_request_matching(
+    $host_b->transcript,
+    'from_program',
+    'adapters.map_input',
+    sub {
+      ref($_[0]{input}) eq 'HASH'
+        && (($_[0]{input}{command} || '') eq 'JOIN')
+        && (($_[0]{input}{target} || '') eq $channel)
+        && (($_[0]{input}{actor_pubkey} || '') eq $bob_pubkey)
+        && !$_[0]{input}{create_channel};
+    },
+  );
+  ok $discovered_join_request,
+    'instance B routes the discovered hosted-channel JOIN through the adapter';
+  my $discovered_join_publish = _last_request_matching(
+    $host_b->transcript,
+    'from_program',
+    'nostr.publish_event',
+    sub {
+      ref($_[0]{event}) eq 'HASH'
+        && (($_[0]{event}{kind} || 0) == 9021);
+    },
+  );
+  ok $discovered_join_publish,
+    'instance B publishes the discovered hosted-channel JOIN to the relay';
+  my %discovered_join_publish_tags = _first_tag_values($discovered_join_publish->{event}{tags});
+  is $discovered_join_publish_tags{h}, $group_id,
+    'the discovered hosted-channel JOIN publish targets the expected group id';
+  is $discovered_join_publish_tags{overnet_actor}, $bob_pubkey,
+    'the discovered hosted-channel JOIN publish carries bob as the effective actor';
+  ok _pump_hosts_until(
+    hosts           => [ $host_a, $host_b ],
+    pump_timeout_ms => $relay_host_pump_ms,
+    timeout_ms      => $relay_propagation_timeout_ms,
+    condition       => sub {
+      my $join_events = _query_nostr_events_from_relay(
+        relay_url => $relay_url,
+        filters   => [
+          {
+            kinds => [9021],
+            '#h'  => [$group_id],
+            limit => 20,
+          },
+        ],
+      );
+      return scalar(grep {
+        my %tags = _first_tag_values($_->{tags});
+        defined($tags{overnet_actor}) && $tags{overnet_actor} eq $bob_pubkey;
+      } @{$join_events}) ? 1 : 0;
+    },
+  ), 'the relay exposes bob membership for the discovered hosted-channel JOIN';
+
+  ok _pump_hosts_until(
+    hosts           => [ $host_a, $host_b ],
+    pump_timeout_ms => $relay_host_pump_ms,
+    timeout_ms      => $relay_propagation_timeout_ms,
+    condition       => sub {
+      my $line = _read_client_line_optional($alice_a, 50);
+      return defined($line) && $line eq ":bob JOIN $channel" ? 1 : 0;
+    },
+  ), 'instance A receives the propagated join from the second instance';
+
+  _write_client_line($alice_a, "PART $channel :done");
+  ok $host_a->pump(timeout_ms => $relay_host_pump_ms) >= 0,
+    'instance A pumps alice part from the created hosted channel';
+  is _read_client_line($alice_a, 3_000), ":alice PART $channel :done",
+    'alice receives her PART echo on the created hosted channel';
+  my $propagated_alice_part = _pump_hosts_until_client_lines(
+    hosts           => [ $host_a, $host_b ],
+    client          => $bob_b,
+    count           => 1,
+    pump_timeout_ms => $relay_host_pump_ms,
+    timeout_ms      => $relay_propagation_timeout_ms,
+  );
+  ok $propagated_alice_part,
+    'instance B receives the propagated PART from the first instance';
+  is_deeply $propagated_alice_part, [
+    ":alice PART $channel :done",
+  ], 'bob receives the propagated alice PART on the created hosted channel';
+
+  _write_client_line($bob_b, "PART $channel :done");
+  ok $host_b->pump(timeout_ms => $relay_host_pump_ms) >= 0,
+    'instance B pumps bob part from the created hosted channel';
+  my $bob_part_request = _last_request_matching(
+    $host_b->transcript,
+    'from_program',
+    'adapters.map_input',
+    sub {
+      ref($_[0]{input}) eq 'HASH'
+        && (($_[0]{input}{command} || '') eq 'PART')
+        && (($_[0]{input}{target} || '') eq $channel)
+        && (($_[0]{input}{actor_pubkey} || '') eq $bob_pubkey);
+    },
+  );
+  ok $bob_part_request,
+    'instance B routes the discovered hosted-channel PART through the adapter';
+  my $bob_part_publish = _last_request_matching(
+    $host_b->transcript,
+    'from_program',
+    'nostr.publish_event',
+    sub {
+      ref($_[0]{event}) eq 'HASH'
+        && (($_[0]{event}{kind} || 0) == 9022);
+    },
+  );
+  ok $bob_part_publish,
+    'instance B publishes the discovered hosted-channel PART to the relay';
+  my %bob_part_publish_tags = _first_tag_values($bob_part_publish->{event}{tags});
+  is $bob_part_publish_tags{h}, $group_id,
+    'the discovered hosted-channel PART publish targets the expected group id';
+  is $bob_part_publish_tags{overnet_actor}, $bob_pubkey,
+    'the discovered hosted-channel PART publish carries bob as the effective actor';
+  is _read_client_line($bob_b, 3_000), ":bob PART $channel :done",
+    'bob receives his PART echo on the created hosted channel';
+
+  ok _pump_hosts_until(
+    hosts           => [ $host_a, $host_b ],
+    pump_timeout_ms => $relay_host_pump_ms,
+    timeout_ms      => $relay_propagation_timeout_ms,
+    condition       => sub {
+      my $relay_parts = _query_nostr_events_from_relay(
+        relay_url => $relay_url,
+        filters   => [
+          {
+            kinds => [9022],
+            '#h'  => [$group_id],
+            limit => 20,
+          },
+        ],
+      );
+      my %actors = map {
+        my %tags = _first_tag_values($_->{tags});
+        defined($tags{overnet_actor}) ? ($tags{overnet_actor} => 1) : ()
+      } @{$relay_parts};
+      return $actors{$alice_pubkey} && $actors{$bob_pubkey} ? 1 : 0;
+    },
+  ), 'the relay exposes PART events for both members of the created hosted channel';
+
+  _write_client_line($bob_b, "LIST $channel");
+  ok $host_b->pump(timeout_ms => $relay_host_pump_ms) >= 0,
+    'instance B pumps LIST after the created hosted channel empties';
+  my $empty_list_lines = _pump_hosts_until_client_lines(
+    hosts           => [$host_b],
+    client          => $bob_b,
+    count           => 3,
+    pump_timeout_ms => $relay_host_pump_ms,
+    timeout_ms      => $relay_propagation_timeout_ms,
+  );
+  ok $empty_list_lines,
+    'instance B emits the LIST response after the created hosted channel empties';
+  is $empty_list_lines->[0], ":$server_name_b 321 bob Channel :Users Name",
+    'instance B LIST still starts after the created hosted channel empties';
+  like $empty_list_lines->[1],
+    qr/\A:\Q$server_name_b\E 322 bob \Q$channel\E 0 :\z/,
+    'instance B LIST still exposes the empty created hosted channel';
+  is $empty_list_lines->[2], ":$server_name_b 323 bob :End of /LIST",
+    'instance B LIST still ends after the created hosted channel empties';
+
+  my $shutdown_a = $host_a->request_shutdown(reason => 'created hosted channel test complete');
+  is $shutdown_a->{state}, 'shutdown_complete', 'instance A created-channel server handles runtime shutdown';
+  is $shutdown_a->{exit_code}, 0, 'instance A created-channel server exits cleanly';
+  my $shutdown_b = $host_b->request_shutdown(reason => 'created hosted channel test complete');
+  is $shutdown_b->{state}, 'shutdown_complete', 'instance B created-channel server handles runtime shutdown';
+  is $shutdown_b->{exit_code}, 0, 'instance B created-channel server exits cleanly';
+
+  close $alice_a->{socket};
   close $bob_b->{socket};
   _stop_authoritative_nip29_relay($relay);
 };
