@@ -95,6 +95,9 @@ sub _authorize_event {
     group_id => $group_id,
   );
 
+  return (0, 'unauthorized: group is tombstoned')
+    if $state->{tombstoned};
+
   if ($kind == 9021) {
     return _authorize_join_request(
       event      => $event,
@@ -171,6 +174,7 @@ sub _derive_group_state {
   my %invites;
   my $closed = 0;
   my @ban_masks;
+  my $tombstoned = 0;
 
   for my $event (_group_events($relay, $group_id)) {
     my $kind = $event->kind;
@@ -179,6 +183,7 @@ sub _derive_group_state {
       my %metadata = _metadata_from_tags($event->tags);
       $closed = $metadata{closed} ? 1 : 0;
       @ban_masks = @{$metadata{ban_masks} || []};
+      $tombstoned = $metadata{tombstoned} ? 1 : 0;
       next;
     }
 
@@ -265,10 +270,11 @@ sub _derive_group_state {
   }
 
   return {
-    closed    => $closed,
-    ban_masks => [ @ban_masks ],
-    members   => \%members,
-    invites   => \%invites,
+    closed     => $closed,
+    ban_masks  => [ @ban_masks ],
+    members    => \%members,
+    invites    => \%invites,
+    tombstoned => $tombstoned ? 1 : 0,
   };
 }
 
@@ -282,6 +288,7 @@ sub _actor_membership_state {
   my $closed = 0;
   my $member = 0;
   my %invites;
+  my $tombstoned = 0;
 
   for my $event (_group_events($relay, $group_id)) {
     my $kind = $event->kind;
@@ -289,6 +296,10 @@ sub _actor_membership_state {
     if ($kind == 39000 || $kind == 9002) {
       my %metadata = _metadata_from_tags($event->tags);
       $closed = $metadata{closed} ? 1 : 0;
+      $tombstoned = $metadata{tombstoned} ? 1 : 0;
+      if ($tombstoned) {
+        $member = 0;
+      }
       next;
     }
 
@@ -349,6 +360,7 @@ sub _actor_membership_state {
     }
   }
 
+  return 0 if $tombstoned;
   return $member;
 }
 
@@ -433,14 +445,19 @@ sub _event_sort_rank {
 sub _metadata_from_tags {
   my ($tags) = @_;
   my %metadata = (
-    closed    => 0,
-    ban_masks => [],
+    closed     => 0,
+    ban_masks  => [],
+    tombstoned => 0,
   );
 
   for my $tag (@{$tags || []}) {
     next unless ref($tag) eq 'ARRAY' && @{$tag} >= 1;
     $metadata{closed} = 1 if ($tag->[0] || '') eq 'closed';
     $metadata{closed} = 0 if ($tag->[0] || '') eq 'open';
+    $metadata{tombstoned} = 1
+      if ($tag->[0] || '') eq 'status'
+        && @{$tag} >= 2
+        && ($tag->[1] || '') eq 'tombstoned';
     push @{$metadata{ban_masks}}, $tag->[1]
       if ($tag->[0] || '') eq 'ban' && @{$tag} >= 2;
   }

@@ -5892,6 +5892,417 @@ subtest 'IRC server program creates and discovers authoritative hosted channels 
   _stop_authoritative_nip29_relay($relay);
 };
 
+subtest 'IRC server program tombstones authoritative hosted channels across two instances' => sub {
+  my $network = 'irc.authority.delete.test';
+  my $channel = '#Gone';
+  my $group_host = 'groups.example.test';
+  my $relay_host_pump_ms = 1_500;
+  my $relay_propagation_timeout_ms = 5_000;
+  my $relay_port = _free_port();
+  my $relay_url = "ws://127.0.0.1:$relay_port";
+  my $server_name_a = 'overnet-delete-a.irc.local';
+  my $server_name_b = 'overnet-delete-b.irc.local';
+  my $group_id = Overnet::Authority::HostedChannel::authoritative_group_id(
+    network => $network,
+    channel => $channel,
+  );
+
+  my $alice_key = Net::Nostr::Key->new;
+  my $bob_key   = Net::Nostr::Key->new;
+  my $alice_pubkey = $alice_key->pubkey_hex;
+  my $bob_pubkey   = $bob_key->pubkey_hex;
+
+  my $relay = _spawn_authoritative_nip29_relay(
+    port      => $relay_port,
+    relay_url => $relay_url,
+  );
+  _wait_for_authoritative_nip29_relay_ready($relay_url);
+
+  my $build_runtime = sub {
+    my (%args) = @_;
+    my $tmpdir = tempdir(CLEANUP => 1);
+    my $key_path = File::Spec->catfile($tmpdir, $args{name} . '-irc-server-key.pem');
+    my $key = Net::Nostr::Key->new;
+    $key->save_privkey($key_path);
+
+    my $runtime = Overnet::Program::Runtime->new(
+      config => {
+        adapter_id       => $args{adapter_id},
+        network          => $network,
+        listen_host      => '127.0.0.1',
+        listen_port      => 0,
+        server_name      => $args{server_name},
+        signing_key_file => $key_path,
+        adapter_config   => {
+          network           => $network,
+          authority_profile => 'nip29',
+          group_host        => $group_host,
+        },
+        authority_relay => {
+          url              => $relay_url,
+          poll_interval_ms => 50,
+        },
+      },
+    );
+    ok $runtime->register_adapter_definition(
+      adapter_id => $args{adapter_id},
+      definition => {
+        kind             => 'class',
+        class            => 'Overnet::Adapter::IRC',
+        lib_dirs         => [$irc_lib],
+        constructor_args => {},
+      },
+    ), "$args{name} runtime can register the real authoritative IRC adapter";
+
+    my $host = Overnet::Program::Host->new(
+      command     => [$^X, $program_path],
+      runtime     => $runtime,
+      program_id  => 'overnet.program.irc_server',
+      permissions => [
+        'adapters.use',
+        'events.append',
+        'events.read',
+        'nostr.read',
+        'nostr.write',
+        'subscriptions.read',
+        'overnet.emit_event',
+        'overnet.emit_state',
+        'overnet.emit_private_message',
+        'overnet.emit_capabilities',
+      ],
+      services => {
+        'adapters.open_session'        => {},
+        'adapters.map_input'           => {},
+        'adapters.derive'              => {},
+        'adapters.close_session'       => {},
+        'events.append'                => {},
+        'events.read'                  => {},
+        'nostr.publish_event'          => {},
+        'nostr.query_events'           => {},
+        'nostr.open_subscription'      => {},
+        'nostr.read_subscription_snapshot' => {},
+        'nostr.close_subscription'     => {},
+        'subscriptions.open'           => {},
+        'subscriptions.close'          => {},
+        'overnet.emit_event'           => {},
+        'overnet.emit_state'           => {},
+        'overnet.emit_private_message' => {},
+        'overnet.emit_capabilities'    => {},
+      },
+      startup_timeout_ms  => 1_000,
+      shutdown_timeout_ms => 1_000,
+    );
+
+    $host->start;
+    is $host->state, 'ready', "$args{name} tombstone server reaches ready state";
+    my $ready = _wait_for_ready_details($host);
+    ok $ready, "$args{name} tombstone server publishes ready health details";
+
+    return ($runtime, $host, $ready);
+  };
+
+  my ($runtime_a, $host_a, $ready_a) = $build_runtime->(
+    name        => 'delete-instance-a',
+    adapter_id  => 'irc.authoritative.delete.a',
+    server_name => $server_name_a,
+  );
+  my ($runtime_b, $host_b, $ready_b) = $build_runtime->(
+    name        => 'delete-instance-b',
+    adapter_id  => 'irc.authoritative.delete.b',
+    server_name => $server_name_b,
+  );
+
+  my $alice_a = _connect_irc_client($ready_a->{listen_port});
+  my $bob_b   = _connect_irc_client($ready_b->{listen_port});
+
+  my $register = sub {
+    my (%args) = @_;
+    _write_client_line($args{client}, "NICK $args{nick}");
+    _write_client_line($args{client}, "USER $args{nick} 0 * :$args{realname}");
+    _assert_registration_prelude(
+      client      => $args{client},
+      nick        => $args{nick},
+      network     => $network,
+      server_name => $args{server_name},
+      timeout_ms  => 3_000,
+    );
+  };
+
+  my $authenticate = sub {
+    my (%args) = @_;
+    _write_client_line($args{client}, 'OVERNETAUTH CHALLENGE');
+    my $challenge_line = _read_client_line($args{client}, 1_000);
+    like $challenge_line, qr/\A:\Q$args{server_name}\E NOTICE \Q$args{nick}\E :OVERNETAUTH CHALLENGE [0-9a-f]{64}\z/,
+      "$args{nick} receives an authoritative auth challenge on $args{name}";
+    $challenge_line =~ /([0-9a-f]{64})\z/;
+    my $challenge = $1;
+    _write_client_line($args{client}, 'OVERNETAUTH AUTH ' . _build_authoritative_auth_payload(
+      key       => $args{key},
+      challenge => $challenge,
+      scope     => _authoritative_auth_scope(
+        server_name => $args{server_name},
+        network     => $network,
+      ),
+    ));
+    is _read_client_line($args{client}, 1_000),
+      ":$args{server_name} NOTICE $args{nick} :OVERNETAUTH AUTH $args{pubkey}",
+      "$args{nick} authenticates an authoritative pubkey on $args{name}";
+  };
+
+  my $delegate = sub {
+    my (%args) = @_;
+    _write_client_line($args{client}, 'OVERNETAUTH DELEGATE');
+    my $delegate_line = _read_client_line($args{client}, 3_000);
+    like $delegate_line,
+      qr/\A:\Q$args{server_name}\E NOTICE \Q$args{nick}\E :OVERNETAUTH DELEGATE ([0-9a-f]{64}) ([0-9a-f]{64}) \Q$relay_url\E (\d+)\z/,
+      "$args{nick} receives session delegation parameters on $args{name}";
+    my ($delegate_pubkey, $session_id, $expires_at) = $delegate_line =~ /([0-9a-f]{64}) ([0-9a-f]{64}) \Q$relay_url\E (\d+)\z/;
+    _write_client_line($args{client}, 'OVERNETAUTH DELEGATE ' . _build_authoritative_delegate_payload(
+      key             => $args{key},
+      relay_url       => $relay_url,
+      scope           => _authoritative_auth_scope(
+        server_name => $args{server_name},
+        network     => $network,
+      ),
+      delegate_pubkey => $delegate_pubkey,
+      session_id      => $session_id,
+      expires_at      => $expires_at,
+      nick            => $args{nick},
+    ));
+    ok $args{host}->pump(timeout_ms => $relay_host_pump_ms) >= 0,
+      "$args{nick} pumps the tombstone delegation publish on $args{name}";
+    is _read_client_line($args{client}, 3_000),
+      ":$args{server_name} NOTICE $args{nick} :OVERNETAUTH DELEGATE",
+      "$args{nick} establishes a session delegation grant on $args{name}";
+  };
+
+  my $drain_client_lines = sub {
+    my ($client, $max_lines) = @_;
+    my @lines;
+    for (1 .. ($max_lines || 10)) {
+      my $line = _read_client_line_optional($client, 100);
+      last unless defined $line;
+      push @lines, $line;
+    }
+    return \@lines;
+  };
+
+  $register->(
+    client      => $alice_a,
+    nick        => 'alice',
+    realname    => 'Alice Delete',
+    server_name => $server_name_a,
+  );
+  ok _wait_for_dm_subscription_count($host_a, 1),
+    'instance A alice registration completes its DM subscription open for tombstoning';
+
+  $register->(
+    client      => $bob_b,
+    nick        => 'bob',
+    realname    => 'Bob Delete',
+    server_name => $server_name_b,
+  );
+  ok _wait_for_dm_subscription_count($host_b, 1),
+    'instance B bob registration completes its DM subscription open for tombstoning';
+
+  $authenticate->(
+    name        => 'instance A',
+    client      => $alice_a,
+    nick        => 'alice',
+    key         => $alice_key,
+    pubkey      => $alice_pubkey,
+    server_name => $server_name_a,
+  );
+  $authenticate->(
+    name        => 'instance B',
+    client      => $bob_b,
+    nick        => 'bob',
+    key         => $bob_key,
+    pubkey      => $bob_pubkey,
+    server_name => $server_name_b,
+  );
+  $delegate->(
+    name        => 'instance A',
+    client      => $alice_a,
+    host        => $host_a,
+    nick        => 'alice',
+    key         => $alice_key,
+    server_name => $server_name_a,
+  );
+  $delegate->(
+    name        => 'instance B',
+    client      => $bob_b,
+    host        => $host_b,
+    nick        => 'bob',
+    key         => $bob_key,
+    server_name => $server_name_b,
+  );
+
+  _write_client_line($alice_a, "JOIN $channel");
+  ok $host_a->pump(timeout_ms => $relay_host_pump_ms) >= 0,
+    'instance A pumps authoritative hosted-channel creation before tombstoning';
+  is_deeply(
+    _pump_hosts_until_client_lines(
+      hosts           => [$host_a],
+      client          => $alice_a,
+      count           => 3,
+      pump_timeout_ms => $relay_host_pump_ms,
+      timeout_ms      => $relay_propagation_timeout_ms,
+    ),
+    [
+      ":alice JOIN $channel",
+      ":$server_name_a 353 alice = $channel :\@alice",
+      ":$server_name_a 366 alice $channel :End of /NAMES list.",
+    ],
+    'alice receives the authoritative hosted-channel creation bootstrap before tombstoning',
+  );
+
+  ok _pump_hosts_until(
+    hosts           => [ $host_a, $host_b ],
+    pump_timeout_ms => $relay_host_pump_ms,
+    timeout_ms      => $relay_propagation_timeout_ms,
+    condition       => sub {
+      my $metadata_events = _query_nostr_events_from_relay(
+        relay_url => $relay_url,
+        filters   => [
+          {
+            kinds => [39000],
+            '#d'  => [$group_id],
+            limit => 20,
+          },
+        ],
+      );
+      return scalar(@{$metadata_events}) ? 1 : 0;
+    },
+  ), 'the relay exposes authoritative metadata before tombstoning';
+
+  _write_client_line($bob_b, "JOIN $channel");
+  ok $host_b->pump(timeout_ms => $relay_host_pump_ms) >= 0,
+    'instance B pumps authoritative JOIN before tombstoning';
+  is_deeply(
+    _pump_hosts_until_client_lines(
+      hosts           => [$host_b],
+      client          => $bob_b,
+      count           => 3,
+      pump_timeout_ms => $relay_host_pump_ms,
+      timeout_ms      => $relay_propagation_timeout_ms,
+    ),
+    [
+      ":bob JOIN $channel",
+      ":$server_name_b 353 bob = $channel :\@alice bob",
+      ":$server_name_b 366 bob $channel :End of /NAMES list.",
+    ],
+    'bob joins the authoritative hosted channel before tombstoning',
+  );
+
+  _write_client_line($alice_a, "OVERNETCHANNEL DELETE $channel");
+  ok $host_a->pump(timeout_ms => $relay_host_pump_ms) >= 0,
+    'instance A pumps the authoritative hosted-channel delete request';
+
+  my $delete_request = _last_request_matching(
+    $host_a->transcript,
+    'from_program',
+    'adapters.map_input',
+    sub {
+      ref($_[0]{input}) eq 'HASH'
+        && (($_[0]{input}{command} || '') eq 'DELETE')
+        && (($_[0]{input}{target} || '') eq $channel)
+        && (($_[0]{input}{actor_pubkey} || '') eq $alice_pubkey);
+    },
+  );
+  ok $delete_request,
+    'instance A routes the authoritative hosted-channel delete through the adapter';
+
+  my $delete_publish = _last_request_matching(
+    $host_a->transcript,
+    'from_program',
+    'nostr.publish_event',
+    sub {
+      return 0 unless ref($_[0]{event}) eq 'HASH';
+      return 0 unless (($_[0]{event}{kind} || 0) == 9002);
+      return scalar grep {
+        ref($_) eq 'ARRAY'
+          && @{$_} >= 2
+          && (($_->[0] || '') eq 'status')
+          && (($_->[1] || '') eq 'tombstoned')
+      } @{$_[0]{event}{tags} || []};
+    },
+  );
+  ok $delete_publish,
+    'instance A publishes a tombstoning metadata edit to the relay';
+
+  ok _pump_hosts_until(
+    hosts           => [ $host_a, $host_b ],
+    pump_timeout_ms => $relay_host_pump_ms,
+    timeout_ms      => $relay_propagation_timeout_ms,
+    condition       => sub {
+      my $metadata_events = _query_nostr_events_from_relay(
+        relay_url => $relay_url,
+        filters   => [
+          {
+            kinds => [9002],
+            '#h'  => [$group_id],
+            limit => 20,
+          },
+        ],
+      );
+      return scalar(grep {
+        scalar grep {
+          ref($_) eq 'ARRAY'
+            && @{$_} >= 2
+            && (($_->[0] || '') eq 'status')
+            && (($_->[1] || '') eq 'tombstoned')
+        } @{$_->{tags} || []}
+      } @{$metadata_events}) ? 1 : 0;
+    },
+  ), 'the relay exposes the authoritative hosted-channel tombstone';
+
+  $drain_client_lines->($alice_a, 10);
+  $drain_client_lines->($bob_b, 10);
+
+  _write_client_line($bob_b, "LIST $channel");
+  ok $host_b->pump(timeout_ms => $relay_host_pump_ms) >= 0,
+    'instance B pumps LIST after the hosted channel is tombstoned';
+  my $tombstoned_list_lines = _pump_hosts_until_client_lines(
+    hosts           => [$host_b],
+    client          => $bob_b,
+    count           => 2,
+    pump_timeout_ms => $relay_host_pump_ms,
+    timeout_ms      => $relay_propagation_timeout_ms,
+  );
+  ok $tombstoned_list_lines,
+    'instance B emits a LIST response after the hosted channel is tombstoned';
+  is_deeply $tombstoned_list_lines, [
+    ":$server_name_b 321 bob Channel :Users Name",
+    ":$server_name_b 323 bob :End of /LIST",
+  ], 'instance B LIST omits the tombstoned hosted channel';
+
+  _write_client_line($bob_b, "JOIN $channel");
+  ok $host_b->pump(timeout_ms => $relay_host_pump_ms) >= 0,
+    'instance B pumps JOIN against the tombstoned hosted channel';
+  is _read_client_line($bob_b, 3_000),
+    ":$server_name_b 403 bob $channel :No such channel",
+    'instance B rejects JOIN against the tombstoned hosted channel';
+
+  _write_client_line($alice_a, "JOIN $channel");
+  ok $host_a->pump(timeout_ms => $relay_host_pump_ms) >= 0,
+    'instance A pumps JOIN against the tombstoned hosted channel';
+  is _read_client_line($alice_a, 3_000),
+    ":$server_name_a 403 alice $channel :No such channel",
+    'instance A does not implicitly recreate the tombstoned hosted channel';
+
+  my $shutdown_a = $host_a->request_shutdown(reason => 'tombstoned hosted channel test complete');
+  is $shutdown_a->{state}, 'shutdown_complete', 'instance A tombstone server handles runtime shutdown';
+  is $shutdown_a->{exit_code}, 0, 'instance A tombstone server exits cleanly';
+  my $shutdown_b = $host_b->request_shutdown(reason => 'tombstoned hosted channel test complete');
+  is $shutdown_b->{state}, 'shutdown_complete', 'instance B tombstone server handles runtime shutdown';
+  is $shutdown_b->{exit_code}, 0, 'instance B tombstone server exits cleanly';
+
+  close $alice_a->{socket};
+  close $bob_b->{socket};
+  _stop_authoritative_nip29_relay($relay);
+};
+
 subtest 'IRC server program enforces authoritative bans across two instances' => sub {
   my $network = 'irc.authority.ban.test';
   my $channel = '#ops';

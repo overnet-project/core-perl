@@ -158,6 +158,21 @@ sub channel_name_from_group_event {
   return $channel;
 }
 
+sub group_event_is_tombstoned {
+  my (%args) = @_;
+  my $tags = _event_tags($args{event});
+  return 0 unless ref($tags) eq 'ARRAY';
+
+  for my $tag (@{$tags}) {
+    next unless ref($tag) eq 'ARRAY' && @{$tag} >= 2;
+    return 1
+      if ($tag->[0] || '') eq 'status'
+        && ($tag->[1] || '') eq 'tombstoned';
+  }
+
+  return 0;
+}
+
 sub _event_tags {
   my ($event) = @_;
   return undef unless defined $event;

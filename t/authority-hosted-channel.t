@@ -37,6 +37,28 @@ subtest 'authoritative discovery prefers the channel name tag when it matches th
     'authoritative discovery preserves the presentational channel spelling from metadata';
 };
 
+subtest 'hosted-channel helper detects tombstoned metadata events' => sub {
+  ok Overnet::Authority::HostedChannel::group_event_is_tombstoned(
+    event => {
+      kind => 9002,
+      tags => [
+        [ 'h', 'irc-6972632e6578616d706c652e74657374-236672657368' ],
+        [ 'status', 'tombstoned' ],
+      ],
+    },
+  ), 'the helper detects the profile tombstone status tag';
+
+  ok !Overnet::Authority::HostedChannel::group_event_is_tombstoned(
+    event => {
+      kind => 39000,
+      tags => [
+        [ 'd', 'irc-6972632e6578616d706c652e74657374-236672657368' ],
+        [ 'name', '#Fresh' ],
+      ],
+    },
+  ), 'the helper ignores ordinary hosted-channel metadata';
+};
+
 subtest 'IRC mask helpers build and match presentational user masks' => sub {
   is Overnet::Authority::HostedChannel::irc_user_mask(
     nick => 'Bob',
