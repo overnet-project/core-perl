@@ -689,6 +689,14 @@ sub _normalize_adapter_result {
       method     => $method,
     );
   }
+  if (exists $result->{admission}) {
+    $normalized{admission} = _normalized_result_array(
+      name       => 'admission',
+      value      => $result->{admission},
+      adapter_id => $adapter_id,
+      method     => $method,
+    );
+  }
   if (exists $result->{capabilities}) {
     $normalized{capabilities} = _normalized_result_array(
       name       => 'capabilities',

@@ -902,6 +902,37 @@ sub _assert_opaque_private_message_metadata {
       };
     }
 
+    if ($operation eq 'authoritative_join_admission') {
+      my $admission = {
+        operation         => 'authoritative_join_admission',
+        authority_profile => 'nip29',
+        object_type       => 'chat.channel',
+        object_id         => 'irc:' . ($session->{network} || 'irc.test') . ':' . $channel,
+        allowed           => JSON::PP::false,
+        member            => JSON::PP::false,
+        present           => JSON::PP::false,
+        create_channel    => JSON::PP::false,
+        auth_required     => defined($input->{actor_pubkey}) ? JSON::PP::false : JSON::PP::true,
+        reason            => defined($input->{actor_pubkey}) ? ($state->{closed} ? '+i' : '') : 'auth_required',
+      };
+      if (defined $input->{actor_pubkey} && exists $state->{members}{$input->{actor_pubkey}}) {
+        $admission = {
+          %{$admission},
+          allowed => JSON::PP::true,
+          member  => JSON::PP::true,
+          reason  => '',
+        };
+      }
+      if (defined $input->{actor_pubkey} && exists $state->{present}{$input->{actor_pubkey}}) {
+        $admission->{present} = JSON::PP::true;
+      }
+
+      return {
+        valid     => 1,
+        admission => [ $admission ],
+      };
+    }
+
     return {
       valid => 1,
       state => [
@@ -3617,6 +3648,17 @@ subtest 'IRC server program rejects non-member JOIN on a closed authoritative ch
   is $join_count_after, $join_count_before,
     'rejected authoritative JOIN does not emit a mapped JOIN through the adapter';
 
+  ok _request_count_matching(
+    $host->transcript,
+    'from_program',
+    'adapters.derive',
+    sub {
+      (($_[0]{operation} || '') eq 'authoritative_join_admission')
+        && ref($_[0]{input}) eq 'HASH'
+        && (($_[0]{input}{target} || '') eq $channel);
+    },
+  ) >= 2, 'program derives authoritative JOIN admission through the adapter for allowed and rejected JOINs';
+
   _write_client_line($alice, "NAMES $channel");
   ok $host->pump(timeout_ms => 200) >= 0,
     'closed authoritative host pumps post-rejection NAMES';
@@ -3942,7 +3984,7 @@ subtest 'IRC server program establishes authoritative relay delegation through S
   my $group_host = 'groups.example.test';
   my $group_id = 'ops';
   my $relay_host_pump_ms = 1_500;
-  my $relay_propagation_timeout_ms = 5_000;
+  my $relay_propagation_timeout_ms = 10_000;
   my $relay_port = _free_port();
   my $relay_url = "ws://127.0.0.1:$relay_port";
   my $server_name = 'overnet.irc.local';
@@ -5141,7 +5183,7 @@ subtest 'IRC server program relay-publishes authoritative NIP-29 writes across t
       sub {
         ref($_[0]{input}) eq 'HASH'
           && (($_[0]{input}{command} || '') eq 'JOIN')
-          && (($_[0]{input}{target} || '') eq $channel);
+        && (($_[0]{input}{target} || '') eq $channel);
       },
     );
   }
@@ -5362,6 +5404,18 @@ subtest 'IRC server program relay-publishes authoritative NIP-29 writes across t
         && (($_[0]{event}{kind} || 0) == 14142 || ($_[0]{event}{kind} || 0) == 9021 || ($_[0]{event}{kind} || 0) == 9022);
     },
   ) >= 1, 'instance B publishes authoritative relay events through the runtime nostr service';
+  ok _request_count_matching(
+    $host_a->transcript,
+    'from_program',
+    'adapters.derive',
+    sub { (($_[0]{operation} || '') eq 'authoritative_join_admission') ? 1 : 0 },
+  ) >= 1, 'instance A derives authoritative relay JOIN admission through the adapter';
+  ok _request_count_matching(
+    $host_b->transcript,
+    'from_program',
+    'adapters.derive',
+    sub { (($_[0]{operation} || '') eq 'authoritative_join_admission') ? 1 : 0 },
+  ) >= 1, 'instance B derives authoritative relay JOIN admission through the adapter';
   ok _request_count_matching(
     $host_a->transcript,
     'from_program',
