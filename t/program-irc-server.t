@@ -933,6 +933,54 @@ sub _assert_opaque_private_message_metadata {
       };
     }
 
+    if ($operation eq 'authoritative_speak_permission') {
+      my $member = defined $input->{actor_pubkey}
+        ? $state->{members}{$input->{actor_pubkey}}
+        : undef;
+      my @roles = ref($member) eq 'HASH' ? sort @{$member->{roles} || []} : ();
+      my %roles = map { $_ => 1 } @roles;
+      return {
+        valid      => 1,
+        permission => [
+          {
+            operation         => 'authoritative_speak_permission',
+            authority_profile => 'nip29',
+            object_type       => 'chat.channel',
+            object_id         => 'irc:' . ($session->{network} || 'irc.test') . ':' . $channel,
+            allowed           => (!$state->{moderated} || $roles{'irc.operator'} || $roles{'irc.voice'})
+              ? JSON::PP::true
+              : JSON::PP::false,
+            roles             => \@roles,
+            presentational_prefix => $roles{'irc.operator'} ? '@' : $roles{'irc.voice'} ? '+' : '',
+            reason            => (!$state->{moderated} || $roles{'irc.operator'} || $roles{'irc.voice'}) ? '' : '+m',
+          },
+        ],
+      };
+    }
+
+    if ($operation eq 'authoritative_topic_permission') {
+      my $member = defined $input->{actor_pubkey}
+        ? $state->{members}{$input->{actor_pubkey}}
+        : undef;
+      my @roles = ref($member) eq 'HASH' ? sort @{$member->{roles} || []} : ();
+      my %roles = map { $_ => 1 } @roles;
+      return {
+        valid      => 1,
+        permission => [
+          {
+            operation         => 'authoritative_topic_permission',
+            authority_profile => 'nip29',
+            object_type       => 'chat.channel',
+            object_id         => 'irc:' . ($session->{network} || 'irc.test') . ':' . $channel,
+            allowed           => (!$state->{topic_restricted} || $roles{'irc.operator'})
+              ? JSON::PP::true
+              : JSON::PP::false,
+            reason            => (!$state->{topic_restricted} || $roles{'irc.operator'}) ? '' : '+t',
+          },
+        ],
+      };
+    }
+
     return {
       valid => 1,
       state => [
@@ -2814,12 +2862,34 @@ subtest 'IRC server program uses authoritative hosted-channel state for moderate
     'authoritative host pumps moderated PRIVMSG checks';
   is _read_client_line($bob, 1_000), ":overnet.irc.local 404 bob $channel :Cannot send to channel",
     'moderated authoritative channels reject unvoiced senders';
+  ok _request_count_matching(
+    $host->transcript,
+    'from_program',
+    'adapters.derive',
+    sub {
+      (($_[0]{operation} || '') eq 'authoritative_speak_permission')
+        && ref($_[0]{input}) eq 'HASH'
+        && (($_[0]{input}{target} || '') eq $channel)
+        && (($_[0]{input}{actor_pubkey} || '') eq $bob_pubkey);
+    },
+  ) >= 1, 'program derives authoritative speak permission through the adapter';
 
   _write_client_line($bob, "TOPIC $channel :blocked");
   ok $host->pump(timeout_ms => 200) >= 0,
     'authoritative host pumps topic privilege checks';
   is _read_client_line($bob, 1_000), ":overnet.irc.local 482 bob $channel :You're not channel operator",
     'topic-restricted authoritative channels reject non-operators';
+  ok _request_count_matching(
+    $host->transcript,
+    'from_program',
+    'adapters.derive',
+    sub {
+      (($_[0]{operation} || '') eq 'authoritative_topic_permission')
+        && ref($_[0]{input}) eq 'HASH'
+        && (($_[0]{input}{target} || '') eq $channel)
+        && (($_[0]{input}{actor_pubkey} || '') eq $bob_pubkey);
+    },
+  ) >= 1, 'program derives authoritative topic permission through the adapter';
 
   _write_client_line($alice, "TOPIC $channel :Authoritative topic");
   ok $host->pump(timeout_ms => 200) >= 0,
@@ -3358,12 +3428,34 @@ subtest 'IRC server program uses the real IRC adapter for authoritative NIP-29 c
     'real authoritative host pumps moderated PRIVMSG checks';
   is _read_client_line($bob, 1_000), ":overnet.irc.local 404 bob $channel :Cannot send to channel",
     'real authoritative moderated channels reject unvoiced senders';
+  ok _request_count_matching(
+    $host->transcript,
+    'from_program',
+    'adapters.derive',
+    sub {
+      (($_[0]{operation} || '') eq 'authoritative_speak_permission')
+        && ref($_[0]{input}) eq 'HASH'
+        && (($_[0]{input}{target} || '') eq $channel)
+        && (($_[0]{input}{actor_pubkey} || '') eq $bob_pubkey);
+    },
+  ) >= 1, 'real authoritative program derives speak permission through the adapter';
 
   _write_client_line($bob, "TOPIC $channel :blocked");
   ok $host->pump(timeout_ms => 200) >= 0,
     'real authoritative host pumps topic privilege checks';
   is _read_client_line($bob, 1_000), ":overnet.irc.local 482 bob $channel :You're not channel operator",
     'real authoritative topic-restricted channels reject non-operators';
+  ok _request_count_matching(
+    $host->transcript,
+    'from_program',
+    'adapters.derive',
+    sub {
+      (($_[0]{operation} || '') eq 'authoritative_topic_permission')
+        && ref($_[0]{input}) eq 'HASH'
+        && (($_[0]{input}{target} || '') eq $channel)
+        && (($_[0]{input}{actor_pubkey} || '') eq $bob_pubkey);
+    },
+  ) >= 1, 'real authoritative program derives topic permission through the adapter';
 
   _write_client_line($alice, "TOPIC $channel :Real authoritative topic");
   ok $host->pump(timeout_ms => 200) >= 0,

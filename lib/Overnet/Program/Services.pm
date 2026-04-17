@@ -697,6 +697,14 @@ sub _normalize_adapter_result {
       method     => $method,
     );
   }
+  if (exists $result->{permission}) {
+    $normalized{permission} = _normalized_result_array(
+      name       => 'permission',
+      value      => $result->{permission},
+      adapter_id => $adapter_id,
+      method     => $method,
+    );
+  }
   if (exists $result->{capabilities}) {
     $normalized{capabilities} = _normalized_result_array(
       name       => 'capabilities',
