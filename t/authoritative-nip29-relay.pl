@@ -95,8 +95,18 @@ sub _authorize_event {
     group_id => $group_id,
   );
 
-  return (0, 'unauthorized: group is tombstoned')
-    if $state->{tombstoned};
+  if ($state->{tombstoned}) {
+    if ($kind == 9002) {
+      my %metadata = _metadata_from_tags($event->tags);
+      if (!$metadata{tombstoned}) {
+        my $member = $state->{members}{$actor_pubkey};
+        return (0, 'unauthorized: actor is not a retained channel operator')
+          unless $member && grep { $_ eq 'irc.operator' } @{$member->{roles} || []};
+        return (1, '');
+      }
+    }
+    return (0, 'unauthorized: group is tombstoned');
+  }
 
   if ($kind == 9021) {
     return _authorize_join_request(
@@ -184,6 +194,8 @@ sub _derive_group_state {
       $closed = $metadata{closed} ? 1 : 0;
       @ban_masks = @{$metadata{ban_masks} || []};
       $tombstoned = $metadata{tombstoned} ? 1 : 0;
+      %invites = ()
+        if $tombstoned;
       next;
     }
 
@@ -242,11 +254,19 @@ sub _derive_group_state {
 
     if ($kind == 9021) {
       my %tags = _first_tag_values($event->tags);
-      my $code = $tags{code};
-      next unless defined $code && exists $invites{$code};
-
       my $joiner = $tags{overnet_actor};
       next unless defined $joiner && $joiner =~ /\A[0-9a-f]{64}\z/;
+
+      if (!$closed) {
+        $members{$joiner} ||= {
+          pubkey => $joiner,
+          roles  => [],
+        };
+        next;
+      }
+
+      my $code = $tags{code};
+      next unless defined $code && exists $invites{$code};
 
       my $invite = $invites{$code};
       next if defined $invite->{target_pubkey}
@@ -297,9 +317,8 @@ sub _actor_membership_state {
       my %metadata = _metadata_from_tags($event->tags);
       $closed = $metadata{closed} ? 1 : 0;
       $tombstoned = $metadata{tombstoned} ? 1 : 0;
-      if ($tombstoned) {
-        $member = 0;
-      }
+      %invites = ()
+        if $tombstoned;
       next;
     }
 

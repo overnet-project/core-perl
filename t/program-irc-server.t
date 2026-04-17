@@ -4200,7 +4200,7 @@ subtest 'IRC server program establishes authoritative relay delegation through S
     ":$server_name 366 alice $channel :End of /NAMES list.",
   ], 'alice receives JOIN plus operator-prefixed NAMES bootstrap after relay-backed SASL auth';
 
-  ok !defined(_last_request_matching(
+  my $relay_sasl_join_request = _last_request_matching(
     $host->transcript,
     'from_program',
     'adapters.map_input',
@@ -4209,7 +4209,13 @@ subtest 'IRC server program establishes authoritative relay delegation through S
         && (($_[0]{input}{command} || '') eq 'JOIN')
         && (($_[0]{input}{target} || '') eq $channel);
     },
-  )), 'member-authorized relay-backed JOIN remains local until an invite-mediated admission requires a control write';
+  );
+  ok $relay_sasl_join_request,
+    'member-authorized relay-backed JOIN re-establishes authoritative presence through the adapter';
+  is $relay_sasl_join_request->{input}{actor_pubkey}, $alice_pubkey,
+    'the relay-backed member JOIN binds the effective actor pubkey';
+  ok !defined $relay_sasl_join_request->{input}{invite_code},
+    'the relay-backed member JOIN does not consume an invite code when membership is already retained';
 
   _write_client_line($alice, "TOPIC $channel :Relay topic via SASL");
   ok $host->pump(timeout_ms => $relay_host_pump_ms) >= 0,
@@ -4853,8 +4859,8 @@ subtest 'IRC server program relay-publishes authoritative NIP-29 writes across t
   like _read_client_line($bob_b, 3_000),
     qr/\A:(?:alice|\Q$server_name_b\E) TOPIC \Q$channel\E :Relay-backed topic\z/,
     'instance B join bootstrap replays the propagated authoritative topic';
-  is _read_client_line($bob_b, 3_000), ":$server_name_b 353 bob = $channel :bob",
-    'instance B NAMES bootstrap reflects the invited local member after the relay-backed join';
+  is _read_client_line($bob_b, 3_000), ":$server_name_b 353 bob = $channel :\@alice bob",
+    'instance B NAMES bootstrap reflects authoritative remote presence after the relay-backed join';
   is _read_client_line($bob_b, 3_000), ":$server_name_b 366 bob $channel :End of /NAMES list.",
     'instance B bob receives end-of-names after the relay-backed join';
 
@@ -5165,8 +5171,8 @@ subtest 'IRC server program relay-publishes authoritative NIP-29 writes across t
   like _read_client_line($bob_b, 3_000),
     qr/\A:(?:alice|\Q$server_name_b\E) TOPIC \Q$channel\E :Relay-backed topic\z/,
     'instance B join bootstrap replays the propagated authoritative topic after the fresh invite';
-  is _read_client_line($bob_b, 3_000), ":$server_name_b 353 bob = $channel :bob",
-    'instance B NAMES bootstrap restores bob after the fresh relay-backed INVITE';
+  is _read_client_line($bob_b, 3_000), ":$server_name_b 353 bob = $channel :\@alice bob",
+    'instance B NAMES bootstrap restores bob and retained remote presence after the fresh relay-backed INVITE';
   is _read_client_line($bob_b, 3_000), ":$server_name_b 366 bob $channel :End of /NAMES list.",
     'instance B bob receives end-of-names after rejoining through a fresh invite';
 
@@ -5244,9 +5250,9 @@ subtest 'IRC server program relay-publishes authoritative NIP-29 writes across t
     timeout_ms => $relay_propagation_timeout_ms,
     condition  => sub {
       my $line = _read_client_line_optional($bob_b, 50);
-      return defined($line) && $line eq ":$server_name_b 353 bob = $channel :+bob" ? 1 : 0;
+      return defined($line) && $line eq ":$server_name_b 353 bob = $channel :\@alice +bob" ? 1 : 0;
     },
-  ), 'instance B authoritative NAMES reflects bob voice after the relay-backed MODE';
+  ), 'instance B authoritative NAMES reflects bob voice alongside retained remote presence after the relay-backed MODE';
   is _read_client_line($bob_b, 3_000), ":$server_name_b 366 bob $channel :End of /NAMES list.",
     'instance B authoritative NAMES terminates after the propagated MODE';
 
@@ -5300,9 +5306,9 @@ subtest 'IRC server program relay-publishes authoritative NIP-29 writes across t
     timeout_ms => $relay_propagation_timeout_ms,
     condition  => sub {
       my $line = _read_client_line_optional($bob_b, 50);
-      return defined($line) && $line eq ":$server_name_b 353 bob = $channel :" ? 1 : 0;
+      return defined($line) && $line eq ":$server_name_b 353 bob = $channel :\@alice" ? 1 : 0;
     },
-  ), 'instance B authoritative NAMES removes bob after the relay-backed KICK';
+  ), 'instance B authoritative NAMES removes bob after the relay-backed KICK while retaining remote operator presence';
   is _read_client_line($bob_b, 3_000), ":$server_name_b 366 bob $channel :End of /NAMES list.",
     'instance B authoritative NAMES terminates after the relay-backed KICK';
 
@@ -6303,6 +6309,516 @@ subtest 'IRC server program tombstones authoritative hosted channels across two 
   _stop_authoritative_nip29_relay($relay);
 };
 
+subtest 'IRC server program reactivates tombstoned authoritative hosted channels across two instances' => sub {
+  my $network = 'irc.authority.undelete.test';
+  my $channel = '#Return';
+  my $group_host = 'groups.example.test';
+  my $relay_host_pump_ms = 1_500;
+  my $relay_propagation_timeout_ms = 5_000;
+  my $relay_port = _free_port();
+  my $relay_url = "ws://127.0.0.1:$relay_port";
+  my $server_name_a = 'overnet-undelete-a.irc.local';
+  my $server_name_b = 'overnet-undelete-b.irc.local';
+  my $topic_text = 'Retained topic';
+  my $group_id = Overnet::Authority::HostedChannel::authoritative_group_id(
+    network => $network,
+    channel => $channel,
+  );
+
+  my $alice_key = Net::Nostr::Key->new;
+  my $bob_key   = Net::Nostr::Key->new;
+  my $alice_pubkey = $alice_key->pubkey_hex;
+  my $bob_pubkey   = $bob_key->pubkey_hex;
+
+  my $relay = _spawn_authoritative_nip29_relay(
+    port      => $relay_port,
+    relay_url => $relay_url,
+  );
+  _wait_for_authoritative_nip29_relay_ready($relay_url);
+
+  my $build_runtime = sub {
+    my (%args) = @_;
+    my $tmpdir = tempdir(CLEANUP => 1);
+    my $key_path = File::Spec->catfile($tmpdir, $args{name} . '-irc-server-key.pem');
+    my $key = Net::Nostr::Key->new;
+    $key->save_privkey($key_path);
+
+    my $runtime = Overnet::Program::Runtime->new(
+      config => {
+        adapter_id       => $args{adapter_id},
+        network          => $network,
+        listen_host      => '127.0.0.1',
+        listen_port      => 0,
+        server_name      => $args{server_name},
+        signing_key_file => $key_path,
+        adapter_config   => {
+          network           => $network,
+          authority_profile => 'nip29',
+          group_host        => $group_host,
+        },
+        authority_relay => {
+          url              => $relay_url,
+          poll_interval_ms => 50,
+        },
+      },
+    );
+    ok $runtime->register_adapter_definition(
+      adapter_id => $args{adapter_id},
+      definition => {
+        kind             => 'class',
+        class            => 'Overnet::Adapter::IRC',
+        lib_dirs         => [$irc_lib],
+        constructor_args => {},
+      },
+    ), "$args{name} runtime can register the real authoritative IRC adapter";
+
+    my $host = Overnet::Program::Host->new(
+      command     => [$^X, $program_path],
+      runtime     => $runtime,
+      program_id  => 'overnet.program.irc_server',
+      permissions => [
+        'adapters.use',
+        'events.append',
+        'events.read',
+        'nostr.read',
+        'nostr.write',
+        'subscriptions.read',
+        'overnet.emit_event',
+        'overnet.emit_state',
+        'overnet.emit_private_message',
+        'overnet.emit_capabilities',
+      ],
+      services => {
+        'adapters.open_session'        => {},
+        'adapters.map_input'           => {},
+        'adapters.derive'              => {},
+        'adapters.close_session'       => {},
+        'events.append'                => {},
+        'events.read'                  => {},
+        'nostr.publish_event'          => {},
+        'nostr.query_events'           => {},
+        'nostr.open_subscription'      => {},
+        'nostr.read_subscription_snapshot' => {},
+        'nostr.close_subscription'     => {},
+        'subscriptions.open'           => {},
+        'subscriptions.close'          => {},
+        'overnet.emit_event'           => {},
+        'overnet.emit_state'           => {},
+        'overnet.emit_private_message' => {},
+        'overnet.emit_capabilities'    => {},
+      },
+      startup_timeout_ms  => 1_000,
+      shutdown_timeout_ms => 1_000,
+    );
+
+    $host->start;
+    is $host->state, 'ready', "$args{name} undelete server reaches ready state";
+    my $ready = _wait_for_ready_details($host);
+    ok $ready, "$args{name} undelete server publishes ready health details";
+
+    return ($runtime, $host, $ready);
+  };
+
+  my ($runtime_a, $host_a, $ready_a) = $build_runtime->(
+    name        => 'undelete-instance-a',
+    adapter_id  => 'irc.authoritative.undelete.a',
+    server_name => $server_name_a,
+  );
+  my ($runtime_b, $host_b, $ready_b) = $build_runtime->(
+    name        => 'undelete-instance-b',
+    adapter_id  => 'irc.authoritative.undelete.b',
+    server_name => $server_name_b,
+  );
+
+  my $alice_a = _connect_irc_client($ready_a->{listen_port});
+  my $bob_b   = _connect_irc_client($ready_b->{listen_port});
+
+  my $register = sub {
+    my (%args) = @_;
+    _write_client_line($args{client}, "NICK $args{nick}");
+    _write_client_line($args{client}, "USER $args{nick} 0 * :$args{realname}");
+    _assert_registration_prelude(
+      client      => $args{client},
+      nick        => $args{nick},
+      network     => $network,
+      server_name => $args{server_name},
+      timeout_ms  => 3_000,
+    );
+  };
+
+  my $authenticate = sub {
+    my (%args) = @_;
+    _write_client_line($args{client}, 'OVERNETAUTH CHALLENGE');
+    my $challenge_line = _read_client_line($args{client}, 1_000);
+    like $challenge_line, qr/\A:\Q$args{server_name}\E NOTICE \Q$args{nick}\E :OVERNETAUTH CHALLENGE [0-9a-f]{64}\z/,
+      "$args{nick} receives an authoritative auth challenge on $args{name}";
+    $challenge_line =~ /([0-9a-f]{64})\z/;
+    my $challenge = $1;
+    _write_client_line($args{client}, 'OVERNETAUTH AUTH ' . _build_authoritative_auth_payload(
+      key       => $args{key},
+      challenge => $challenge,
+      scope     => _authoritative_auth_scope(
+        server_name => $args{server_name},
+        network     => $network,
+      ),
+    ));
+    is _read_client_line($args{client}, 1_000),
+      ":$args{server_name} NOTICE $args{nick} :OVERNETAUTH AUTH $args{pubkey}",
+      "$args{nick} authenticates an authoritative pubkey on $args{name}";
+  };
+
+  my $delegate = sub {
+    my (%args) = @_;
+    _write_client_line($args{client}, 'OVERNETAUTH DELEGATE');
+    my $delegate_line = _read_client_line($args{client}, 3_000);
+    like $delegate_line,
+      qr/\A:\Q$args{server_name}\E NOTICE \Q$args{nick}\E :OVERNETAUTH DELEGATE ([0-9a-f]{64}) ([0-9a-f]{64}) \Q$relay_url\E (\d+)\z/,
+      "$args{nick} receives session delegation parameters on $args{name}";
+    my ($delegate_pubkey, $session_id, $expires_at) = $delegate_line =~ /([0-9a-f]{64}) ([0-9a-f]{64}) \Q$relay_url\E (\d+)\z/;
+    _write_client_line($args{client}, 'OVERNETAUTH DELEGATE ' . _build_authoritative_delegate_payload(
+      key             => $args{key},
+      relay_url       => $relay_url,
+      scope           => _authoritative_auth_scope(
+        server_name => $args{server_name},
+        network     => $network,
+      ),
+      delegate_pubkey => $delegate_pubkey,
+      session_id      => $session_id,
+      expires_at      => $expires_at,
+      nick            => $args{nick},
+    ));
+    ok $args{host}->pump(timeout_ms => $relay_host_pump_ms) >= 0,
+      "$args{nick} pumps the undelete delegation publish on $args{name}";
+    is _read_client_line($args{client}, 3_000),
+      ":$args{server_name} NOTICE $args{nick} :OVERNETAUTH DELEGATE",
+      "$args{nick} establishes a session delegation grant on $args{name}";
+  };
+
+  my $drain_client_lines = sub {
+    my ($client, $max_lines) = @_;
+    my @lines;
+    for (1 .. ($max_lines || 10)) {
+      my $line = _read_client_line_optional($client, 100);
+      last unless defined $line;
+      push @lines, $line;
+    }
+    return \@lines;
+  };
+
+  $register->(
+    client      => $alice_a,
+    nick        => 'alice',
+    realname    => 'Alice Undelete',
+    server_name => $server_name_a,
+  );
+  ok _wait_for_dm_subscription_count($host_a, 1),
+    'instance A alice registration completes its DM subscription open for undelete coverage';
+
+  $register->(
+    client      => $bob_b,
+    nick        => 'bob',
+    realname    => 'Bob Undelete',
+    server_name => $server_name_b,
+  );
+  ok _wait_for_dm_subscription_count($host_b, 1),
+    'instance B bob registration completes its DM subscription open for undelete coverage';
+
+  $authenticate->(
+    name        => 'instance A',
+    client      => $alice_a,
+    nick        => 'alice',
+    key         => $alice_key,
+    pubkey      => $alice_pubkey,
+    server_name => $server_name_a,
+  );
+  $authenticate->(
+    name        => 'instance B',
+    client      => $bob_b,
+    nick        => 'bob',
+    key         => $bob_key,
+    pubkey      => $bob_pubkey,
+    server_name => $server_name_b,
+  );
+  $delegate->(
+    name        => 'instance A',
+    client      => $alice_a,
+    host        => $host_a,
+    nick        => 'alice',
+    key         => $alice_key,
+    server_name => $server_name_a,
+  );
+  $delegate->(
+    name        => 'instance B',
+    client      => $bob_b,
+    host        => $host_b,
+    nick        => 'bob',
+    key         => $bob_key,
+    server_name => $server_name_b,
+  );
+
+  _write_client_line($alice_a, "JOIN $channel");
+  ok $host_a->pump(timeout_ms => $relay_host_pump_ms) >= 0,
+    'instance A pumps authoritative hosted-channel creation before undelete';
+  is_deeply(
+    _pump_hosts_until_client_lines(
+      hosts           => [$host_a],
+      client          => $alice_a,
+      count           => 3,
+      pump_timeout_ms => $relay_host_pump_ms,
+      timeout_ms      => $relay_propagation_timeout_ms,
+    ),
+    [
+      ":alice JOIN $channel",
+      ":$server_name_a 353 alice = $channel :\@alice",
+      ":$server_name_a 366 alice $channel :End of /NAMES list.",
+    ],
+    'alice receives the authoritative hosted-channel creation bootstrap before undelete',
+  );
+
+  _write_client_line($bob_b, "JOIN $channel");
+  ok $host_b->pump(timeout_ms => $relay_host_pump_ms) >= 0,
+    'instance B pumps authoritative JOIN before undelete';
+  is_deeply(
+    _pump_hosts_until_client_lines(
+      hosts           => [$host_b],
+      client          => $bob_b,
+      count           => 3,
+      pump_timeout_ms => $relay_host_pump_ms,
+      timeout_ms      => $relay_propagation_timeout_ms,
+    ),
+    [
+      ":bob JOIN $channel",
+      ":$server_name_b 353 bob = $channel :\@alice bob",
+      ":$server_name_b 366 bob $channel :End of /NAMES list.",
+    ],
+    'bob joins the authoritative hosted channel before undelete',
+  );
+  ok _pump_hosts_until(
+    hosts           => [ $host_a, $host_b ],
+    pump_timeout_ms => $relay_host_pump_ms,
+    timeout_ms      => $relay_propagation_timeout_ms,
+    condition       => sub {
+      my $line = _read_client_line_optional($alice_a, 50);
+      return defined($line) && $line eq ":bob JOIN $channel" ? 1 : 0;
+    },
+  ), 'alice sees the retained member join before the channel is tombstoned';
+
+  _write_client_line($alice_a, "TOPIC $channel :$topic_text");
+  ok $host_a->pump(timeout_ms => $relay_host_pump_ms) >= 0,
+    'instance A pumps retained authoritative TOPIC before undelete';
+  my $topic_lines = _pump_hosts_until_client_lines(
+    hosts           => [ $host_a, $host_b ],
+    client          => $alice_a,
+    count           => 1,
+    pump_timeout_ms => $relay_host_pump_ms,
+    timeout_ms      => $relay_propagation_timeout_ms,
+  );
+  ok $topic_lines,
+    'alice receives the authoritative TOPIC line before undelete';
+  is_deeply $topic_lines, [
+    ":alice TOPIC $channel :$topic_text",
+  ], 'the authoritative TOPIC line is rendered before undelete';
+  $drain_client_lines->($bob_b, 10);
+
+  _write_client_line($alice_a, "MODE $channel +i");
+  ok $host_a->pump(timeout_ms => $relay_host_pump_ms) >= 0,
+    'instance A pumps retained authoritative MODE +i before undelete';
+  my $mode_lines = _pump_hosts_until_client_lines(
+    hosts           => [ $host_a, $host_b ],
+    client          => $alice_a,
+    count           => 1,
+    pump_timeout_ms => $relay_host_pump_ms,
+    timeout_ms      => $relay_propagation_timeout_ms,
+  );
+  ok $mode_lines,
+    'alice receives the authoritative MODE +i line before undelete';
+  is_deeply $mode_lines, [
+    ":alice MODE $channel +i",
+  ], 'the authoritative MODE +i line is rendered before undelete';
+  $drain_client_lines->($bob_b, 10);
+
+  _write_client_line($alice_a, "OVERNETCHANNEL DELETE $channel");
+  ok $host_a->pump(timeout_ms => $relay_host_pump_ms) >= 0,
+    'instance A pumps the tombstone request before undelete';
+  ok _pump_hosts_until(
+    hosts           => [ $host_a, $host_b ],
+    pump_timeout_ms => $relay_host_pump_ms,
+    timeout_ms      => $relay_propagation_timeout_ms,
+    condition       => sub {
+      my $metadata_events = _query_nostr_events_from_relay(
+        relay_url => $relay_url,
+        filters   => [
+          {
+            kinds => [9002],
+            '#h'  => [$group_id],
+            limit => 20,
+          },
+        ],
+      );
+      return scalar(grep {
+        scalar grep {
+          ref($_) eq 'ARRAY'
+            && @{$_} >= 2
+            && (($_->[0] || '') eq 'status')
+            && (($_->[1] || '') eq 'tombstoned')
+        } @{$_->{tags} || []}
+      } @{$metadata_events}) ? 1 : 0;
+    },
+  ), 'the relay exposes the tombstone before UNDELETE';
+  $drain_client_lines->($alice_a, 10);
+  $drain_client_lines->($bob_b, 10);
+
+  _write_client_line($alice_a, "OVERNETCHANNEL UNDELETE $channel");
+  ok $host_a->pump(timeout_ms => $relay_host_pump_ms) >= 0,
+    'instance A pumps the authoritative hosted-channel undelete request';
+
+  my $undelete_request = _last_request_matching(
+    $host_a->transcript,
+    'from_program',
+    'adapters.map_input',
+    sub {
+      ref($_[0]{input}) eq 'HASH'
+        && (($_[0]{input}{command} || '') eq 'UNDELETE')
+        && (($_[0]{input}{target} || '') eq $channel)
+        && (($_[0]{input}{actor_pubkey} || '') eq $alice_pubkey);
+    },
+  );
+  ok $undelete_request,
+    'instance A routes the authoritative hosted-channel UNDELETE through the adapter';
+
+  my $undelete_publish = _last_request_matching(
+    $host_a->transcript,
+    'from_program',
+    'nostr.publish_event',
+    sub {
+      return 0 unless ref($_[0]{event}) eq 'HASH';
+      return 0 unless (($_[0]{event}{kind} || 0) == 9002);
+      my @tags = @{$_[0]{event}{tags} || []};
+      return 0 if grep {
+        ref($_) eq 'ARRAY'
+          && @{$_} >= 2
+          && (($_->[0] || '') eq 'status')
+          && (($_->[1] || '') eq 'tombstoned')
+      } @tags;
+      return scalar grep {
+        ref($_) eq 'ARRAY'
+          && @{$_} >= 2
+          && (($_->[0] || '') eq 'topic')
+          && (($_->[1] || '') eq $topic_text)
+      } @tags;
+    },
+  );
+  ok $undelete_publish,
+    'instance A publishes an undelete metadata edit that retains the prior topic';
+
+  ok _pump_hosts_until(
+    hosts           => [ $host_a, $host_b ],
+    pump_timeout_ms => $relay_host_pump_ms,
+    timeout_ms      => $relay_propagation_timeout_ms,
+    condition       => sub {
+      my $metadata_events = _query_nostr_events_from_relay(
+        relay_url => $relay_url,
+        filters   => [
+          {
+            kinds => [9002],
+            '#h'  => [$group_id],
+            limit => 20,
+          },
+        ],
+      );
+      return 0 unless @{$metadata_events} >= 4;
+      my @sorted = sort {
+        (($a->{created_at} || 0) <=> ($b->{created_at} || 0))
+      } @{$metadata_events};
+      my $latest = $sorted[-1];
+      return 0 unless ref($latest) eq 'HASH';
+      return 0 if grep {
+        ref($_) eq 'ARRAY'
+          && @{$_} >= 2
+          && (($_->[0] || '') eq 'status')
+          && (($_->[1] || '') eq 'tombstoned')
+      } @{ $latest->{tags} || [] };
+      return scalar grep {
+        ref($_) eq 'ARRAY'
+          && @{$_} >= 2
+          && (($_->[0] || '') eq 'topic')
+          && (($_->[1] || '') eq $topic_text)
+      } @{ $latest->{tags} || [] };
+    },
+  ), 'the relay exposes the latest authoritative metadata edit without the tombstone and with retained topic metadata';
+
+  $drain_client_lines->($alice_a, 10);
+  $drain_client_lines->($bob_b, 10);
+
+  _write_client_line($bob_b, "LIST $channel");
+  ok $host_b->pump(timeout_ms => $relay_host_pump_ms) >= 0,
+    'instance B pumps LIST after the hosted channel is undeleted';
+  my $undeleted_list_lines = _pump_hosts_until_client_lines(
+    hosts           => [$host_b],
+    client          => $bob_b,
+    count           => 3,
+    pump_timeout_ms => $relay_host_pump_ms,
+    timeout_ms      => $relay_propagation_timeout_ms,
+  );
+  ok $undeleted_list_lines,
+    'instance B emits a LIST response after the hosted channel is undeleted';
+  is $undeleted_list_lines->[0], ":$server_name_b 321 bob Channel :Users Name",
+    'instance B LIST starts normally after UNDELETE';
+  like $undeleted_list_lines->[1],
+    qr/\A:\Q$server_name_b\E 322 bob \Q$channel\E 0 :\Q$topic_text\E\z/,
+    'instance B LIST rediscoveries the undeleted hosted channel with zero users and retained topic metadata';
+  is $undeleted_list_lines->[2], ":$server_name_b 323 bob :End of /LIST",
+    'instance B LIST ends normally after UNDELETE';
+
+  _write_client_line($bob_b, "JOIN $channel");
+  ok $host_b->pump(timeout_ms => $relay_host_pump_ms) >= 0,
+    'instance B pumps JOIN against the undeleted hosted channel';
+  my $undelete_join_bootstrap = _pump_hosts_until_client_lines(
+    hosts           => [$host_b],
+    client          => $bob_b,
+    count           => 4,
+    pump_timeout_ms => $relay_host_pump_ms,
+    timeout_ms      => $relay_propagation_timeout_ms,
+  );
+  ok $undelete_join_bootstrap,
+    'instance B emits the JOIN bootstrap after UNDELETE';
+  is_deeply $undelete_join_bootstrap, [
+    ":bob JOIN $channel",
+    ":alice TOPIC $channel :$topic_text",
+    ":$server_name_b 353 bob = $channel :bob",
+    ":$server_name_b 366 bob $channel :End of /NAMES list.",
+  ], 'UNDELETE restores retained topic metadata and durable membership but requires fresh presence after JOIN';
+
+  _write_client_line($alice_a, "NAMES $channel");
+  ok $host_a->pump(timeout_ms => $relay_host_pump_ms) >= 0,
+    'instance A pumps authoritative NAMES after the retained member rejoins';
+  is_deeply(
+    _pump_hosts_until_client_lines(
+      hosts           => [ $host_a, $host_b ],
+      client          => $alice_a,
+      count           => 2,
+      pump_timeout_ms => $relay_host_pump_ms,
+      timeout_ms      => $relay_propagation_timeout_ms,
+    ),
+    [
+      ":$server_name_a 353 alice = $channel :bob",
+      ":$server_name_a 366 alice $channel :End of /NAMES list.",
+    ],
+    'the retained member rejoin repopulates authoritative presence across instances after UNDELETE',
+  );
+
+  my $shutdown_a = $host_a->request_shutdown(reason => 'undeleted hosted channel test complete');
+  is $shutdown_a->{state}, 'shutdown_complete', 'instance A undelete server handles runtime shutdown';
+  is $shutdown_a->{exit_code}, 0, 'instance A undelete server exits cleanly';
+  my $shutdown_b = $host_b->request_shutdown(reason => 'undeleted hosted channel test complete');
+  is $shutdown_b->{state}, 'shutdown_complete', 'instance B undelete server handles runtime shutdown';
+  is $shutdown_b->{exit_code}, 0, 'instance B undelete server exits cleanly';
+
+  close $alice_a->{socket};
+  close $bob_b->{socket};
+  _stop_authoritative_nip29_relay($relay);
+};
+
 subtest 'IRC server program enforces authoritative bans across two instances' => sub {
   my $network = 'irc.authority.ban.test';
   my $channel = '#ops';
@@ -6624,9 +7140,9 @@ subtest 'IRC server program enforces authoritative bans across two instances' =>
     'instance B emits the initial open-channel JOIN bootstrap before the ban';
   is_deeply $bob_ban_join_bootstrap, [
     ":bob JOIN $channel",
-    ":$server_name_b 353 bob = $channel :bob",
+    ":$server_name_b 353 bob = $channel :\@alice bob",
     ":$server_name_b 366 bob $channel :End of /NAMES list.",
-  ], 'bob receives the initial JOIN bootstrap on instance B before the ban';
+  ], 'bob receives the initial JOIN bootstrap with retained remote presence on instance B before the ban';
 
   _write_client_line($alice_a, "MODE $channel +b $bob_mask");
   ok $host_a->pump(timeout_ms => $relay_host_pump_ms) >= 0,
@@ -6750,9 +7266,9 @@ subtest 'IRC server program enforces authoritative bans across two instances' =>
     'instance B emits the post-unban JOIN bootstrap';
   is_deeply $bob_unban_join_bootstrap, [
     ":bob JOIN $channel",
-    ":$server_name_b 353 bob = $channel :bob",
+    ":$server_name_b 353 bob = $channel :\@alice bob",
     ":$server_name_b 366 bob $channel :End of /NAMES list.",
-  ], 'bob can rejoin the authoritative channel after the propagated -b';
+  ], 'bob can rejoin the authoritative channel with retained remote presence after the propagated -b';
 
   my $shutdown_a = $host_a->request_shutdown(reason => 'relay-backed authoritative ban test complete A');
   is $shutdown_a->{state}, 'shutdown_complete', 'instance A authoritative ban server handles runtime shutdown';
