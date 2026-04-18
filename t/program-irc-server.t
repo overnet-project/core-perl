@@ -826,6 +826,8 @@ sub _assert_opaque_private_message_metadata {
       closed           => 0,
       moderated        => 0,
       topic_restricted => 0,
+      tombstoned       => 0,
+      ban_masks        => [],
       members          => {},
     };
 
@@ -978,6 +980,112 @@ sub _assert_opaque_private_message_metadata {
             reason            => (!$state->{topic_restricted} || $roles{'irc.operator'}) ? '' : '+t',
           },
         ],
+      };
+    }
+
+    if ($operation eq 'authoritative_mode_write_permission') {
+      my $member = defined $input->{actor_pubkey}
+        ? $state->{members}{$input->{actor_pubkey}}
+        : undef;
+      my @roles = ref($member) eq 'HASH' ? sort @{$member->{roles} || []} : ();
+      my %roles = map { $_ => 1 } @roles;
+      my $mode = $input->{mode} || '';
+      my $mode_args = ref($input->{mode_args}) eq 'ARRAY' ? $input->{mode_args} : [];
+      my %permission = (
+        operation         => 'authoritative_mode_write_permission',
+        authority_profile => 'nip29',
+        object_type       => 'chat.channel',
+        object_id         => 'irc:' . ($session->{network} || 'irc.test') . ':' . $channel,
+        allowed           => $state->{tombstoned}
+          ? JSON::PP::false
+          : $roles{'irc.operator'} ? JSON::PP::true : JSON::PP::false,
+        mode              => $mode,
+        reason            => $state->{tombstoned}
+          ? 'deleted'
+          : $roles{'irc.operator'} ? '' : 'not_operator',
+      );
+      if (!$state->{tombstoned} && $roles{'irc.operator'}) {
+        if ($mode =~ /\A[+-][ov]\z/ && defined($mode_args->[0])) {
+          my $target_member = $state->{members}{$mode_args->[0]};
+          $permission{target_pubkey} = $mode_args->[0];
+          $permission{current_roles} = ref($target_member) eq 'HASH'
+            ? [ sort @{$target_member->{roles} || []} ]
+            : [];
+        } elsif ($mode =~ /\A[+-][b]\z/ && defined($mode_args->[0])) {
+          $permission{normalized_ban_mask} = $mode_args->[0];
+          $permission{group_metadata} = {
+            closed           => $state->{closed} ? 1 : 0,
+            moderated        => $state->{moderated} ? 1 : 0,
+            topic_restricted => $state->{topic_restricted} ? 1 : 0,
+            ban_masks        => [ @{$state->{ban_masks} || []} ],
+            tombstoned       => 0,
+            (exists($state->{topic}) ? (topic => $state->{topic}) : ()),
+          };
+        } elsif ($mode =~ /\A[+-][imt]\z/) {
+          $permission{group_metadata} = {
+            closed           => $state->{closed} ? 1 : 0,
+            moderated        => $state->{moderated} ? 1 : 0,
+            topic_restricted => $state->{topic_restricted} ? 1 : 0,
+            ban_masks        => [ @{$state->{ban_masks} || []} ],
+            tombstoned       => 0,
+            (exists($state->{topic}) ? (topic => $state->{topic}) : ()),
+          };
+        }
+      }
+      return {
+        valid      => 1,
+        permission => [ \%permission ],
+      };
+    }
+
+    if ($operation eq 'authoritative_channel_action_permission') {
+      my $member = defined $input->{actor_pubkey}
+        ? $state->{members}{$input->{actor_pubkey}}
+        : undef;
+      my @roles = ref($member) eq 'HASH' ? sort @{$member->{roles} || []} : ();
+      my %roles = map { $_ => 1 } @roles;
+      my $action = $input->{action} || '';
+      my %permission = (
+        operation         => 'authoritative_channel_action_permission',
+        authority_profile => 'nip29',
+        object_type       => 'chat.channel',
+        object_id         => 'irc:' . ($session->{network} || 'irc.test') . ':' . $channel,
+        action            => $action,
+        allowed           => JSON::PP::false,
+        reason            => '',
+      );
+      if ($action eq 'undelete') {
+        $permission{reason} = !$state->{tombstoned}
+          ? 'not_deleted'
+          : $roles{'irc.operator'} ? '' : 'not_operator';
+        $permission{allowed} = ($state->{tombstoned} && $roles{'irc.operator'})
+          ? JSON::PP::true
+          : JSON::PP::false;
+      } else {
+        $permission{reason} = $state->{tombstoned}
+          ? 'deleted'
+          : $roles{'irc.operator'} ? '' : 'not_operator';
+        $permission{allowed} = (!$state->{tombstoned} && $roles{'irc.operator'})
+          ? JSON::PP::true
+          : JSON::PP::false;
+      }
+      if ($permission{allowed}) {
+        $permission{target_pubkey} = $input->{target_pubkey}
+          if defined $input->{target_pubkey};
+        if ($action eq 'delete' || $action eq 'undelete') {
+          $permission{group_metadata} = {
+            closed           => $state->{closed} ? 1 : 0,
+            moderated        => $state->{moderated} ? 1 : 0,
+            topic_restricted => $state->{topic_restricted} ? 1 : 0,
+            ban_masks        => [ @{$state->{ban_masks} || []} ],
+            tombstoned       => $state->{tombstoned} ? 1 : 0,
+            (exists($state->{topic}) ? (topic => $state->{topic}) : ()),
+          };
+        }
+      }
+      return {
+        valid      => 1,
+        permission => [ \%permission ],
       };
     }
 
@@ -2964,6 +3072,18 @@ subtest 'IRC server program uses authoritative hosted-channel state for moderate
   is $mode_request->{input}{actor_pubkey}, $alice_pubkey, 'authoritative MODE writes include actor_pubkey';
   is $mode_request->{input}{target_pubkey}, $bob_pubkey, 'authoritative MODE writes include target_pubkey';
   is_deeply $mode_request->{input}{current_roles}, [], 'authoritative MODE writes include current target roles';
+  ok _request_count_matching(
+    $host->transcript,
+    'from_program',
+    'adapters.derive',
+    sub {
+      (($_[0]{operation} || '') eq 'authoritative_mode_write_permission')
+        && ref($_[0]{input}) eq 'HASH'
+        && (($_[0]{input}{target} || '') eq $channel)
+        && (($_[0]{input}{actor_pubkey} || '') eq $alice_pubkey)
+        && (($_[0]{input}{mode} || '') eq '+v');
+    },
+  ) >= 1, 'program derives authoritative mode-write permission through the adapter';
 
   my $topic_request = _last_request_matching(
     $host->transcript,
@@ -2995,6 +3115,19 @@ subtest 'IRC server program uses authoritative hosted-channel state for moderate
   ok $kick_request, 'program routes authoritative KICK through the adapter';
   is $kick_request->{input}{actor_pubkey}, $alice_pubkey, 'authoritative KICK includes actor_pubkey';
   is $kick_request->{input}{target_pubkey}, $bob_pubkey, 'authoritative KICK includes target_pubkey';
+  ok _request_count_matching(
+    $host->transcript,
+    'from_program',
+    'adapters.derive',
+    sub {
+      (($_[0]{operation} || '') eq 'authoritative_channel_action_permission')
+        && ref($_[0]{input}) eq 'HASH'
+        && (($_[0]{input}{target} || '') eq $channel)
+        && (($_[0]{input}{actor_pubkey} || '') eq $alice_pubkey)
+        && (($_[0]{input}{action} || '') eq 'kick')
+        && (($_[0]{input}{target_pubkey} || '') eq $bob_pubkey);
+    },
+  ) >= 1, 'program derives authoritative kick permission through the adapter';
 
   my $shutdown = $host->request_shutdown(reason => 'authoritative test complete');
   is $shutdown->{state}, 'shutdown_complete', 'authoritative server handles runtime shutdown';
@@ -3478,6 +3611,18 @@ subtest 'IRC server program uses the real IRC adapter for authoritative NIP-29 c
     'real authoritative MODE writes are broadcast to the actor';
   is _read_client_line($bob, 1_000), ":alice MODE $channel +v bob",
     'real authoritative MODE writes are broadcast to the target';
+  ok _request_count_matching(
+    $host->transcript,
+    'from_program',
+    'adapters.derive',
+    sub {
+      (($_[0]{operation} || '') eq 'authoritative_mode_write_permission')
+        && ref($_[0]{input}) eq 'HASH'
+        && (($_[0]{input}{target} || '') eq $channel)
+        && (($_[0]{input}{actor_pubkey} || '') eq $alice_pubkey)
+        && (($_[0]{input}{mode} || '') eq '+v');
+    },
+  ) >= 1, 'real authoritative program derives mode-write permission through the adapter';
 
   _write_client_line($bob, "NAMES $channel");
   ok $host->pump(timeout_ms => 200) >= 0,
@@ -3494,6 +3639,19 @@ subtest 'IRC server program uses the real IRC adapter for authoritative NIP-29 c
     'real authoritative KICK is broadcast to the operator';
   is _read_client_line($bob, 1_000), ":alice KICK $channel bob :bye",
     'real authoritative KICK is broadcast to the target';
+  ok _request_count_matching(
+    $host->transcript,
+    'from_program',
+    'adapters.derive',
+    sub {
+      (($_[0]{operation} || '') eq 'authoritative_channel_action_permission')
+        && ref($_[0]{input}) eq 'HASH'
+        && (($_[0]{input}{target} || '') eq $channel)
+        && (($_[0]{input}{actor_pubkey} || '') eq $alice_pubkey)
+        && (($_[0]{input}{action} || '') eq 'kick')
+        && (($_[0]{input}{target_pubkey} || '') eq $bob_pubkey);
+    },
+  ) >= 1, 'real authoritative program derives kick permission through the adapter';
 
   _write_client_line($alice, "NAMES $channel");
   ok $host->pump(timeout_ms => 200) >= 0,
@@ -4018,6 +4176,19 @@ subtest 'IRC server program admits an invited user to a closed authoritative cha
   is $invite_request->{input}{target_pubkey}, $bob_pubkey, 'authoritative INVITE includes target_pubkey';
   like $invite_request->{input}{invite_code}, qr/\A[0-9a-f]{64}\z/,
     'authoritative INVITE generates a deterministic invite code';
+  ok _request_count_matching(
+    $host->transcript,
+    'from_program',
+    'adapters.derive',
+    sub {
+      (($_[0]{operation} || '') eq 'authoritative_channel_action_permission')
+        && ref($_[0]{input}) eq 'HASH'
+        && (($_[0]{input}{target} || '') eq $channel)
+        && (($_[0]{input}{actor_pubkey} || '') eq $alice_pubkey)
+        && (($_[0]{input}{action} || '') eq 'invite')
+        && (($_[0]{input}{target_pubkey} || '') eq $bob_pubkey);
+    },
+  ) >= 1, 'program derives authoritative invite permission through the adapter';
 
   _write_client_line($bob, "JOIN $channel");
   ok $host->pump(timeout_ms => 200) >= 0,
@@ -6364,6 +6535,18 @@ subtest 'IRC server program tombstones authoritative hosted channels across two 
   );
   ok $delete_request,
     'instance A routes the authoritative hosted-channel delete through the adapter';
+  ok _request_count_matching(
+    $host_a->transcript,
+    'from_program',
+    'adapters.derive',
+    sub {
+      (($_[0]{operation} || '') eq 'authoritative_channel_action_permission')
+        && ref($_[0]{input}) eq 'HASH'
+        && (($_[0]{input}{target} || '') eq $channel)
+        && (($_[0]{input}{actor_pubkey} || '') eq $alice_pubkey)
+        && (($_[0]{input}{action} || '') eq 'delete');
+    },
+  ) >= 1, 'instance A derives authoritative delete permission through the adapter';
 
   my $delete_publish = _last_request_matching(
     $host_a->transcript,
@@ -6831,6 +7014,18 @@ subtest 'IRC server program reactivates tombstoned authoritative hosted channels
   );
   ok $undelete_request,
     'instance A routes the authoritative hosted-channel UNDELETE through the adapter';
+  ok _request_count_matching(
+    $host_a->transcript,
+    'from_program',
+    'adapters.derive',
+    sub {
+      (($_[0]{operation} || '') eq 'authoritative_channel_action_permission')
+        && ref($_[0]{input}) eq 'HASH'
+        && (($_[0]{input}{target} || '') eq $channel)
+        && (($_[0]{input}{actor_pubkey} || '') eq $alice_pubkey)
+        && (($_[0]{input}{action} || '') eq 'undelete');
+    },
+  ) >= 1, 'instance A derives authoritative undelete permission through the adapter';
 
   my $undelete_publish = _last_request_matching(
     $host_a->transcript,
@@ -7311,6 +7506,20 @@ subtest 'IRC server program enforces authoritative bans across two instances' =>
       return defined($line) && $line eq ":alice MODE $channel +b $bob_mask" ? 1 : 0;
     },
   ), 'bob sees the propagated authoritative +b MODE line on instance B';
+  ok _request_count_matching(
+    $host_a->transcript,
+    'from_program',
+    'adapters.derive',
+    sub {
+      (($_[0]{operation} || '') eq 'authoritative_mode_write_permission')
+        && ref($_[0]{input}) eq 'HASH'
+        && (($_[0]{input}{target} || '') eq $channel)
+        && (($_[0]{input}{actor_pubkey} || '') eq $alice_pubkey)
+        && (($_[0]{input}{mode} || '') eq '+b')
+        && ref($_[0]{input}{mode_args}) eq 'ARRAY'
+        && (($_[0]{input}{mode_args}[0] || '') eq $bob_mask);
+    },
+  ) >= 1, 'instance A derives authoritative ban-set permission through the adapter';
 
   my $relay_ban_events = _query_nostr_events_from_relay(
     relay_url => $relay_url,
@@ -7366,6 +7575,20 @@ subtest 'IRC server program enforces authoritative bans across two instances' =>
       return defined($line) && $line eq ":alice MODE $channel -b $bob_mask" ? 1 : 0;
     },
   ), 'alice sees the authoritative -b MODE line on instance A';
+  ok _request_count_matching(
+    $host_a->transcript,
+    'from_program',
+    'adapters.derive',
+    sub {
+      (($_[0]{operation} || '') eq 'authoritative_mode_write_permission')
+        && ref($_[0]{input}) eq 'HASH'
+        && (($_[0]{input}{target} || '') eq $channel)
+        && (($_[0]{input}{actor_pubkey} || '') eq $alice_pubkey)
+        && (($_[0]{input}{mode} || '') eq '-b')
+        && ref($_[0]{input}{mode_args}) eq 'ARRAY'
+        && (($_[0]{input}{mode_args}[0] || '') eq $bob_mask);
+    },
+  ) >= 1, 'instance A derives authoritative ban-clear permission through the adapter';
 
   my $propagated_part_before_unban_query = _read_client_line_optional($alice_a, 250);
   ok !defined($propagated_part_before_unban_query) || $propagated_part_before_unban_query eq ":bob PART $channel :bye",
