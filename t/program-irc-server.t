@@ -6027,6 +6027,16 @@ subtest 'IRC server program creates and discovers authoritative hosted channels 
     'instance B LIST discovers the created hosted channel before bob joins';
   is $discovered_list_lines->[2], ":$server_name_b 323 bob :End of /LIST",
     'instance B LIST ends normally for discovered hosted channels';
+  ok _request_count_matching(
+    $host_b->transcript,
+    'from_program',
+    'adapters.derive',
+    sub {
+      (($_[0]{operation} || '') eq 'authoritative_list_entry_view')
+        && ref($_[0]{input}) eq 'HASH'
+        && (($_[0]{input}{target} || '') eq $channel);
+    },
+  ) >= 1, 'instance B derives authoritative LIST rendering through the adapter';
 
   _write_client_line($bob_b, "JOIN $channel");
   ok $host_b->pump(timeout_ms => $relay_host_pump_ms) >= 0,
@@ -7550,6 +7560,16 @@ subtest 'IRC server program enforces authoritative bans across two instances' =>
     'instance B renders the propagated authoritative ban list entry';
   is _read_client_line($bob_b, 3_000), ":$server_name_b 368 bob $channel :End of channel ban list",
     'instance B terminates the authoritative ban-list query';
+  ok _request_count_matching(
+    $host_b->transcript,
+    'from_program',
+    'adapters.derive',
+    sub {
+      (($_[0]{operation} || '') eq 'authoritative_ban_list_view')
+        && ref($_[0]{input}) eq 'HASH'
+        && (($_[0]{input}{target} || '') eq $channel);
+    },
+  ) >= 1, 'instance B derives authoritative ban-list rendering through the adapter';
 
   _write_client_line($bob_b, "PART $channel :bye");
   ok $host_b->pump(timeout_ms => $relay_host_pump_ms) >= 0,
