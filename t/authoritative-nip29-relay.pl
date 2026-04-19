@@ -8,12 +8,14 @@ use lib "$FindBin::Bin/../local/lib/perl5";
 use lib "$FindBin::Bin/../lib";
 
 use Overnet::Authority::HostedChannel ();
+use Overnet::Relay::Store::File;
 use Net::Nostr::Relay;
 
 my %opt = (
   host       => '127.0.0.1',
   port       => 7448,
   grant_kind => 14142,
+  store_file => undef,
 );
 my $help = 0;
 
@@ -22,6 +24,7 @@ GetOptions(
   'port=i'       => \$opt{port},
   'relay-url=s'  => \$opt{relay_url},
   'grant-kind=i' => \$opt{grant_kind},
+  'store-file=s' => \$opt{store_file},
   'help'         => \$help,
 ) or die _usage();
 
@@ -36,11 +39,13 @@ die "--port must be a non-negative integer\n"
   unless defined $opt{port} && !ref($opt{port}) && $opt{port} =~ /\A\d+\z/;
 die "--grant-kind must be a positive integer\n"
   unless defined $opt{grant_kind} && !ref($opt{grant_kind}) && $opt{grant_kind} =~ /\A[1-9]\d*\z/;
+die "--store-file must be a non-empty string\n"
+  if defined $opt{store_file} && (ref($opt{store_file}) || $opt{store_file} eq '');
 
 $opt{relay_url} ||= sprintf('ws://%s:%d', $opt{host}, $opt{port});
 
 my $relay;
-$relay = Net::Nostr::Relay->new(
+my %relay_args = (
   relay_url => $opt{relay_url},
   on_event  => sub {
     my ($event) = @_;
@@ -52,6 +57,12 @@ $relay = Net::Nostr::Relay->new(
     );
   },
 );
+if (defined $opt{store_file}) {
+  $relay_args{store} = Overnet::Relay::Store::File->new(
+    path => $opt{store_file},
+  );
+}
+$relay = Net::Nostr::Relay->new(%relay_args);
 
 $SIG{INT} = sub { $relay->stop };
 $SIG{TERM} = sub { $relay->stop };
@@ -566,6 +577,7 @@ Usage: authoritative-nip29-relay.pl [options]
   --port PORT
   --relay-url URL
   --grant-kind KIND
+  --store-file PATH
   --help
 USAGE
 }

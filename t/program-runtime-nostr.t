@@ -2,6 +2,7 @@ use strict;
 use warnings;
 use Test::More;
 use File::Spec;
+use File::Temp qw(tempdir);
 use FindBin;
 use IPC::Open3 qw(open3);
 use POSIX qw(WNOHANG);
@@ -49,6 +50,7 @@ sub _spawn_authoritative_nip29_relay {
     '--port', $args{port},
     '--relay-url', $args{relay_url},
     '--grant-kind', 14142,
+    (defined $args{store_file} ? ('--store-file', $args{store_file}) : ()),
   );
 
   close $stdin;
@@ -675,6 +677,112 @@ subtest 'nostr subscriptions survive live relay restart, preserve snapshots, and
     session_id  => 'session-nostr-restart',
   );
   ok $closed->{closed}, 'nostr.close_subscription still closes a post-restart subscription';
+
+  _stop_authoritative_nip29_relay($relay);
+};
+
+subtest 'new runtime subscriptions rebuild from persisted relay history after restart without duplicate notifications' => sub {
+  my $tmpdir = tempdir(CLEANUP => 1);
+  my $store_file = File::Spec->catfile($tmpdir, 'authoritative-relay-store.json');
+  my $port = _free_port();
+  my $relay_url = "ws://127.0.0.1:$port";
+  my $relay = _spawn_authoritative_nip29_relay(
+    port       => $port,
+    relay_url  => $relay_url,
+    store_file => $store_file,
+  );
+  _wait_for_authoritative_nip29_relay_ready($relay_url);
+
+  my $runtime = Overnet::Program::Runtime->new;
+  my $services = Overnet::Program::Services->new(runtime => $runtime);
+  my $author_key = Net::Nostr::Key->new;
+
+  my $first_event = _signed_text_note(
+    key        => $author_key,
+    created_at => 1_744_301_040,
+    content    => 'persisted-before-restart',
+  );
+  my $published = $services->dispatch_request(
+    'nostr.publish_event',
+    {
+      relay_url => $relay_url,
+      event     => $first_event,
+    },
+    permissions => ['nostr.write'],
+    session_id  => 'session-nostr-persist-write',
+  );
+  ok $published->{accepted}, 'relay accepts the persisted pre-restart seed event';
+
+  _stop_authoritative_nip29_relay($relay);
+
+  $relay = _spawn_authoritative_nip29_relay(
+    port       => $port,
+    relay_url  => $relay_url,
+    store_file => $store_file,
+  );
+  _wait_for_authoritative_nip29_relay_ready($relay_url);
+
+  my $runtime_after = Overnet::Program::Runtime->new;
+  my $services_after = Overnet::Program::Services->new(runtime => $runtime_after);
+
+  my $opened = $services_after->dispatch_request(
+    'nostr.open_subscription',
+    {
+      subscription_id => 'relay-sub-persist',
+      relay_url       => $relay_url,
+      filters         => [
+        {
+          kinds   => [1],
+          authors => [ $author_key->pubkey_hex ],
+          limit   => 10,
+        },
+      ],
+    },
+    permissions => ['nostr.read'],
+    session_id  => 'session-nostr-persist-read',
+  );
+  ok(
+    scalar(grep { ref($_) eq 'HASH' && (($_->{id} || '') eq $first_event->{id}) } @{$opened->{events}}),
+    'new runtime seeded snapshot includes the persisted pre-restart event',
+  );
+
+  my $second_event = _signed_text_note(
+    key        => $author_key,
+    created_at => 1_744_301_041,
+    content    => 'persisted-after-restart',
+  );
+  my $recovered = Overnet::Core::Nostr->publish_event(
+    relay_url => $relay_url,
+    event     => $second_event,
+  );
+  ok $recovered->{accepted}, 'restarted relay accepts a new post-restart event without replaying history';
+
+  my $notifications = _drain_until_notification(
+    runtime    => $runtime_after,
+    session_id => 'session-nostr-persist-read',
+    timeout_ms => 1_500,
+  );
+  is scalar @{$notifications}, 1, 'persisted recovery queues one notification for the truly new event';
+  is $notifications->[0]{params}{data}{id}, $second_event->{id},
+    'persisted recovery does not redeliver the already-seeded event';
+
+  my $snapshot = $services_after->dispatch_request(
+    'nostr.read_subscription_snapshot',
+    {
+      subscription_id => 'relay-sub-persist',
+      refresh         => 1,
+    },
+    permissions => ['nostr.read'],
+    session_id  => 'session-nostr-persist-read',
+  );
+  ok(
+    scalar(grep { ref($_) eq 'HASH' && (($_->{id} || '') eq $first_event->{id}) } @{$snapshot->{events}}),
+    'persisted refresh still includes the pre-restart event',
+  );
+  ok(
+    scalar(grep { ref($_) eq 'HASH' && (($_->{id} || '') eq $second_event->{id}) } @{$snapshot->{events}}),
+    'persisted refresh includes the new post-restart event',
+  );
 
   _stop_authoritative_nip29_relay($relay);
 };

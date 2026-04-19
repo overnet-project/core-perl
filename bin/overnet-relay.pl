@@ -8,6 +8,7 @@ use lib "$FindBin::Bin/../lib";
 use lib "$FindBin::Bin/../local/lib/perl5";
 
 use Overnet::Relay;
+use Overnet::Relay::Store::File;
 
 my %opt = (
   host => '127.0.0.1',
@@ -24,6 +25,7 @@ my %opt = (
   max_subscriptions => 32,
   max_message_length => 65536,
   max_content_length => 32768,
+  store_file => undef,
 );
 
 my $help = 0;
@@ -45,6 +47,7 @@ GetOptions(
   'max-subscriptions=i' => \$opt{max_subscriptions},
   'max-message-length=i' => \$opt{max_message_length},
   'max-content-length=i' => \$opt{max_content_length},
+  'store-file=s' => \$opt{store_file},
   'help' => \$help,
 ) or die _usage();
 
@@ -74,7 +77,18 @@ for my $int_opt (
 delete $opt{host};
 delete $opt{port};
 
-my $relay = Overnet::Relay->new(%opt);
+my %relay_args = %opt;
+if (defined $relay_args{store_file}) {
+  die "--store-file must be a non-empty string\n"
+    if ref($relay_args{store_file}) || $relay_args{store_file} eq '';
+  $relay_args{store} = Overnet::Relay::Store::File->new(
+    path => delete $relay_args{store_file},
+  );
+} else {
+  delete $relay_args{store_file};
+}
+
+my $relay = Overnet::Relay->new(%relay_args);
 
 $SIG{INT} = sub { $relay->stop };
 $SIG{TERM} = sub { $relay->stop };
@@ -100,6 +114,7 @@ Usage: overnet-relay.pl [options]
   --max-subscriptions N
   --max-message-length N
   --max-content-length N
+  --store-file PATH
   --help
 USAGE
 }

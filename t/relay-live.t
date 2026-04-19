@@ -4,6 +4,7 @@ use warnings;
 use AnyEvent;
 use AnyEvent::WebSocket::Client;
 use File::Spec;
+use File::Temp qw(tempdir);
 use FindBin;
 use IO::Socket::INET;
 use IPC::Open3 qw(open3);
@@ -49,6 +50,7 @@ sub _spawn_relay_process {
     '--software', 'https://example.invalid/overnet-relay',
     '--version', '0.1.0-test',
     '--max-negentropy-sessions', 4,
+    (defined $args{store_file} ? ('--store-file', $args{store_file}) : ()),
   );
 
   close $stdin;
@@ -324,6 +326,116 @@ subtest 'relay process serves live object reads over HTTP' => sub {
   };
   my $error = $@;
   _stop_relay_process($proc);
+  die $error if $error;
+};
+
+subtest 'relay process persists live object state across restart and suppresses duplicate replay' => sub {
+  my $tmpdir = tempdir(CLEANUP => 1);
+  my $store_file = File::Spec->catfile($tmpdir, 'relay-store.json');
+  my $port = _free_port();
+  my $proc = _spawn_relay_process(
+    port       => $port,
+    store_file => $store_file,
+  );
+  eval {
+    _wait_for_relay_ready($port);
+
+    my $author = Net::Nostr::Key->new;
+    my $state_event = _create_overnet_event(
+      key         => $author,
+      kind        => 37800,
+      event_type  => 'chat.topic',
+      object_type => 'chat.channel',
+      object_id   => 'irc:live:#persist',
+      body        => { text => 'Persistent Topic' },
+    );
+
+    my $publish_cv = AnyEvent->condvar;
+    my $publish_ref = _connect_ws($port, sub {
+      my ($conn) = @_;
+      $conn->on(each_message => sub {
+        my (undef, $msg) = @_;
+        my $parsed = Net::Nostr::Message->parse($msg->body);
+        $publish_cv->send if $parsed->type eq 'OK' && $parsed->accepted;
+      });
+      $conn->send(Net::Nostr::Message->new(type => 'EVENT', event => $state_event)->serialize);
+    });
+    $publish_cv->recv;
+    ok $publish_ref, 'websocket client stays alive for persisted publish';
+
+    _stop_relay_process($proc);
+    undef $proc;
+
+    $proc = _spawn_relay_process(
+      port       => $port,
+      store_file => $store_file,
+    );
+    _wait_for_relay_ready($port);
+
+    my $response = _http_request(
+      port => $port,
+      request => join(
+        "\r\n",
+        'GET /.well-known/overnet/v1/object?type=chat.channel&id=irc%3Alive%3A%23persist HTTP/1.1',
+        'Host: 127.0.0.1',
+        'Accept: application/json',
+        'Connection: close',
+        '',
+        '',
+      ),
+    );
+
+    like $response, qr/\AHTTP\/1\.[01] 200 /, 'persisted object endpoint returns HTTP 200 after restart';
+    my $body = _decode_http_json_body($response);
+    is $body->{state_event}{id}, $state_event->id, 'persisted state event survives relay restart';
+
+    my @received;
+    my $cv = AnyEvent->condvar;
+    my $conn_ref = _connect_ws($port, sub {
+      my ($conn) = @_;
+      my $phase = 'publish';
+      $conn->on(each_message => sub {
+        my (undef, $msg) = @_;
+        my $parsed = Net::Nostr::Message->parse($msg->body);
+        push @received, $parsed;
+
+        if ($phase eq 'publish' && $parsed->type eq 'OK') {
+          $phase = 'query';
+          my $filter = Net::Nostr::Filter->new(
+            kinds => [37800],
+            '#t'  => ['chat.topic'],
+            '#o'  => ['chat.channel'],
+            '#d'  => ['irc:live:#persist'],
+          );
+          $conn->send(Net::Nostr::Message->new(
+            type            => 'REQ',
+            subscription_id => 'persist-sub',
+            filters         => [$filter],
+          )->serialize);
+          return;
+        }
+
+        $cv->send if $phase eq 'query' && $parsed->type eq 'EOSE';
+      });
+
+      $conn->send(Net::Nostr::Message->new(type => 'EVENT', event => $state_event)->serialize);
+    });
+    $cv->recv;
+    ok $conn_ref, 'websocket client stays alive for persisted duplicate publish/query';
+
+    my ($ok_msg) = grep { $_->type eq 'OK' } @received;
+    ok $ok_msg, 'duplicate publish still returns OK after restart';
+    ok $ok_msg->accepted, 'duplicate publish remains accepted';
+    like $ok_msg->message, qr/\Aaccepted: duplicate /, 'duplicate publish is reported as a duplicate';
+
+    my @event_msgs = grep {
+      $_->type eq 'EVENT' && (($_->subscription_id || '') eq 'persist-sub')
+    } @received;
+    is scalar @event_msgs, 1, 'persisted replay query still returns one matching event';
+    is $event_msgs[0]->event->id, $state_event->id, 'persisted replay query returns the stored event id';
+  };
+  my $error = $@;
+  _stop_relay_process($proc) if $proc;
   die $error if $error;
 };
 
