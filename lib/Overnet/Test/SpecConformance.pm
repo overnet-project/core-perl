@@ -392,6 +392,7 @@ sub _build_irc_server_harness {
         username => $known->{username},
         realname => $known->{realname},
         host     => $known->{host},
+        authority_pubkey => $known->{authority_pubkey},
       );
       next;
     }
@@ -441,6 +442,7 @@ sub _build_irc_server_harness {
       username => $entry->{username},
       realname => $entry->{realname},
       host     => $entry->{host},
+      authority_pubkey => $entry->{authority_pubkey},
     );
     $server->_add_visible_nick($channel, $entry->{nick});
     my $nick_key = $server->_nick_key($entry->{nick});
@@ -553,6 +555,7 @@ sub _ensure_stub_client_for_nick {
       $client->{username} = $opts{username} if defined $opts{username};
       $client->{realname} = $opts{realname} if defined $opts{realname};
       $client->{peerhost} = $opts{host} if defined $opts{host};
+      $client->{authority_pubkey} = $opts{authority_pubkey} if defined $opts{authority_pubkey};
     }
     return;
   }
@@ -570,6 +573,7 @@ sub _ensure_stub_client_for_nick {
     socket          => undef,
     peerhost        => defined($opts{host}) ? $opts{host} : '127.0.0.1',
     peerport        => 6667 + $id,
+    (defined($opts{authority_pubkey}) ? (authority_pubkey => $opts{authority_pubkey}) : ()),
   };
   $server->{nick_to_client_id}{$nick_key} = $id;
 }
@@ -772,6 +776,12 @@ sub _apply_metadata_tags {
   push @{$event_hash->{tags}}, [ 'mode', 'topic-restricted' ]
     if $spec->{topic_restricted};
   push @{$event_hash->{tags}}, map { [ 'ban', $_ ] } @{$spec->{ban_masks} || []};
+  push @{$event_hash->{tags}}, map { [ 'except', $_ ] } @{$spec->{except_masks} || []};
+  push @{$event_hash->{tags}}, map { [ 'invite-except', $_ ] } @{$spec->{invite_exception_masks} || []};
+  push @{$event_hash->{tags}}, [ 'key', $spec->{key} ]
+    if exists $spec->{key};
+  push @{$event_hash->{tags}}, [ 'limit', 0 + $spec->{user_limit} ]
+    if exists $spec->{user_limit};
   push @{$event_hash->{tags}}, [ 'topic', $spec->{topic} ]
     if exists $spec->{topic};
   push @{$event_hash->{tags}}, [ 'status', 'tombstoned' ]
