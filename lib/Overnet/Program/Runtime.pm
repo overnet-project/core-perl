@@ -1057,6 +1057,26 @@ sub _refresh_nostr_subscriptions {
   return 1;
 }
 
+sub _merge_nostr_snapshot_events {
+  my ($old_events, $new_events) = @_;
+  my @merged;
+  my %seen_ids;
+
+  for my $list ($old_events, $new_events) {
+    next unless ref($list) eq 'ARRAY';
+    for my $event (@{$list}) {
+      next unless ref($event) eq 'HASH';
+      my $event_id = defined($event->{id}) && !ref($event->{id}) && length($event->{id})
+        ? $event->{id}
+        : undef;
+      next if defined($event_id) && $seen_ids{$event_id}++;
+      push @merged, _clone_json($event);
+    }
+  }
+
+  return \@merged;
+}
+
 sub _refresh_nostr_subscription {
   my ($self, %args) = @_;
   my $session_id = $args{session_id};
@@ -1087,7 +1107,10 @@ sub _refresh_nostr_subscription {
     push @new_events, _clone_json($event);
   }
 
-  $subscription->{snapshot} = _clone_json($events);
+  $subscription->{snapshot} = _merge_nostr_snapshot_events(
+    $subscription->{snapshot},
+    $events,
+  );
 
   if ($queue_notifications) {
     for my $event (@new_events) {

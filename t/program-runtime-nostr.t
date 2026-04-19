@@ -533,4 +533,150 @@ subtest 'nostr subscriptions merge multi-filter relay snapshots and refreshes' =
   _stop_authoritative_nip29_relay($relay);
 };
 
+subtest 'nostr subscriptions survive live relay restart, preserve snapshots, and suppress replay duplicates' => sub {
+  my $port = _free_port();
+  my $relay_url = "ws://127.0.0.1:$port";
+  my $relay = _spawn_authoritative_nip29_relay(
+    port      => $port,
+    relay_url => $relay_url,
+  );
+  _wait_for_authoritative_nip29_relay_ready($relay_url);
+
+  my $runtime = Overnet::Program::Runtime->new;
+  my $services = Overnet::Program::Services->new(runtime => $runtime);
+  my $author_key = Net::Nostr::Key->new;
+
+  my $first_event = _signed_text_note(
+    key        => $author_key,
+    created_at => 1_744_301_030,
+    content    => 'before-restart',
+  );
+  my $published = $services->dispatch_request(
+    'nostr.publish_event',
+    {
+      relay_url => $relay_url,
+      event     => $first_event,
+    },
+    permissions => ['nostr.write'],
+    session_id  => 'session-nostr-restart',
+  );
+  ok $published->{accepted}, 'relay accepts the pre-restart seed event';
+
+  my $opened = $services->dispatch_request(
+    'nostr.open_subscription',
+    {
+      subscription_id => 'relay-sub-restart',
+      relay_url       => $relay_url,
+      filters         => [
+        {
+          kinds   => [1],
+          authors => [ $author_key->pubkey_hex ],
+          limit   => 10,
+        },
+      ],
+    },
+    permissions => ['nostr.read'],
+    session_id  => 'session-nostr-restart',
+  );
+  ok(
+    scalar(grep { ref($_) eq 'HASH' && (($_->{id} || '') eq $first_event->{id}) } @{$opened->{events}}),
+    'seeded snapshot includes the pre-restart event',
+  );
+
+  _stop_authoritative_nip29_relay($relay);
+
+  my $snapshot = $services->dispatch_request(
+    'nostr.read_subscription_snapshot',
+    {
+      subscription_id => 'relay-sub-restart',
+      refresh         => 1,
+    },
+    permissions => ['nostr.read'],
+    session_id  => 'session-nostr-restart',
+  );
+  ok(
+    scalar(grep { ref($_) eq 'HASH' && (($_->{id} || '') eq $first_event->{id}) } @{$snapshot->{events}}),
+    'failed refresh while the relay is down preserves the cached snapshot',
+  );
+
+  $relay = _spawn_authoritative_nip29_relay(
+    port      => $port,
+    relay_url => $relay_url,
+  );
+  _wait_for_authoritative_nip29_relay_ready($relay_url);
+
+  $snapshot = $services->dispatch_request(
+    'nostr.read_subscription_snapshot',
+    {
+      subscription_id => 'relay-sub-restart',
+      refresh         => 1,
+    },
+    permissions => ['nostr.read'],
+    session_id  => 'session-nostr-restart',
+  );
+  ok(
+    scalar(grep { ref($_) eq 'HASH' && (($_->{id} || '') eq $first_event->{id}) } @{$snapshot->{events}}),
+    'empty post-restart refresh preserves the cached snapshot until relay history is replayed',
+  );
+
+  my $replayed = Overnet::Core::Nostr->publish_event(
+    relay_url => $relay_url,
+    event     => $first_event,
+  );
+  ok $replayed->{accepted}, 'restarted relay accepts replay of the pre-restart event';
+
+  my $second_event = _signed_text_note(
+    key        => $author_key,
+    created_at => 1_744_301_031,
+    content    => 'after-restart',
+  );
+  my $recovered = Overnet::Core::Nostr->publish_event(
+    relay_url => $relay_url,
+    event     => $second_event,
+  );
+  ok $recovered->{accepted}, 'restarted relay accepts a new post-restart event';
+
+  my $notifications = _drain_until_notification(
+    runtime    => $runtime,
+    session_id => 'session-nostr-restart',
+    timeout_ms => 1_500,
+  );
+  is scalar @{$notifications}, 1, 'relay restart queues one notification for the truly new event';
+  is $notifications->[0]{params}{data}{id}, $second_event->{id},
+    'relay replay does not redeliver the already-seen event';
+
+  $snapshot = $services->dispatch_request(
+    'nostr.read_subscription_snapshot',
+    {
+      subscription_id => 'relay-sub-restart',
+      refresh         => 1,
+    },
+    permissions => ['nostr.read'],
+    session_id  => 'session-nostr-restart',
+  );
+  ok(
+    scalar(grep { ref($_) eq 'HASH' && (($_->{id} || '') eq $first_event->{id}) } @{$snapshot->{events}}),
+    'refreshed snapshot still includes the replayed pre-restart event',
+  );
+  ok(
+    scalar(grep { ref($_) eq 'HASH' && (($_->{id} || '') eq $second_event->{id}) } @{$snapshot->{events}}),
+    'refreshed snapshot includes the new post-restart event',
+  );
+
+  is scalar @{$runtime->drain_runtime_notifications('session-nostr-restart')}, 0,
+    'repeated refreshes after replay queue no duplicate notifications';
+
+  my $closed = $services->dispatch_request(
+    'nostr.close_subscription',
+    {
+      subscription_id => 'relay-sub-restart',
+    },
+    permissions => ['nostr.read'],
+    session_id  => 'session-nostr-restart',
+  );
+  ok $closed->{closed}, 'nostr.close_subscription still closes a post-restart subscription';
+
+  _stop_authoritative_nip29_relay($relay);
+};
+
 done_testing;
