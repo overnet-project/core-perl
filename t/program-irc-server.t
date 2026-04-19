@@ -30,6 +30,18 @@ my $program_path = File::Spec->catfile($FindBin::Bin, '..', '..', 'overnet-progr
 my $irc_lib = File::Spec->catdir($FindBin::Bin, '..', '..', 'overnet-adapter-irc', 'lib');
 my $spec_irc_dir = File::Spec->catdir($FindBin::Bin, '..', '..', 'overnet-spec', 'fixtures', 'irc');
 my $authoritative_relay_script = File::Spec->catfile($FindBin::Bin, 'authoritative-nip29-relay.pl');
+my $program_irc_server_group = $ENV{OVERNET_IRC_SERVER_GROUP} || 'base';
+
+die "Unknown OVERNET_IRC_SERVER_GROUP: $program_irc_server_group\n"
+  unless $program_irc_server_group eq 'base'
+    || $program_irc_server_group eq 'relay'
+    || $program_irc_server_group eq 'all';
+
+sub _run_program_irc_server_group {
+  my ($group) = @_;
+  return 1 if $program_irc_server_group eq 'all';
+  return $program_irc_server_group eq $group;
+}
 
 sub _load_irc_fixture {
   my ($name) = @_;
@@ -1359,8 +1371,8 @@ subtest 'IRC server program supports a minimal IRC client compatibility slice' =
   my $bob   = _connect_irc_client($ready_details->{listen_port});
 
   _write_client_line($alice, 'CAP LS 302');
-  is _read_client_line($alice, 1_000), ':overnet.irc.local CAP * LS :overnet-e2ee',
-    'CAP LS advertises the overnet-e2ee capability';
+  is _read_client_line($alice, 1_000), ':overnet.irc.local CAP * LS :message-tags server-time overnet-e2ee',
+    'CAP LS advertises the IRCv3 tag/time capabilities alongside overnet-e2ee';
 
   _write_client_line($alice, 'CAP REQ :overnet-e2ee');
   is _read_client_line($alice, 1_000), ':overnet.irc.local CAP * ACK :overnet-e2ee',
@@ -2362,8 +2374,8 @@ subtest 'IRC server program blind-routes endpoint-blind E2E direct messages for 
   my $bob_key = Net::Nostr::Key->new;
 
   _write_client_line($alice, 'CAP LS 302');
-  is _read_client_line($alice, 1_000), ':overnet.irc.local CAP * LS :overnet-e2ee',
-    'alice sees overnet-e2ee in CAP LS';
+  is _read_client_line($alice, 1_000), ':overnet.irc.local CAP * LS :message-tags server-time overnet-e2ee',
+    'alice sees IRCv3 tag/time capabilities alongside overnet-e2ee in CAP LS';
   _write_client_line($alice, 'CAP REQ :overnet-e2ee');
   is _read_client_line($alice, 1_000), ':overnet.irc.local CAP * ACK :overnet-e2ee',
     'alice CAP REQ overnet-e2ee is acknowledged';
@@ -2384,8 +2396,8 @@ subtest 'IRC server program blind-routes endpoint-blind E2E direct messages for 
     'alice registers her E2EE pubkey';
 
   _write_client_line($bob, 'CAP LS 302');
-  is _read_client_line($bob, 1_000), ':overnet.irc.local CAP * LS :overnet-e2ee',
-    'bob sees overnet-e2ee in CAP LS';
+  is _read_client_line($bob, 1_000), ':overnet.irc.local CAP * LS :message-tags server-time overnet-e2ee',
+    'bob sees IRCv3 tag/time capabilities alongside overnet-e2ee in CAP LS';
   _write_client_line($bob, 'CAP REQ :overnet-e2ee');
   is _read_client_line($bob, 1_000), ':overnet.irc.local CAP * ACK :overnet-e2ee',
     'bob CAP REQ overnet-e2ee is acknowledged';
@@ -3245,8 +3257,8 @@ subtest 'IRC server program authenticates authoritative clients through SASL NOS
 
   _write_client_line($alice, 'CAP LS 302');
   like _read_client_line($alice, 1_000),
-    qr/\A:\Q$server_name\E CAP \* LS :(?:overnet-e2ee sasl|sasl overnet-e2ee|sasl)\z/,
-    'authoritative SASL server advertises the sasl capability';
+    qr/\A:\Q$server_name\E CAP \* LS :message-tags server-time overnet-e2ee sasl\z/,
+    'authoritative SASL server advertises IRCv3 tag/time plus sasl capabilities';
 
   _write_client_line($alice, 'CAP REQ :sasl');
   is _read_client_line($alice, 1_000), ":$server_name CAP * ACK :sasl",
@@ -4241,6 +4253,7 @@ subtest 'IRC server program admits an invited user to a closed authoritative cha
   close $carol->{socket};
 };
 
+if (_run_program_irc_server_group('relay')) {
 subtest 'IRC server program establishes authoritative relay delegation through SASL NOSTR' => sub {
   my $network = 'irc.authority.sasl.relay.test';
   my $channel = '#ops';
@@ -4401,8 +4414,8 @@ subtest 'IRC server program establishes authoritative relay delegation through S
 
   _write_client_line($alice, 'CAP LS 302');
   like _read_client_line($alice, 1_000),
-    qr/\A:\Q$server_name\E CAP \* LS :(?:overnet-e2ee sasl|sasl overnet-e2ee|sasl)\z/,
-    'authoritative SASL relay server advertises the sasl capability';
+    qr/\A:\Q$server_name\E CAP \* LS :message-tags server-time overnet-e2ee sasl\z/,
+    'authoritative SASL relay server advertises IRCv3 tag/time plus sasl capabilities';
 
   _write_client_line($alice, 'CAP REQ :sasl');
   is _read_client_line($alice, 1_000), ":$server_name CAP * ACK :sasl",
@@ -4577,7 +4590,9 @@ subtest 'IRC server program establishes authoritative relay delegation through S
   close $alice->{socket};
   _stop_authoritative_nip29_relay($relay);
 };
+}
 
+if (_run_program_irc_server_group('relay')) {
 subtest 'IRC server program relay-publishes authoritative NIP-29 writes across two instances' => sub {
   my $network = 'irc.authority.relay.test';
   my $channel = '#ops';
@@ -5697,7 +5712,9 @@ subtest 'IRC server program relay-publishes authoritative NIP-29 writes across t
   close $bob_b->{socket};
   _stop_authoritative_nip29_relay($relay);
 };
+}
 
+if (_run_program_irc_server_group('relay')) {
 subtest 'IRC server program creates and discovers authoritative hosted channels across two instances' => sub {
   my $network = 'irc.authority.create.test';
   my $channel = '#Fresh';
@@ -6224,7 +6241,9 @@ subtest 'IRC server program creates and discovers authoritative hosted channels 
   close $bob_b->{socket};
   _stop_authoritative_nip29_relay($relay);
 };
+}
 
+if (_run_program_irc_server_group('relay')) {
 subtest 'IRC server program tombstones authoritative hosted channels across two instances' => sub {
   my $network = 'irc.authority.delete.test';
   my $channel = '#Gone';
@@ -6647,7 +6666,9 @@ subtest 'IRC server program tombstones authoritative hosted channels across two 
   close $bob_b->{socket};
   _stop_authoritative_nip29_relay($relay);
 };
+}
 
+if (_run_program_irc_server_group('relay')) {
 subtest 'IRC server program reactivates tombstoned authoritative hosted channels across two instances' => sub {
   my $network = 'irc.authority.undelete.test';
   my $channel = '#Return';
@@ -7169,7 +7190,9 @@ subtest 'IRC server program reactivates tombstoned authoritative hosted channels
   close $bob_b->{socket};
   _stop_authoritative_nip29_relay($relay);
 };
+}
 
+if (_run_program_irc_server_group('relay')) {
 subtest 'IRC server program enforces authoritative bans across two instances' => sub {
   my $network = 'irc.authority.ban.test';
   my $channel = '#ops';
@@ -7671,6 +7694,7 @@ subtest 'IRC server program enforces authoritative bans across two instances' =>
   close $bob_b->{socket};
   _stop_authoritative_nip29_relay($relay);
 };
+}
 
 subtest 'IRC program entrypoints do not import Net::Nostr directly' => sub {
   my @paths = (

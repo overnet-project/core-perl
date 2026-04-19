@@ -48,7 +48,7 @@ can_ok(
   }
 
   sub _supported_capabilities {
-    return qw(sasl overnet-e2ee);
+    return ('message-tags', 'server-time', 'overnet-e2ee', 'sasl');
   }
 
   sub _send_client_line {
@@ -84,10 +84,31 @@ ok(
 is_deeply(
   $mock->called,
   [
-    [ client_line => 1, ':irc.example.test CAP * LS :sasl overnet-e2ee' ],
+    [ client_line => 1, ':irc.example.test CAP * LS :message-tags server-time overnet-e2ee sasl' ],
   ],
   'CAP delegation preserves capability advertisement rendering',
 );
+
+is_deeply(
+  [ Local::MockAuthCommandServer->new->_supported_capabilities ],
+  [ 'message-tags', 'server-time', 'overnet-e2ee', 'sasl' ],
+  'mock capability order matches the server capability order used by compatibility tests',
+);
+
+$mock = Local::MockAuthCommandServer->new;
+ok(
+  Overnet::Program::IRC::Command::Auth::handle_cap($mock, 1, ['REQ', 'server-time']),
+  'auth command module handles CAP REQ delegation for server-time',
+);
+is_deeply(
+  $mock->called,
+  [
+    [ client_line => 1, ':irc.example.test CAP * ACK :server-time' ],
+  ],
+  'CAP REQ acknowledges server-time',
+);
+ok($mock->{clients}{1}{capabilities}{'server-time'}, 'server-time capability is enabled');
+ok($mock->{clients}{1}{capabilities}{'message-tags'}, 'server-time also enables message-tags');
 
 $mock = Local::MockAuthCommandServer->new;
 ok(
