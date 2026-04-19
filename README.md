@@ -47,7 +47,13 @@ Run the core test suite with:
 /home/_73/.local/bin/plx prove -Ilib -Ilocal/lib/perl5 -r t
 ```
 
-Run the IRC verification path with:
+Run the default release gate with:
+
+```bash
+/home/_73/.local/bin/plx perl -Ilib -Ilocal/lib/perl5 bin/overnet-release-gate.pl
+```
+
+The default release gate runs the IRC verification path:
 
 ```bash
 /home/_73/.local/bin/plx prove -Ilib -Ilocal/lib/perl5 \

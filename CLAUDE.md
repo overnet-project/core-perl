@@ -51,6 +51,7 @@ Useful commands:
 
 ```bash
 /home/_73/.local/bin/plx prove -Ilib -Ilocal/lib/perl5 -v t/validator.t
+/home/_73/.local/bin/plx perl -Ilib -Ilocal/lib/perl5 bin/overnet-release-gate.pl
 /home/_73/.local/bin/plx prove -Ilib -Ilocal/lib/perl5 \
   t/spec-conformance-irc-server.t \
   t/program-irc-server.t \
@@ -58,7 +59,9 @@ Useful commands:
 /home/_73/.local/bin/plx perl -Ilib -Ilocal/lib/perl5 t/generate-fixtures.pl
 ```
 
-The IRC verification path is:
+The default release gate is `bin/overnet-release-gate.pl`.
+
+It runs the IRC verification path:
 
 - `t/spec-conformance-irc-server.t`
 - `t/program-irc-server.t`

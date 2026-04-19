@@ -8,6 +8,7 @@ use File::Basename qw(dirname);
 use File::Spec;
 use JSON::PP qw(decode_json);
 use Overnet::Core::Nostr;
+use Scalar::Util qw(reftype);
 use Test::More;
 
 our @EXPORT_OK = qw(
@@ -192,6 +193,10 @@ sub run_irc_server_conformance {
     family => 'irc-server-authoritative',
     runner => \&_run_irc_server_fixture,
   );
+  _run_fixture_family(
+    family => 'irc-server-recovery',
+    runner => \&_run_irc_server_fixture,
+  );
 }
 
 sub _run_fixture_family {
@@ -216,6 +221,7 @@ sub _run_irc_server_fixture {
   my $expected = $fixture->{expected} || {};
   my ($server, $client_id) = _build_irc_server_harness($input);
   my $client = $server->{clients}{$client_id};
+  my @operation_results;
 
   if (ref($input->{account_update}) eq 'HASH') {
     require Overnet::Program::IRC::Command::Auth;
@@ -241,6 +247,18 @@ sub _run_irc_server_fixture {
   if (ref($input->{client}{received_lines}) eq 'ARRAY') {
     for my $line (@{$input->{client}{received_lines}}) {
       $server->_handle_client_line($client_id, $line);
+    }
+  }
+
+  if (ref($input->{operations}) eq 'ARRAY') {
+    for my $operation (@{$input->{operations}}) {
+      push @operation_results, _plain_data(
+        _run_irc_server_operation(
+          $server,
+          $client_id,
+          $operation,
+        )
+      );
     }
   }
 
@@ -352,6 +370,169 @@ sub _run_irc_server_fixture {
   if (exists $expected->{rendered}) {
     is((ref($render_result) eq 'HASH') ? 1 : 0, $expected->{rendered} ? 1 : 0, 'rendered flag matches fixture');
   }
+
+  _assertions(
+    {
+      server  => _plain_data({
+        authoritative_discovered_channels => $server->{authoritative_discovered_channels},
+        authoritative_channel_cache       => $server->{authoritative_channel_cache},
+        authoritative_subscription_channels => $server->{authoritative_subscription_channels},
+      }),
+      results => \@operation_results,
+      client  => _plain_data($client),
+      render  => _plain_data($render_result),
+    },
+    $expected->{assertions},
+  );
+}
+
+sub _run_irc_server_operation {
+  my ($server, $client_id, $operation) = @_;
+  die "fixture operation must be an object\n"
+    unless ref($operation) eq 'HASH';
+
+  my $type = $operation->{type} || '';
+  if ($type eq 'refresh_authoritative_discovery_cache') {
+    return {
+      count => $server->_refresh_authoritative_discovery_cache(
+        ($operation->{refresh} ? (refresh => 1) : ()),
+      ),
+    };
+  }
+
+  if ($type eq 'refresh_authoritative_channel_cache') {
+    return {
+      events => $server->_refresh_authoritative_nip29_channel_cache(
+        $operation->{channel},
+        ($operation->{refresh} ? (refresh => 1) : ()),
+      ),
+    };
+  }
+
+  if ($type eq 'set_authoritative_channel_events') {
+    my $channel = $operation->{channel};
+    my $canonical = $server->_canonical_channel_name($channel);
+    die "operation channel is required\n"
+      unless defined $canonical;
+
+    my $events = _build_authoritative_events(
+      session_config => $server->{config}{adapter_config},
+      network        => $server->{config}{network},
+      target         => $canonical,
+      scenario       => $operation->{scenario} || {},
+    );
+    $server->{_spec_authoritative_channels}{$canonical} ||= {};
+    $server->{_spec_authoritative_channels}{$canonical}{events} = $events;
+    if (exists $operation->{discovered}) {
+      if ($operation->{discovered}) {
+        $server->{authoritative_discovered_channels}{$canonical} ||= {
+          channel_name => $canonical,
+        };
+      } else {
+        delete $server->{authoritative_discovered_channels}{$canonical};
+      }
+    }
+    return {
+      channel => $canonical,
+      events  => $events,
+    };
+  }
+
+  if ($type eq 'ensure_authoritative_discovery_subscription') {
+    return {
+      subscription_id => $server->_ensure_authoritative_discovery_subscription,
+    };
+  }
+
+  if ($type eq 'ensure_authoritative_channel_subscription') {
+    return {
+      subscription_ids => $server->_ensure_authoritative_channel_subscription($operation->{channel}),
+    };
+  }
+
+  if ($type eq 'handle_subscription_event') {
+    my $event = ref($operation->{event}) eq 'HASH'
+      ? _build_authoritative_event_hash(
+          group_id => scalar(($server->_authoritative_group_binding($operation->{channel}))[1]),
+          spec     => $operation->{event},
+        )
+      : $operation->{event};
+    my $subscription_id = _subscription_id_for_fixture_operation($server, $operation);
+    my $count = $server->_handle_subscription_event({
+      subscription_id => $subscription_id,
+      item_type       => 'nostr.event',
+      data            => $event,
+    });
+    return {
+      subscription_id => $subscription_id,
+      count           => $count,
+      event           => $event,
+    };
+  }
+
+  if ($type eq 'simulate_restart') {
+    delete $server->{authoritative_grant_subscription_id};
+    delete $server->{authoritative_discovery_subscription_id};
+    delete $server->{authoritative_grant_cache};
+    delete $server->{authoritative_discovered_channels};
+    delete $server->{authoritative_channel_cache};
+    $server->{authoritative_subscription_channels} = {};
+    $server->{suppress_subscription_event_ids} = {};
+    for my $client (values %{$server->{clients} || {}}) {
+      next unless ref($client) eq 'HASH';
+      delete $client->{authority_seen_invites};
+      delete $client->{authority_seen_requests};
+    }
+    return { restarted => 1 };
+  }
+
+  if ($type eq 'derive_authoritative_channel_view') {
+    return $server->_derive_authoritative_channel_view(
+      $operation->{channel},
+      (defined($operation->{actor_pubkey}) ? (actor_pubkey => $operation->{actor_pubkey}) : ()),
+      (defined($operation->{actor_mask}) ? (actor_mask => $operation->{actor_mask}) : ()),
+      ($operation->{force} ? (force => 1) : ()),
+    );
+  }
+
+  if ($type eq 'derive_authoritative_join_admission') {
+    return $server->_derive_authoritative_join_admission(
+      $operation->{channel},
+      (defined($operation->{actor_pubkey}) ? (actor_pubkey => $operation->{actor_pubkey}) : ()),
+      (defined($operation->{actor_mask}) ? (actor_mask => $operation->{actor_mask}) : ()),
+      ($operation->{force} ? (force => 1) : ()),
+      (defined($operation->{join_key}) ? (extra_input => { join_key => $operation->{join_key} }) : ()),
+    );
+  }
+
+  if ($type eq 'line') {
+    $server->_handle_client_line($client_id, $operation->{line});
+    return { line => $operation->{line} };
+  }
+
+  die "Unsupported IRC server fixture operation: $type\n";
+}
+
+sub _subscription_id_for_fixture_operation {
+  my ($server, $operation) = @_;
+  my $subscription = $operation->{subscription} || '';
+
+  if ($subscription eq 'discovery') {
+    return $server->_authoritative_discovery_subscription_id;
+  }
+
+  if ($subscription eq 'grant') {
+    return $server->_authoritative_grant_subscription_id;
+  }
+
+  if ($subscription eq 'channel_meta' || $subscription eq 'channel_control') {
+    my @subscription_ids = $server->_authoritative_channel_subscription_ids($operation->{channel});
+    return $subscription eq 'channel_meta'
+      ? $subscription_ids[0]
+      : $subscription_ids[1];
+  }
+
+  return $operation->{subscription_id};
 }
 
 sub _build_irc_server_harness {
@@ -368,11 +549,19 @@ sub _build_irc_server_harness {
   my $adapter_config = ref($server_view->{adapter_config}) eq 'HASH'
     ? { %{$server_view->{adapter_config}} }
     : {};
+  my $authority_relay = ref($server_view->{authority_relay}) eq 'HASH'
+    ? { %{$server_view->{authority_relay}} }
+    : (
+        ref($adapter_config->{authority_relay}) eq 'HASH'
+          ? { %{$adapter_config->{authority_relay}} }
+          : undef
+      );
 
   $server->{config} = {
     network       => $server_view->{network} || 'local',
     server_name   => $server_view->{server_name} || 'overnet.irc.local',
     adapter_config => $adapter_config,
+    (ref($authority_relay) eq 'HASH' ? (authority_relay => $authority_relay) : ()),
     use_server_capabilities => $server_view->{use_server_capabilities} ? 1 : 0,
     supported_capabilities => ref($server_view->{supported_capabilities}) eq 'ARRAY'
       ? [ @{$server_view->{supported_capabilities}} ]
@@ -383,6 +572,7 @@ sub _build_irc_server_harness {
   $server->{_spec_lines} = {};
   $server->{_spec_emits} = [];
   $server->{_spec_authoritative_channels} = {};
+  $server->{_spec_nostr_subscriptions} = {};
 
   my $client_id = 1;
   my $client = {
@@ -875,8 +1065,32 @@ sub _assertions {
       next;
     }
 
+    if ($assertion->{missing}) {
+      ok(!defined($value), "$path is missing");
+      next;
+    }
+
     fail("Unsupported assertion shape for path $path");
   }
+}
+
+sub _plain_data {
+  my ($value) = @_;
+  return undef unless defined $value;
+  return $value unless ref($value);
+
+  my $type = reftype($value) || '';
+  if ($type eq 'HASH') {
+    return {
+      map { $_ => _plain_data($value->{$_}) }
+      sort keys %{$value}
+    };
+  }
+  if ($type eq 'ARRAY') {
+    return [ map { _plain_data($_) } @{$value} ];
+  }
+
+  return "$value";
 }
 
 sub _path_get {
@@ -978,9 +1192,16 @@ sub _ensure_client_dm_subscription { return 1 }
 sub _ensure_channel_subscription { return 1 }
 sub _close_channel_subscription { return 1 }
 sub _close_client_dm_subscription { return 1 }
-sub _ensure_authoritative_discovery_subscription { return 1 }
-sub _refresh_authoritative_discovery_cache { return 1 }
-sub _ensure_authoritative_channel_subscription { return 1 }
+sub _refresh_authoritative_discovery_cache {
+  my ($self, %args) = @_;
+  return 1 unless $self->_authority_relay_enabled;
+  return $self->SUPER::_refresh_authoritative_discovery_cache(%args);
+}
+sub _ensure_authoritative_channel_subscription {
+  my ($self, $channel) = @_;
+  return 1 unless $self->_authority_relay_enabled;
+  return $self->SUPER::_ensure_authoritative_channel_subscription($channel);
+}
 
 sub _sign_candidate_event {
   my ($self, $candidate) = @_;
@@ -1027,15 +1248,54 @@ sub _request {
   }
 
   if ($method eq 'subscriptions.open' || $method eq 'subscriptions.close' || $method eq 'nostr.open_subscription' || $method eq 'nostr.close_subscription') {
+    if ($method eq 'nostr.open_subscription') {
+      $self->{_spec_nostr_subscriptions}{$params->{subscription_id}} = {
+        filters => Overnet::Test::SpecConformance::_plain_data($params->{filters} || []),
+      };
+      return {
+        subscription_id => $params->{subscription_id},
+        events => _spec_nostr_events_for_subscription(
+          $self,
+          $params->{subscription_id},
+        ),
+      };
+    }
+    if ($method eq 'nostr.close_subscription') {
+      delete $self->{_spec_nostr_subscriptions}{$params->{subscription_id}};
+      return { closed => JSON::PP::true };
+    }
     return {};
   }
 
   if ($method eq 'nostr.read_subscription_snapshot' || $method eq 'nostr.query_events') {
-    return { events => [] };
+    return {
+      events => $method eq 'nostr.query_events'
+        ? _spec_nostr_events_for_filters($self, $params->{filters})
+        : _spec_nostr_events_for_subscription($self, $params->{subscription_id}),
+    };
   }
 
   if ($method eq 'nostr.publish_event') {
-    return { accepted => JSON::PP::true };
+    my $event = $params->{event};
+    if (ref($event) eq 'HASH') {
+      my $channel = Overnet::Authority::HostedChannel::channel_name_from_group_event(
+        network => $self->{config}{network},
+        event   => $event,
+      );
+      if (defined $channel) {
+        my $canonical = $self->_canonical_channel_name($channel);
+        $self->{_spec_authoritative_channels}{$canonical} ||= {};
+        my $events = $self->{_spec_authoritative_channels}{$canonical}{events} ||= [];
+        push @{$events}, $event
+          unless defined($event->{id}) && grep {
+            ref($_) eq 'HASH' && defined($_->{id}) && $_->{id} eq $event->{id}
+          } @{$events};
+      }
+    }
+    return {
+      accepted => JSON::PP::true,
+      (defined($event->{id}) ? (event_id => $event->{id}) : ()),
+    };
   }
 
   return {};
@@ -1070,6 +1330,8 @@ sub _normalize_adapter_result_for_harness {
 
 sub _read_authoritative_nip29_events {
   my ($self, $channel, %args) = @_;
+  return $self->SUPER::_read_authoritative_nip29_events($channel, %args)
+    if $self->_authority_relay_enabled;
   my $canonical = $self->_canonical_channel_name($channel);
   my $entry = $self->{_spec_authoritative_channels}{$canonical} || {};
   return [ @{$entry->{events} || []} ];
@@ -1077,6 +1339,8 @@ sub _read_authoritative_nip29_events {
 
 sub _refresh_authoritative_nip29_channel_cache {
   my ($self, $channel, %args) = @_;
+  return $self->SUPER::_refresh_authoritative_nip29_channel_cache($channel, %args)
+    if $self->_authority_relay_enabled;
   my $canonical = $self->_canonical_channel_name($channel);
   my $events = $self->_read_authoritative_nip29_events($canonical, %args);
   $self->{authoritative_channel_cache}{$canonical} = {
@@ -1084,6 +1348,76 @@ sub _refresh_authoritative_nip29_channel_cache {
     view   => $self->_derive_authoritative_channel_view_from_events($canonical, $events),
   };
   return $events;
+}
+
+sub _ensure_authoritative_discovery_subscription {
+  my ($self) = @_;
+  return 1 unless $self->_authority_relay_enabled;
+  return $self->SUPER::_ensure_authoritative_discovery_subscription();
+}
+
+sub _spec_nostr_events_for_subscription {
+  my ($self, $subscription_id) = @_;
+  my $subscription = $self->{_spec_nostr_subscriptions}{$subscription_id} || {};
+  return _spec_nostr_events_for_filters($self, $subscription->{filters});
+}
+
+sub _spec_nostr_events_for_filters {
+  my ($self, $filters) = @_;
+  return [] unless ref($filters) eq 'ARRAY' && @{$filters};
+
+  my @events;
+  my %seen_ids;
+  for my $entry (values %{$self->{_spec_authoritative_channels} || {}}) {
+    for my $event (@{ref($entry) eq 'HASH' ? ($entry->{events} || []) : []}) {
+      next unless ref($event) eq 'HASH';
+      next unless _spec_event_matches_any_filter($event, $filters);
+      my $event_id = defined($event->{id}) && !ref($event->{id}) && length($event->{id})
+        ? $event->{id}
+        : undef;
+      next if defined($event_id) && $seen_ids{$event_id}++;
+      push @events, $event;
+    }
+  }
+
+  return $self->_sort_authoritative_events(\@events);
+}
+
+sub _spec_event_matches_any_filter {
+  my ($event, $filters) = @_;
+  for my $filter (@{$filters || []}) {
+    next unless ref($filter) eq 'HASH';
+    return 1 if _spec_event_matches_filter($event, $filter);
+  }
+  return 0;
+}
+
+sub _spec_event_matches_filter {
+  my ($event, $filter) = @_;
+  return 0 unless ref($event) eq 'HASH';
+  return 0 unless ref($filter) eq 'HASH';
+
+  if (ref($filter->{kinds}) eq 'ARRAY' && @{$filter->{kinds}}) {
+    return 0 unless grep { ($_ || 0) == ($event->{kind} || 0) } @{$filter->{kinds}};
+  }
+
+  for my $key (keys %{$filter}) {
+    next unless $key =~ /\A#(.+)\z/;
+    my $tag_name = $1;
+    my %allowed = map { $_ => 1 } @{$filter->{$key} || []};
+    my $matched = 0;
+    for my $tag (@{$event->{tags} || []}) {
+      next unless ref($tag) eq 'ARRAY' && @{$tag} >= 2;
+      next unless ($tag->[0] || '') eq $tag_name;
+      if ($allowed{$tag->[1]}) {
+        $matched = 1;
+        last;
+      }
+    }
+    return 0 unless $matched;
+  }
+
+  return 1;
 }
 
 1;
