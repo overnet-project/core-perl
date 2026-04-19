@@ -45,14 +45,24 @@ We care deeply about test quality. Cover:
 
 The core validator is fixture-driven. Every normative MUST or MUST NOT that the implementation enforces should have at least one corresponding fixture.
 
-Run tests with the pinned Perl toolchain from `.plx/perl.spec`. In this repo, that currently means using `/opt/perl-5.42/bin/perl` and `/opt/perl-5.42/bin/prove` directly when needed.
+Run tests with the pinned Perl toolchain from `.plx/perl.spec`. In this repo, use `plx` so the normal commands stay consistent.
 
 Useful commands:
 
 ```bash
-/opt/perl-5.42/bin/prove -Ilib -Ilocal/lib/perl5 -v t/validator.t
-/opt/perl-5.42/bin/perl -Ilib -Ilocal/lib/perl5 t/generate-fixtures.pl
+/home/_73/.local/bin/plx prove -Ilib -Ilocal/lib/perl5 -v t/validator.t
+/home/_73/.local/bin/plx prove -Ilib -Ilocal/lib/perl5 \
+  t/spec-conformance-irc-server.t \
+  t/program-irc-server.t \
+  t/program-irc-server-relay.t
+/home/_73/.local/bin/plx perl -Ilib -Ilocal/lib/perl5 t/generate-fixtures.pl
 ```
+
+The IRC verification path is:
+
+- `t/spec-conformance-irc-server.t`
+- `t/program-irc-server.t`
+- `t/program-irc-server-relay.t`
 
 After making changes, always run the relevant tests. If a fix introduces new failures, keep iterating until all relevant tests pass.
 

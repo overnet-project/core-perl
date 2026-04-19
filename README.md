@@ -23,6 +23,7 @@ Current implemented scope:
 - baseline removal authorization
 - baseline delegation semantics for delegated removal
 - shared fixture regeneration from `overnet-spec`
+- initial Overnet Program Runtime module scaffolding
 
 This repository is intentionally narrow right now. It is acting as a conformance gate for the currently implemented core event model.
 
@@ -34,6 +35,7 @@ This repository does not currently implement:
 - a full client stack
 - application profiles
 - adapter implementations
+- a complete Overnet Program Runtime behavior surface
 
 Those concerns are expected to live in companion repositories.
 
@@ -42,13 +44,22 @@ Those concerns are expected to live in companion repositories.
 Run the core test suite with:
 
 ```bash
-/opt/perl-5.42/bin/prove -Ilib -Ilocal/lib/perl5 -r t
+/home/_73/.local/bin/plx prove -Ilib -Ilocal/lib/perl5 -r t
+```
+
+Run the IRC verification path with:
+
+```bash
+/home/_73/.local/bin/plx prove -Ilib -Ilocal/lib/perl5 \
+  t/spec-conformance-irc-server.t \
+  t/program-irc-server.t \
+  t/program-irc-server-relay.t
 ```
 
 Regenerate shared fixtures from `overnet-spec` with:
 
 ```bash
-/opt/perl-5.42/bin/perl -Ilib -Ilocal/lib/perl5 t/generate-fixtures.pl
+/home/_73/.local/bin/plx perl -Ilib -Ilocal/lib/perl5 t/generate-fixtures.pl
 ```
 
 ## Notes
