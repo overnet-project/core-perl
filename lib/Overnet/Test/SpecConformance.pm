@@ -217,6 +217,27 @@ sub _run_irc_server_fixture {
   my ($server, $client_id) = _build_irc_server_harness($input);
   my $client = $server->{clients}{$client_id};
 
+  if (ref($input->{account_update}) eq 'HASH') {
+    require Overnet::Program::IRC::Command::Auth;
+
+    my $target_nick = $input->{account_update}{nick};
+    $target_nick = $client->{nick}
+      unless defined($target_nick) && !ref($target_nick) && length($target_nick);
+    my $target_client = $server->_client_for_current_nick($target_nick);
+    die "No fixture client found for account_update nick $target_nick\n"
+      unless ref($target_client) eq 'HASH';
+
+    Overnet::Program::IRC::Command::Auth::set_authoritative_account(
+      $server,
+      $target_client,
+      (
+        exists($input->{account_update}{account})
+          ? (account => $input->{account_update}{account})
+          : ()
+      ),
+    );
+  }
+
   if (ref($input->{client}{received_lines}) eq 'ARRAY') {
     for my $line (@{$input->{client}{received_lines}}) {
       $server->_handle_client_line($client_id, $line);
@@ -272,6 +293,17 @@ sub _run_irc_server_fixture {
     ok(
       _contains_lines_in_order($lines, $expected->{lines}),
       'rendered lines contain the expected sequence',
+    );
+  }
+
+  if (ref($expected->{decorated_lines}) eq 'ARRAY') {
+    my @decorated;
+    if (ref($render_result) eq 'HASH' && defined($render_result->{line})) {
+      push @decorated, $server->_decorate_outbound_line_for_client($client, $render_result->{line});
+    }
+    ok(
+      _contains_lines_in_order(\@decorated, $expected->{decorated_lines}),
+      'decorated rendered lines contain the expected sequence',
     );
   }
 
@@ -341,6 +373,7 @@ sub _build_irc_server_harness {
     network       => $server_view->{network} || 'local',
     server_name   => $server_view->{server_name} || 'overnet.irc.local',
     adapter_config => $adapter_config,
+    use_server_capabilities => $server_view->{use_server_capabilities} ? 1 : 0,
     supported_capabilities => ref($server_view->{supported_capabilities}) eq 'ARRAY'
       ? [ @{$server_view->{supported_capabilities}} ]
       : [],
@@ -924,11 +957,16 @@ our @ISA = ('Overnet::Program::IRC::Server');
 
 sub _supported_capabilities {
   my ($self) = @_;
+  return $self->SUPER::_supported_capabilities()
+    if $self->{config}{use_server_capabilities};
   return @{$self->{config}{supported_capabilities} || []};
 }
 
 sub _send_client_line {
   my ($self, $client_id, $line) = @_;
+  my $client = $self->{clients}{$client_id};
+  $line = $self->_decorate_outbound_line_for_client($client, $line)
+    if ref($client) eq 'HASH';
   push @{$self->{_spec_lines}{$client_id}}, $line;
   return 1;
 }

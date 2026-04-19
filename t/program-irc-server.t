@@ -3257,8 +3257,8 @@ subtest 'IRC server program authenticates authoritative clients through SASL NOS
 
   _write_client_line($alice, 'CAP LS 302');
   like _read_client_line($alice, 1_000),
-    qr/\A:\Q$server_name\E CAP \* LS :message-tags server-time overnet-e2ee sasl\z/,
-    'authoritative SASL server advertises IRCv3 tag/time plus sasl capabilities';
+    qr/\A:\Q$server_name\E CAP \* LS :message-tags server-time overnet-e2ee account-tag account-notify sasl\z/,
+    'authoritative SASL server advertises IRCv3 tag/time, account, and sasl capabilities';
 
   _write_client_line($alice, 'CAP REQ :sasl');
   is _read_client_line($alice, 1_000), ":$server_name CAP * ACK :sasl",
@@ -4414,8 +4414,8 @@ subtest 'IRC server program establishes authoritative relay delegation through S
 
   _write_client_line($alice, 'CAP LS 302');
   like _read_client_line($alice, 1_000),
-    qr/\A:\Q$server_name\E CAP \* LS :message-tags server-time overnet-e2ee sasl\z/,
-    'authoritative SASL relay server advertises IRCv3 tag/time plus sasl capabilities';
+    qr/\A:\Q$server_name\E CAP \* LS :message-tags server-time overnet-e2ee account-tag account-notify sasl\z/,
+    'authoritative SASL relay server advertises IRCv3 tag/time, account, and sasl capabilities';
 
   _write_client_line($alice, 'CAP REQ :sasl');
   is _read_client_line($alice, 1_000), ":$server_name CAP * ACK :sasl",

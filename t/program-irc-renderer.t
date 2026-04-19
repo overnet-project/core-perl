@@ -23,6 +23,7 @@ can_ok(
     cannot_join_channel_line
     ban_list_entry_line
     end_of_ban_list_line
+    account_notify_line
     nick_in_use_line
   ),
 );
@@ -94,6 +95,28 @@ is(
   ),
   ':overnet.irc.local 368 alice #overnet :End of channel ban list',
   'renderer formats an end-of-ban-list line',
+);
+
+is(
+  Overnet::Program::IRC::Renderer::account_notify_line(
+    nick     => 'bob',
+    username => 'bob',
+    host     => '127.0.0.1',
+    account  => ('b' x 64),
+  ),
+  ':bob!bob@127.0.0.1 ACCOUNT ' . ('b' x 64),
+  'renderer formats ACCOUNT login notifications',
+);
+
+is(
+  Overnet::Program::IRC::Renderer::account_notify_line(
+    nick     => 'bob',
+    username => 'bob',
+    host     => '127.0.0.1',
+    account  => undef,
+  ),
+  ':bob!bob@127.0.0.1 ACCOUNT *',
+  'renderer formats ACCOUNT logout notifications',
 );
 
 is(

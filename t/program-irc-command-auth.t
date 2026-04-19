@@ -19,6 +19,7 @@ can_ok(
     reset_sasl_state
     apply_authoritative_auth_validation
     clear_authoritative_binding
+    set_authoritative_account
     ensure_authoritative_delegate_offer
     accept_authoritative_delegate_event
   ),
@@ -48,7 +49,7 @@ can_ok(
   }
 
   sub _supported_capabilities {
-    return ('message-tags', 'server-time', 'overnet-e2ee', 'sasl');
+    return ('message-tags', 'server-time', 'account-tag', 'account-notify', 'overnet-e2ee', 'sasl');
   }
 
   sub _send_client_line {
@@ -84,14 +85,14 @@ ok(
 is_deeply(
   $mock->called,
   [
-    [ client_line => 1, ':irc.example.test CAP * LS :message-tags server-time overnet-e2ee sasl' ],
+    [ client_line => 1, ':irc.example.test CAP * LS :message-tags server-time account-tag account-notify overnet-e2ee sasl' ],
   ],
   'CAP delegation preserves capability advertisement rendering',
 );
 
 is_deeply(
   [ Local::MockAuthCommandServer->new->_supported_capabilities ],
-  [ 'message-tags', 'server-time', 'overnet-e2ee', 'sasl' ],
+  [ 'message-tags', 'server-time', 'account-tag', 'account-notify', 'overnet-e2ee', 'sasl' ],
   'mock capability order matches the server capability order used by compatibility tests',
 );
 
@@ -109,6 +110,21 @@ is_deeply(
 );
 ok($mock->{clients}{1}{capabilities}{'server-time'}, 'server-time capability is enabled');
 ok($mock->{clients}{1}{capabilities}{'message-tags'}, 'server-time also enables message-tags');
+
+$mock = Local::MockAuthCommandServer->new;
+ok(
+  Overnet::Program::IRC::Command::Auth::handle_cap($mock, 1, ['REQ', 'account-tag']),
+  'auth command module handles CAP REQ delegation for account-tag',
+);
+is_deeply(
+  $mock->called,
+  [
+    [ client_line => 1, ':irc.example.test CAP * ACK :account-tag' ],
+  ],
+  'account-tag is ACKed when the capability is advertised',
+);
+ok($mock->{clients}{1}{capabilities}{'account-tag'}, 'account-tag capability is enabled');
+ok($mock->{clients}{1}{capabilities}{'message-tags'}, 'account-tag also enables message-tags');
 
 $mock = Local::MockAuthCommandServer->new;
 ok(
