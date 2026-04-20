@@ -19,6 +19,7 @@ use Test::More;
 use Time::HiRes qw(sleep time);
 
 my $relay_script = File::Spec->catfile($FindBin::Bin, '..', 'bin', 'overnet-relay.pl');
+my $relay_backup_script = File::Spec->catfile($FindBin::Bin, '..', 'bin', 'overnet-relay-backup.pl');
 
 sub _free_port {
   my $sock = IO::Socket::INET->new(
@@ -160,6 +161,32 @@ sub _decode_http_json_body {
   return decode_json($body);
 }
 
+sub _run_relay_backup {
+  my (%args) = @_;
+  my $stderr = gensym();
+  my $pid = open3(
+    undef,
+    my $stdout,
+    $stderr,
+    $^X,
+    $relay_backup_script,
+    '--source-store-file', $args{source_store_file},
+    '--backup-file', $args{backup_file},
+  );
+
+  my $stdout_text = do { local $/; <$stdout> };
+  my $stderr_text = do { local $/; <$stderr> };
+  close $stdout;
+  close $stderr;
+  waitpid($pid, 0);
+
+  return {
+    exit_code => $? >> 8,
+    stdout    => $stdout_text,
+    stderr    => $stderr_text,
+  };
+}
+
 sub _create_overnet_event {
   my (%args) = @_;
   my @tags = (
@@ -184,6 +211,7 @@ sub _create_overnet_event {
 }
 
 ok -f $relay_script, 'relay launcher script exists';
+ok -f $relay_backup_script, 'relay backup script exists';
 
 subtest 'relay process serves NIP-11 and supports live publish/query over WebSocket' => sub {
   my $port = _free_port();
@@ -433,6 +461,119 @@ subtest 'relay process persists live object state across restart and suppresses 
     } @received;
     is scalar @event_msgs, 1, 'persisted replay query still returns one matching event';
     is $event_msgs[0]->event->id, $state_event->id, 'persisted replay query returns the stored event id';
+  };
+  my $error = $@;
+  _stop_relay_process($proc) if $proc;
+  die $error if $error;
+};
+
+subtest 'relay backup script copies persisted relay state for restore' => sub {
+  my $tmpdir = tempdir(CLEANUP => 1);
+  my $store_file = File::Spec->catfile($tmpdir, 'relay-store.json');
+  my $backup_file = File::Spec->catfile($tmpdir, 'relay-store.backup.json');
+  my $port = _free_port();
+  my $proc = _spawn_relay_process(
+    port       => $port,
+    store_file => $store_file,
+  );
+  eval {
+    _wait_for_relay_ready($port);
+
+    my $author = Net::Nostr::Key->new;
+    my $state_event = _create_overnet_event(
+      key         => $author,
+      kind        => 37800,
+      event_type  => 'chat.topic',
+      object_type => 'chat.channel',
+      object_id   => 'irc:live:#backup',
+      body        => { text => 'Backed Up Topic' },
+    );
+
+    my $publish_cv = AnyEvent->condvar;
+    my $publish_ref = _connect_ws($port, sub {
+      my ($conn) = @_;
+      $conn->on(each_message => sub {
+        my (undef, $msg) = @_;
+        my $parsed = Net::Nostr::Message->parse($msg->body);
+        $publish_cv->send if $parsed->type eq 'OK' && $parsed->accepted;
+      });
+      $conn->send(Net::Nostr::Message->new(type => 'EVENT', event => $state_event)->serialize);
+    });
+    $publish_cv->recv;
+    ok $publish_ref, 'websocket client stays alive for backup publish';
+
+    _stop_relay_process($proc);
+    undef $proc;
+
+    my $backup = _run_relay_backup(
+      source_store_file => $store_file,
+      backup_file       => $backup_file,
+    );
+    is $backup->{exit_code}, 0, 'backup command succeeds';
+    ok -f $backup_file, 'backup command writes the backup file';
+
+    $proc = _spawn_relay_process(
+      port       => $port,
+      store_file => $backup_file,
+    );
+    _wait_for_relay_ready($port);
+
+    my $response = _http_request(
+      port => $port,
+      request => join(
+        "\r\n",
+        'GET /.well-known/overnet/v1/object?type=chat.channel&id=irc%3Alive%3A%23backup HTTP/1.1',
+        'Host: 127.0.0.1',
+        'Accept: application/json',
+        'Connection: close',
+        '',
+        '',
+      ),
+    );
+
+    like $response, qr/\AHTTP\/1\.[01] 200 /, 'restored backup object endpoint returns HTTP 200';
+    my $body = _decode_http_json_body($response);
+    is $body->{state_event}{id}, $state_event->id, 'restored backup serves the stored state event';
+
+    my @received;
+    my $cv = AnyEvent->condvar;
+    my $conn_ref = _connect_ws($port, sub {
+      my ($conn) = @_;
+      my $phase = 'publish';
+      $conn->on(each_message => sub {
+        my (undef, $msg) = @_;
+        my $parsed = Net::Nostr::Message->parse($msg->body);
+        push @received, $parsed;
+
+        if ($phase eq 'publish' && $parsed->type eq 'OK') {
+          $phase = 'query';
+          my $filter = Net::Nostr::Filter->new(
+            kinds => [37800],
+            '#t'  => ['chat.topic'],
+            '#o'  => ['chat.channel'],
+            '#d'  => ['irc:live:#backup'],
+          );
+          $conn->send(Net::Nostr::Message->new(
+            type            => 'REQ',
+            subscription_id => 'backup-sub',
+            filters         => [$filter],
+          )->serialize);
+          return;
+        }
+
+        $cv->send if $phase eq 'query' && $parsed->type eq 'EOSE';
+      });
+
+      $conn->send(Net::Nostr::Message->new(type => 'EVENT', event => $state_event)->serialize);
+    });
+    $cv->recv;
+    ok $conn_ref, 'websocket client stays alive for backup restore duplicate publish/query';
+
+    my @event_msgs = grep {
+      $_->type eq 'EVENT' && (($_->subscription_id || '') eq 'backup-sub')
+    } @received;
+    is scalar @event_msgs, 1, 'restored backup query returns one matching event';
+    is $event_msgs[0]->event->id, $state_event->id, 'restored backup query returns the stored event id';
   };
   my $error = $@;
   _stop_relay_process($proc) if $proc;

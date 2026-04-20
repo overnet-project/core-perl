@@ -24,6 +24,7 @@ use Overnet::Program::Runtime;
 my $program_path = File::Spec->catfile($FindBin::Bin, '..', '..', 'overnet-program-irc', 'bin', 'overnet-irc-server.pl');
 my $irc_lib = File::Spec->catdir($FindBin::Bin, '..', '..', 'overnet-adapter-irc', 'lib');
 my $authoritative_relay_script = File::Spec->catfile($FindBin::Bin, 'authoritative-nip29-relay.pl');
+my $relay_backup_script = File::Spec->catfile($FindBin::Bin, '..', 'bin', 'overnet-relay-backup.pl');
 
 sub _free_port {
   my $sock = IO::Socket::INET->new(
@@ -124,6 +125,32 @@ sub _publish_nostr_event_to_relay {
   my $result = $cv->recv;
   $client->disconnect;
   return $result;
+}
+
+sub _run_relay_backup {
+  my (%args) = @_;
+  my $stderr = gensym();
+  my $pid = open3(
+    undef,
+    my $stdout,
+    $stderr,
+    $^X,
+    $relay_backup_script,
+    '--source-store-file', $args{source_store_file},
+    '--backup-file', $args{backup_file},
+  );
+
+  my $stdout_text = do { local $/; <$stdout> };
+  my $stderr_text = do { local $/; <$stderr> };
+  close $stdout;
+  close $stderr;
+  waitpid($pid, 0);
+
+  return {
+    exit_code => $? >> 8,
+    stdout    => $stdout_text,
+    stderr    => $stderr_text,
+  };
 }
 
 sub _wait_for_ready_details {
@@ -894,6 +921,296 @@ subtest 'IRC server rebuilds authoritative channel state from persisted relay hi
   my $shutdown = $host->request_shutdown(reason => 'relay persistence authoritative test complete');
   is $shutdown->{state}, 'shutdown_complete', 'relay-persist authoritative server handles runtime shutdown';
   is $shutdown->{exit_code}, 0, 'relay-persist authoritative server exits cleanly';
+
+  close $alice->{socket};
+  _stop_authoritative_nip29_relay($relay);
+};
+
+subtest 'IRC server rebuilds authoritative channel state from backup-restored relay history' => sub {
+  my $network = 'irc.authority.relay.backup.test';
+  my $channel = '#ops';
+  my $group_host = 'groups.example.test';
+  my $group_id = 'ops';
+  my $relay_host_pump_ms = 200;
+  my $relay_propagation_timeout_ms = 5_000;
+  my $relay_port = _free_port();
+  my $relay_url = "ws://127.0.0.1:$relay_port";
+  my $server_name = 'overnet-backup.irc.local';
+  my $alice_key = Net::Nostr::Key->new;
+  my $alice_pubkey = $alice_key->pubkey_hex;
+  my $tmpdir = tempdir(CLEANUP => 1);
+  my $store_file = File::Spec->catfile($tmpdir, 'authoritative-relay-store.json');
+  my $backup_file = File::Spec->catfile($tmpdir, 'authoritative-relay-store.backup.json');
+
+  my $relay = _spawn_authoritative_nip29_relay(
+    port       => $relay_port,
+    relay_url  => $relay_url,
+    store_file => $store_file,
+  );
+  _wait_for_authoritative_nip29_relay_ready($relay_url);
+
+  my $seed_key = Net::Nostr::Key->new;
+  my $sign_group_event = sub {
+    my ($event) = @_;
+    return $seed_key->create_event(
+      kind       => $event->{kind},
+      created_at => $event->{created_at},
+      content    => $event->{content},
+      tags       => $event->{tags},
+    )->to_hash;
+  };
+
+  my $metadata = Net::Nostr::Group->metadata(
+    pubkey     => 'f' x 64,
+    group_id   => $group_id,
+    created_at => 1_744_302_200,
+    closed     => 1,
+  )->to_hash;
+  push @{$metadata->{tags}}, [ 'topic', 'Backed Up Topic' ];
+  push @{$metadata->{tags}}, [ 'ban', '*!*@blocked.example' ];
+  my $admins = Net::Nostr::Group->admins(
+    pubkey     => 'f' x 64,
+    group_id   => $group_id,
+    created_at => 1_744_302_201,
+    members    => [
+      {
+        pubkey => $alice_pubkey,
+        roles  => ['irc.operator'],
+      },
+    ],
+  )->to_hash;
+  my $members = Net::Nostr::Group->members(
+    pubkey     => 'f' x 64,
+    group_id   => $group_id,
+    created_at => 1_744_302_202,
+    members    => [ $alice_pubkey ],
+  )->to_hash;
+  my $roles = Net::Nostr::Group->roles(
+    pubkey     => 'f' x 64,
+    group_id   => $group_id,
+    created_at => 1_744_302_203,
+    roles      => [
+      { name => 'irc.operator' },
+      { name => 'irc.voice' },
+    ],
+  )->to_hash;
+
+  for my $event (map { $sign_group_event->($_) } ($metadata, $admins, $members, $roles)) {
+    my $published = _publish_nostr_event_to_relay(
+      relay_url => $relay_url,
+      event     => $event,
+    );
+    ok $published->{accepted}, 'relay accepts the pre-backup authoritative seed event';
+  }
+
+  _stop_authoritative_nip29_relay($relay);
+  undef $relay;
+
+  my $backup = _run_relay_backup(
+    source_store_file => $store_file,
+    backup_file       => $backup_file,
+  );
+  is $backup->{exit_code}, 0, 'relay backup command succeeds for authoritative state';
+  ok -f $backup_file, 'relay backup command writes the authoritative backup file';
+
+  $relay = _spawn_authoritative_nip29_relay(
+    port       => $relay_port,
+    relay_url  => $relay_url,
+    store_file => $backup_file,
+  );
+  _wait_for_authoritative_nip29_relay_ready($relay_url);
+
+  my $key_path = File::Spec->catfile($tmpdir, 'irc-server-authority-relay-backup-key.pem');
+  my $signing_key = Net::Nostr::Key->new;
+  $signing_key->save_privkey($key_path);
+
+  my $runtime = Overnet::Program::Runtime->new(
+    config => {
+      adapter_id       => 'irc.authoritative.relay.backup',
+      network          => $network,
+      listen_host      => '127.0.0.1',
+      listen_port      => 0,
+      server_name      => $server_name,
+      signing_key_file => $key_path,
+      adapter_config   => {
+        network           => $network,
+        authority_profile => 'nip29',
+        group_host        => $group_host,
+        channel_groups    => {
+          $channel => $group_id,
+        },
+      },
+      authority_relay => {
+        url              => $relay_url,
+        poll_interval_ms => 50,
+      },
+    },
+  );
+  ok $runtime->register_adapter_definition(
+    adapter_id => 'irc.authoritative.relay.backup',
+    definition => {
+      kind             => 'class',
+      class            => 'Overnet::Adapter::IRC',
+      lib_dirs         => [$irc_lib],
+      constructor_args => {},
+    },
+  ), 'runtime can register the real authoritative IRC adapter for backup coverage';
+
+  my $host = Overnet::Program::Host->new(
+    command     => [$^X, $program_path],
+    runtime     => $runtime,
+    program_id  => 'overnet.program.irc_server',
+    permissions => [
+      'adapters.use',
+      'events.append',
+      'events.read',
+      'nostr.read',
+      'nostr.write',
+      'subscriptions.read',
+      'overnet.emit_event',
+      'overnet.emit_state',
+      'overnet.emit_private_message',
+      'overnet.emit_capabilities',
+    ],
+    services => {
+      'adapters.open_session'        => {},
+      'adapters.map_input'           => {},
+      'adapters.derive'              => {},
+      'adapters.close_session'       => {},
+      'events.append'                => {},
+      'events.read'                  => {},
+      'nostr.publish_event'          => {},
+      'nostr.query_events'           => {},
+      'nostr.open_subscription'      => {},
+      'nostr.read_subscription_snapshot' => {},
+      'nostr.close_subscription'     => {},
+      'subscriptions.open'           => {},
+      'subscriptions.close'          => {},
+      'overnet.emit_event'           => {},
+      'overnet.emit_state'           => {},
+      'overnet.emit_private_message' => {},
+      'overnet.emit_capabilities'    => {},
+    },
+    startup_timeout_ms  => 1_000,
+    shutdown_timeout_ms => 1_000,
+  );
+
+  $host->start;
+  is $host->state, 'ready', 'relay-backup authoritative server reaches ready state';
+  my $ready = _wait_for_ready_details($host);
+  ok $ready, 'relay-backup authoritative server publishes ready health details';
+
+  my $alice = _connect_irc_client($ready->{listen_port});
+  _write_client_line($alice, 'NICK alice');
+  _write_client_line($alice, 'USER alice 0 * :Alice Relay Backup');
+  _assert_registration_prelude(
+    client      => $alice,
+    nick        => 'alice',
+    network     => $network,
+    server_name => $server_name,
+    timeout_ms  => 3_000,
+  );
+
+  _write_client_line($alice, 'OVERNETAUTH CHALLENGE');
+  ok $host->pump(timeout_ms => $relay_host_pump_ms) >= 0,
+    'relay-backup authoritative server pumps the auth challenge request';
+  my $challenge_line = _read_client_line($alice, 1_000);
+  like $challenge_line, qr/\A:\Q$server_name\E NOTICE alice :OVERNETAUTH CHALLENGE [0-9a-f]{64}\z/,
+    'alice receives an authoritative auth challenge for relay backup coverage';
+  $challenge_line =~ /([0-9a-f]{64})\z/;
+  my $challenge = $1;
+  _write_client_line($alice, 'OVERNETAUTH AUTH ' . _build_authoritative_auth_payload(
+    key       => $alice_key,
+    challenge => $challenge,
+    scope     => _authoritative_auth_scope(
+      server_name => $server_name,
+      network     => $network,
+    ),
+  ));
+  ok $host->pump(timeout_ms => $relay_host_pump_ms) >= 0,
+    'relay-backup authoritative server pumps the auth response';
+  is _read_client_line($alice, 1_000), ":$server_name NOTICE alice :OVERNETAUTH AUTH $alice_pubkey",
+    'alice authenticates her authoritative pubkey for relay backup coverage';
+
+  _write_client_line($alice, 'OVERNETAUTH DELEGATE');
+  ok $host->pump(timeout_ms => $relay_host_pump_ms) >= 0,
+    'relay-backup authoritative server pumps the delegation parameter request';
+  my $delegate_line = _read_client_line($alice, 3_000);
+  like $delegate_line,
+    qr/\A:\Q$server_name\E NOTICE alice :OVERNETAUTH DELEGATE ([0-9a-f]{64}) ([0-9a-f]{64}) \Q$relay_url\E (\d+)\z/,
+    'alice receives relay-backed delegation parameters for backup coverage';
+  my ($delegate_pubkey, $session_id, $expires_at) = $delegate_line =~ /([0-9a-f]{64}) ([0-9a-f]{64}) \Q$relay_url\E (\d+)\z/;
+  _write_client_line($alice, 'OVERNETAUTH DELEGATE ' . _build_authoritative_delegate_payload(
+    key             => $alice_key,
+    relay_url       => $relay_url,
+    scope           => _authoritative_auth_scope(
+      server_name => $server_name,
+      network     => $network,
+    ),
+    delegate_pubkey => $delegate_pubkey,
+    session_id      => $session_id,
+    expires_at      => $expires_at,
+    nick            => 'alice',
+  ));
+  my $delegate_ack = _pump_hosts_until_client_lines(
+    hosts           => [$host],
+    client          => $alice,
+    count           => 1,
+    pump_timeout_ms => $relay_host_pump_ms,
+    timeout_ms      => $relay_propagation_timeout_ms,
+  );
+  ok $delegate_ack, 'relay-backup authoritative server emits the delegation acknowledgement';
+  is $delegate_ack->[0], ":$server_name NOTICE alice :OVERNETAUTH DELEGATE",
+    'alice establishes a relay-backed delegation before joining restored state';
+
+  _write_client_line($alice, "JOIN $channel");
+  ok $host->pump(timeout_ms => $relay_host_pump_ms) >= 0,
+    'relay-backup authoritative server pumps the restored JOIN';
+  my $join_bootstrap = _pump_hosts_until_client_lines(
+    hosts           => [$host],
+    client          => $alice,
+    count           => 4,
+    pump_timeout_ms => $relay_host_pump_ms,
+    timeout_ms      => $relay_propagation_timeout_ms,
+  );
+  ok $join_bootstrap, 'joined client receives the restored authoritative bootstrap';
+  is_deeply $join_bootstrap, [
+    ":alice JOIN $channel",
+    ":$server_name TOPIC $channel :Backed Up Topic",
+    ":$server_name 353 alice = $channel :\@alice",
+    ":$server_name 366 alice $channel :End of /NAMES list.",
+  ], 'restored authoritative JOIN bootstrap rebuilds topic and retained membership';
+
+  my @extra_lines;
+  for (1 .. 6) {
+    $host->pump(timeout_ms => $relay_host_pump_ms);
+    while (defined(my $line = _read_client_line_optional($alice, 20))) {
+      push @extra_lines, $line;
+    }
+    sleep 0.05;
+  }
+  ok !grep { $_ eq ":alice JOIN $channel" } @extra_lines,
+    'restored relay history does not duplicate the client JOIN bootstrap';
+
+  _write_client_line($alice, "MODE $channel +b");
+  ok $host->pump(timeout_ms => $relay_host_pump_ms) >= 0,
+    'relay-backup authoritative server pumps the restored ban-list query';
+  my $ban_lines = _pump_hosts_until_client_lines(
+    hosts           => [$host],
+    client          => $alice,
+    count           => 2,
+    pump_timeout_ms => $relay_host_pump_ms,
+    timeout_ms      => $relay_propagation_timeout_ms,
+  );
+  ok $ban_lines, 'restored authoritative ban-list query returns lines';
+  is_deeply $ban_lines, [
+    ":$server_name 367 alice $channel *!*\@blocked.example $server_name 0",
+    ":$server_name 368 alice $channel :End of channel ban list",
+  ], 'restored authoritative ban list survives backup and restore';
+
+  my $shutdown = $host->request_shutdown(reason => 'relay backup authoritative test complete');
+  is $shutdown->{state}, 'shutdown_complete', 'relay-backup authoritative server handles runtime shutdown';
+  is $shutdown->{exit_code}, 0, 'relay-backup authoritative server exits cleanly';
 
   close $alice->{socket};
   _stop_authoritative_nip29_relay($relay);

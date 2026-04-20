@@ -2,12 +2,16 @@
 use strict;
 use warnings;
 
+use AnyEvent;
+use File::Basename qw(dirname);
+use File::Path qw(make_path);
 use FindBin;
 use Getopt::Long qw(GetOptions);
+use JSON::PP ();
 use lib "$FindBin::Bin/../lib";
 use lib "$FindBin::Bin/../local/lib/perl5";
 
-use Overnet::Relay;
+use Overnet::Relay::Deploy;
 use Overnet::Relay::Store::File;
 
 my %opt = (
@@ -25,12 +29,20 @@ my %opt = (
   max_subscriptions => 32,
   max_message_length => 65536,
   max_content_length => 32768,
+  max_connections_per_ip => undef,
+  event_rate_limit => undef,
+  min_pow_difficulty => undef,
+  idle_timeout => undef,
+  shutdown_timeout => undef,
   store_file => undef,
 );
 
 my $help = 0;
 my $host = $opt{host};
 my $port = $opt{port};
+my @service_policy_args;
+my $health_file;
+my $log_file;
 
 GetOptions(
   'host=s' => \$host,
@@ -47,7 +59,15 @@ GetOptions(
   'max-subscriptions=i' => \$opt{max_subscriptions},
   'max-message-length=i' => \$opt{max_message_length},
   'max-content-length=i' => \$opt{max_content_length},
+  'max-connections-per-ip=i' => \$opt{max_connections_per_ip},
+  'event-rate-limit=s' => \$opt{event_rate_limit},
+  'min-pow-difficulty=i' => \$opt{min_pow_difficulty},
+  'idle-timeout=i' => \$opt{idle_timeout},
+  'shutdown-timeout=i' => \$opt{shutdown_timeout},
+  'service-policy=s' => \@service_policy_args,
   'store-file=s' => \$opt{store_file},
+  'health-file=s' => \$health_file,
+  'log-file=s' => \$log_file,
   'help' => \$help,
 ) or die _usage();
 
@@ -77,6 +97,21 @@ for my $int_opt (
 delete $opt{host};
 delete $opt{port};
 
+if (defined $log_file) {
+  die "--log-file must be a non-empty string\n"
+    if ref($log_file) || $log_file eq '';
+  my $log_dir = dirname($log_file);
+  make_path($log_dir) unless -d $log_dir;
+  open my $log_fh, '>>', $log_file
+    or die "Can't open relay log file $log_file: $!";
+  open STDOUT, '>&', $log_fh
+    or die "Can't redirect STDOUT to relay log file $log_file: $!";
+  open STDERR, '>&', $log_fh
+    or die "Can't redirect STDERR to relay log file $log_file: $!";
+  select((select(STDOUT), $| = 1)[0]);
+  select((select(STDERR), $| = 1)[0]);
+}
+
 my %relay_args = %opt;
 if (defined $relay_args{store_file}) {
   die "--store-file must be a non-empty string\n"
@@ -87,14 +122,100 @@ if (defined $relay_args{store_file}) {
 } else {
   delete $relay_args{store_file};
 }
+if (@service_policy_args) {
+  $relay_args{service_policies} = _parse_service_policies(@service_policy_args);
+}
 
-my $relay = Overnet::Relay->new(%relay_args);
+my $relay = Overnet::Relay::Deploy->new(%relay_args);
 
-$SIG{INT} = sub { $relay->stop };
-$SIG{TERM} = sub { $relay->stop };
+my $shutdown = sub {
+  _write_health_file($health_file, {
+    status => 'stopping',
+    listen_host => $host,
+    listen_port => 0 + $port,
+    details => {
+      listen_host => $host,
+      listen_port => 0 + $port,
+    },
+  }) if defined $health_file;
+  print STDERR "[relay.health] stopping\n";
+  $relay->stop;
+};
+
+$SIG{INT} = $shutdown;
+$SIG{TERM} = $shutdown;
+
+my $ready_timer;
+if (defined $health_file) {
+  $ready_timer = AnyEvent->timer(
+    after => 0,
+    cb => sub {
+      undef $ready_timer;
+      _write_health_file($health_file, {
+        status => 'ready',
+        listen_host => $host,
+        listen_port => 0 + $port,
+        details => {
+          listen_host => $host,
+          listen_port => 0 + $port,
+          relay_profile => $relay->relay_profile,
+          service_policies => $relay->service_policies,
+        },
+      });
+      print STDERR "[relay.health] ready $host:$port\n";
+    },
+  );
+} else {
+  print STDERR "[relay.health] ready $host:$port\n";
+}
 
 $relay->run($host, $port);
+_write_health_file($health_file, {
+  status => 'stopped',
+  listen_host => $host,
+  listen_port => 0 + $port,
+  details => {
+    listen_host => $host,
+    listen_port => 0 + $port,
+  },
+}) if defined $health_file;
+print STDERR "[relay.health] stopped\n";
 exit 0;
+
+sub _parse_service_policies {
+  my (@entries) = @_;
+  my %policies;
+
+  for my $entry (@entries) {
+    die "--service-policy must be NAME=VALUE\n"
+      unless defined $entry && !ref($entry) && $entry =~ /\A([a-z_]+)=([a-z_]+)\z/;
+    $policies{$1} = $2;
+  }
+
+  return \%policies;
+}
+
+sub _write_health_file {
+  my ($path, $payload) = @_;
+  return 1 unless defined $path;
+
+  die "--health-file must be a non-empty string\n"
+    if ref($path) || $path eq '';
+
+  my $dir = dirname($path);
+  make_path($dir) unless -d $dir;
+
+  my $tmp_path = $path . '.tmp.' . $$;
+  open my $fh, '>', $tmp_path
+    or die "Can't open relay health temp file $tmp_path: $!";
+  print {$fh} JSON::PP->new->utf8->canonical->encode($payload)
+    or die "Can't write relay health temp file $tmp_path: $!";
+  close $fh
+    or die "Can't close relay health temp file $tmp_path: $!";
+  rename $tmp_path, $path
+    or die "Can't rename relay health temp file $tmp_path to $path: $!";
+  return 1;
+}
 
 sub _usage {
   return <<'USAGE';
@@ -114,7 +235,15 @@ Usage: overnet-relay.pl [options]
   --max-subscriptions N
   --max-message-length N
   --max-content-length N
+  --max-connections-per-ip N
+  --event-rate-limit COUNT/SECONDS
+  --min-pow-difficulty N
+  --idle-timeout SECONDS
+  --shutdown-timeout SECONDS
+  --service-policy NAME=VALUE
   --store-file PATH
+  --health-file PATH
+  --log-file PATH
   --help
 USAGE
 }
