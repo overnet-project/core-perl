@@ -31,6 +31,16 @@ for my $doc (
     "$label includes the fast IRC server suite in the IRC verification path";
   like $text, qr/t\/program-irc-server-relay\.t/,
     "$label includes the relay IRC server suite in the IRC verification path";
+  like $text, qr/t\/program-irc-server-relay-fault\.t/,
+    "$label includes the relay fault and recovery suite in the IRC verification path";
+  like $text, qr/t\/program-irc-server-relay-failover\.t/,
+    "$label includes the two-relay failover suite in the IRC verification path";
+  like $text, qr/t\/relay-live\.t/,
+    "$label includes live relay persistence and fault coverage in the IRC verification path";
+  like $text, qr/t\/relay-sync-live\.t/,
+    "$label includes live relay sync coverage in the IRC verification path";
+  like $text, qr/t\/deploy-restore-drill-live\.t/,
+    "$label includes the restore drill in the IRC verification path";
 }
 
 done_testing;

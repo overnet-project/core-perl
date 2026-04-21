@@ -55,7 +55,12 @@ Useful commands:
 /home/_73/.local/bin/plx prove -Ilib -Ilocal/lib/perl5 \
   t/spec-conformance-irc-server.t \
   t/program-irc-server.t \
-  t/program-irc-server-relay.t
+  t/program-irc-server-relay.t \
+  t/program-irc-server-relay-fault.t \
+  t/program-irc-server-relay-failover.t \
+  t/relay-live.t \
+  t/relay-sync-live.t \
+  t/deploy-restore-drill-live.t
 /home/_73/.local/bin/plx perl -Ilib -Ilocal/lib/perl5 t/generate-fixtures.pl
 ```
 
@@ -66,6 +71,11 @@ It runs the IRC verification path:
 - `t/spec-conformance-irc-server.t`
 - `t/program-irc-server.t`
 - `t/program-irc-server-relay.t`
+- `t/program-irc-server-relay-fault.t`
+- `t/program-irc-server-relay-failover.t`
+- `t/relay-live.t`
+- `t/relay-sync-live.t`
+- `t/deploy-restore-drill-live.t`
 
 After making changes, always run the relevant tests. If a fix introduces new failures, keep iterating until all relevant tests pass.
 

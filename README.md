@@ -59,7 +59,12 @@ The default release gate runs the IRC verification path:
 /home/_73/.local/bin/plx prove -Ilib -Ilocal/lib/perl5 \
   t/spec-conformance-irc-server.t \
   t/program-irc-server.t \
-  t/program-irc-server-relay.t
+  t/program-irc-server-relay.t \
+  t/program-irc-server-relay-fault.t \
+  t/program-irc-server-relay-failover.t \
+  t/relay-live.t \
+  t/relay-sync-live.t \
+  t/deploy-restore-drill-live.t
 ```
 
 Regenerate shared fixtures from `overnet-spec` with:

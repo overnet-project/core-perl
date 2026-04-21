@@ -26,6 +26,16 @@ like $script_text, qr/t\/program-irc-server\.t/,
   'release gate script runs the fast IRC server suite';
 like $script_text, qr/t\/program-irc-server-relay\.t/,
   'release gate script runs the relay IRC server suite';
+like $script_text, qr/t\/program-irc-server-relay-fault\.t/,
+  'release gate script runs the relay fault and recovery suite';
+like $script_text, qr/t\/program-irc-server-relay-failover\.t/,
+  'release gate script runs the two-relay failover suite';
+like $script_text, qr/t\/relay-live\.t/,
+  'release gate script runs live relay persistence and fault tests';
+like $script_text, qr/t\/relay-sync-live\.t/,
+  'release gate script runs live relay sync tests';
+like $script_text, qr/t\/deploy-restore-drill-live\.t/,
+  'release gate script runs the restore drill live test';
 
 for my $doc (
   [ 'README', _slurp($readme) ],
