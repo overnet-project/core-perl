@@ -3,9 +3,13 @@ package Overnet::Core::Nostr;
 use strict;
 use warnings;
 
+use AnyEvent;
+use Digest::SHA qw(sha256_hex);
 use JSON::PP ();
 use Net::Nostr::DirectMessage;
+use Net::Nostr::Client;
 use Net::Nostr::Event;
+use Net::Nostr::Filter;
 use Net::Nostr::Key;
 
 my $JSON = JSON::PP->new->utf8->canonical;
@@ -62,11 +66,174 @@ sub wrap_private_message {
   };
 }
 
+sub sign_event_hash {
+  my ($class, %args) = @_;
+  my $key = _require_key_wrapper($args{key});
+  my $event_hash = $args{event};
+
+  die "event must be an object\n"
+    unless ref($event_hash) eq 'HASH';
+  die "event kind is required\n"
+    unless defined $event_hash->{kind} && !ref($event_hash->{kind});
+  die "event created_at is required\n"
+    unless defined $event_hash->{created_at} && !ref($event_hash->{created_at});
+  die "event tags must be an array\n"
+    unless ref($event_hash->{tags}) eq 'ARRAY';
+  die "event content must be a string\n"
+    if defined($event_hash->{content}) && ref($event_hash->{content});
+
+  my $expected_pubkey = $key->{key}->pubkey_hex;
+  if (defined $event_hash->{pubkey}) {
+    die "event pubkey does not match the signing key\n"
+      unless !ref($event_hash->{pubkey}) && $event_hash->{pubkey} eq $expected_pubkey;
+  }
+
+  my $event = $key->{key}->create_event(
+    kind       => $event_hash->{kind},
+    created_at => $event_hash->{created_at},
+    tags       => [ @{$event_hash->{tags}} ],
+    content    => defined $event_hash->{content} ? $event_hash->{content} : '',
+  );
+  return bless { event => $event }, 'Overnet::Core::Nostr::Event';
+}
+
+sub publish_event {
+  my ($class, %args) = @_;
+  my $relay_url = $args{relay_url};
+  my $event = _coerce_signed_event($args{event});
+  my $timeout_ms = exists $args{timeout_ms} ? $args{timeout_ms} : 5_000;
+
+  die "relay_url is required\n"
+    unless defined $relay_url && !ref($relay_url) && length($relay_url);
+  die "timeout_ms must be a positive integer\n"
+    unless defined $timeout_ms && !ref($timeout_ms) && $timeout_ms =~ /\A[1-9]\d*\z/;
+
+  my $client = Net::Nostr::Client->new;
+  my $cv = AnyEvent->condvar;
+  my $done = 0;
+  my $timer = AnyEvent->timer(
+    after => $timeout_ms / 1000,
+    cb    => sub {
+      return if $done;
+      $done = 1;
+      $cv->send({
+        accepted => 0,
+        message  => 'publish timed out',
+      });
+    },
+  );
+
+  $client->on(ok => sub {
+    my ($event_id, $accepted, $message) = @_;
+    return if $done;
+    return unless $event_id eq $event->id;
+    $done = 1;
+    undef $timer;
+    $cv->send({
+      accepted => $accepted ? 1 : 0,
+      message  => $message,
+    });
+  });
+
+  $client->connect($relay_url);
+  $client->publish($event->{event});
+  my $result = $cv->recv;
+  $client->disconnect;
+
+  return {
+    %{$result || {}},
+    event_id => $event->id,
+  };
+}
+
+sub query_events {
+  my ($class, %args) = @_;
+  my $relay_url = $args{relay_url};
+  my $filters = $args{filters};
+  my $timeout_ms = exists $args{timeout_ms} ? $args{timeout_ms} : 5_000;
+
+  die "relay_url is required\n"
+    unless defined $relay_url && !ref($relay_url) && length($relay_url);
+  die "filters must be a non-empty array\n"
+    unless ref($filters) eq 'ARRAY' && @{$filters};
+  die "timeout_ms must be a positive integer\n"
+    unless defined $timeout_ms && !ref($timeout_ms) && $timeout_ms =~ /\A[1-9]\d*\z/;
+
+  my @filters = map {
+    ref($_) eq 'Net::Nostr::Filter'
+      ? $_
+      : Net::Nostr::Filter->new(%{$_})
+  } @{$filters};
+
+  my $client = Net::Nostr::Client->new;
+  my $cv = AnyEvent->condvar;
+  my $done = 0;
+  my @events;
+  my %seen_ids;
+  my $subscription_id = sha256_hex(join ':', time(), rand(), $$, $relay_url);
+  my $timer = AnyEvent->timer(
+    after => $timeout_ms / 1000,
+    cb    => sub {
+      return if $done;
+      $done = 1;
+      $cv->send([ @events ]);
+    },
+  );
+
+  $client->on(event => sub {
+    my ($sub_id, $event) = @_;
+    return if $done;
+    return unless $sub_id eq $subscription_id;
+    return if $seen_ids{$event->id}++;
+    push @events, $event;
+  });
+
+  $client->on(eose => sub {
+    my ($sub_id) = @_;
+    return if $done;
+    return unless $sub_id eq $subscription_id;
+    $done = 1;
+    undef $timer;
+    $cv->send([ @events ]);
+  });
+
+  $client->on(closed => sub {
+    my ($sub_id) = @_;
+    return if $done;
+    return unless $sub_id eq $subscription_id;
+    $done = 1;
+    undef $timer;
+    $cv->send([ @events ]);
+  });
+
+  $client->connect($relay_url);
+  $client->subscribe($subscription_id, @filters);
+  my $events = $cv->recv;
+  $client->close($subscription_id) if $client->is_connected;
+  $client->disconnect;
+
+  return [
+    map { $_->to_hash }
+    @{$events || []}
+  ];
+}
+
 sub _require_key_wrapper {
   my ($key) = @_;
   die "key must be an Overnet::Core::Nostr::Key instance\n"
     unless ref($key) && ref($key) eq 'Overnet::Core::Nostr::Key';
   return $key;
+}
+
+sub _coerce_signed_event {
+  my ($input) = @_;
+  return $input
+    if ref($input) && ref($input) eq 'Overnet::Core::Nostr::Event';
+  die "event must be an object\n"
+    unless ref($input) eq 'HASH';
+
+  my $event = Net::Nostr::Event->from_wire($input);
+  return bless { event => $event }, 'Overnet::Core::Nostr::Event';
 }
 
 package Overnet::Core::Nostr::Key;
@@ -88,6 +255,14 @@ sub create_event_hash {
     content    => $args{content},
   );
   return $event->to_hash;
+}
+
+sub sign_event_hash {
+  my ($self, %args) = @_;
+  return Overnet::Core::Nostr->sign_event_hash(
+    key   => $self,
+    event => $args{event},
+  )->to_hash;
 }
 
 sub save_privkey {

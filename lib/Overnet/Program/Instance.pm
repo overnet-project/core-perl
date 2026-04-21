@@ -112,6 +112,10 @@ sub process_program_message {
     return $self->_handle_shutdown_response($message);
   }
 
+  if ($state eq 'shutdown_complete') {
+    return $self->_handle_post_shutdown_message($message);
+  }
+
   die "Cannot process messages in state $state\n";
 }
 
@@ -333,13 +337,30 @@ sub _handle_service_request {
 sub _handle_shutdown_response {
   my ($self, $message) = @_;
 
+  if ($message->{type} eq 'notification') {
+    return { observed => $message->{method} }
+      if $message->{method} eq 'program.log' || $message->{method} eq 'program.health';
+
+    die "protocol.unknown_method: Unexpected notification while awaiting runtime.shutdown response: $message->{method}\n";
+  }
+
+  if ($message->{type} eq 'request') {
+    return {};
+  }
+
   die "Expected response while awaiting runtime.shutdown response\n"
     unless $message->{type} eq 'response';
 
   my $method = delete $self->{inflight}{$message->{id}}
     or die "protocol.unknown_request_id: Unexpected response id while awaiting runtime.shutdown response\n";
-  die "Expected runtime.shutdown response\n"
-    unless $method eq 'runtime.shutdown';
+
+  if ($method ne 'runtime.shutdown') {
+    return {
+      response_to => $method,
+      ok          => $message->{ok} ? 1 : 0,
+      ($message->{ok} ? () : (error => $message->{error})),
+    };
+  }
 
   if ($message->{ok}) {
     $self->_revoke_secret_handles;
@@ -353,6 +374,30 @@ sub _handle_shutdown_response {
     shutdown_rejected => 1,
     error             => $message->{error},
   };
+}
+
+sub _handle_post_shutdown_message {
+  my ($self, $message) = @_;
+
+  if ($message->{type} eq 'notification') {
+    return { observed => $message->{method} }
+      if $message->{method} eq 'program.log' || $message->{method} eq 'program.health';
+    return {};
+  }
+
+  if ($message->{type} eq 'response') {
+    my $method = delete $self->{inflight}{$message->{id}};
+    return {
+      (defined $method ? (response_to => $method) : ()),
+      ok => $message->{ok} ? 1 : 0,
+      ($message->{ok} ? () : (error => $message->{error})),
+    };
+  }
+
+  return {}
+    if $message->{type} eq 'request';
+
+  return {};
 }
 
 sub _allocate_request_id {

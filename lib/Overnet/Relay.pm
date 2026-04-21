@@ -278,169 +278,137 @@ sub _latest_matching_event {
 sub _handle_event {
   my ($self, $conn_id, $event) = @_;
   my $conn = $self->_connections->{$conn_id};
+  my $result = $self->_accept_overnet_event(
+    $event,
+    conn_id => $conn_id,
+    apply_rate_limit => 1,
+    require_author_auth => 1,
+    broadcast => 1,
+  );
+
+  $conn->send(Net::Nostr::Message->new(
+    type => 'OK',
+    event_id => $result->{event_id},
+    accepted => $result->{accepted} ? 1 : 0,
+    message => $result->{message},
+  )->serialize);
+}
+
+sub accept_synced_event {
+  my ($self, $event) = @_;
+
+  return $self->_accept_overnet_event(
+    $event,
+    apply_rate_limit => 0,
+    require_author_auth => 0,
+    broadcast => 1,
+  );
+}
+
+sub _accept_overnet_event {
+  my ($self, $event, %opts) = @_;
+
+  my $event_id = $event->id // '';
+  my $accept = sub {
+    my (%extra) = @_;
+    return {
+      accepted => $extra{accepted},
+      stored => $extra{stored} ? 1 : 0,
+      event_id => $event_id,
+      message => $extra{message},
+    };
+  };
 
   my $error = $self->_validate_event($event);
-  if ($error) {
-    $conn->send(Net::Nostr::Message->new(
-      type => 'OK',
-      event_id => ($event->id // ''),
-      accepted => 0,
-      message => $error,
-    )->serialize);
-    return;
-  }
+  return $accept->(accepted => 0, stored => 0, message => $error)
+    if $error;
 
   if (defined $self->max_content_length && length($event->content) > $self->max_content_length) {
-    $conn->send(Net::Nostr::Message->new(
-      type => 'OK',
-      event_id => $event->id,
-      accepted => 0,
-      message => 'invalid: content too long',
-    )->serialize);
-    return;
+    return $accept->(accepted => 0, stored => 0, message => 'invalid: content too long');
   }
 
   if (defined $self->max_event_tags && scalar(@{$event->_tags}) > $self->max_event_tags) {
-    $conn->send(Net::Nostr::Message->new(
-      type => 'OK',
-      event_id => $event->id,
-      accepted => 0,
-      message => 'invalid: too many tags',
-    )->serialize);
-    return;
+    return $accept->(accepted => 0, stored => 0, message => 'invalid: too many tags');
   }
 
   if (defined $self->created_at_lower_limit
       && $event->created_at < time() - $self->created_at_lower_limit) {
-    $conn->send(Net::Nostr::Message->new(
-      type => 'OK',
-      event_id => $event->id,
-      accepted => 0,
-      message => 'invalid: event too old',
-    )->serialize);
-    return;
+    return $accept->(accepted => 0, stored => 0, message => 'invalid: event too old');
   }
 
   if (defined $self->created_at_upper_limit
       && $event->created_at > time() + $self->created_at_upper_limit) {
-    $conn->send(Net::Nostr::Message->new(
-      type => 'OK',
-      event_id => $event->id,
-      accepted => 0,
-      message => 'invalid: event too far in the future',
-    )->serialize);
-    return;
+    return $accept->(accepted => 0, stored => 0, message => 'invalid: event too far in the future');
   }
 
   my $overnet_error = $self->_validate_overnet_publish($event);
-  if ($overnet_error) {
-    $conn->send(Net::Nostr::Message->new(
-      type => 'OK',
-      event_id => $event->id,
-      accepted => 0,
-      message => $overnet_error,
-    )->serialize);
-    return;
-  }
+  return $accept->(accepted => 0, stored => 0, message => $overnet_error)
+    if $overnet_error;
 
   if ($self->on_event) {
     my ($ok, $msg) = $self->on_event->($event);
     unless ($ok) {
-      $conn->send(Net::Nostr::Message->new(
-        type => 'OK',
-        event_id => $event->id,
+      return $accept->(
         accepted => 0,
+        stored => 0,
         message => _normalize_outcome_message($msg, 'policy_denied', 'rejected by policy'),
-      )->serialize);
-      return;
+      );
     }
   }
 
-  unless ($self->_check_rate_limit($conn_id)) {
-    $conn->send(Net::Nostr::Message->new(
-      type => 'OK',
-      event_id => $event->id,
-      accepted => 0,
-      message => 'unavailable: rate limited',
-    )->serialize);
-    return;
+  if ($opts{apply_rate_limit}) {
+    return $accept->(accepted => 0, stored => 0, message => 'unavailable: rate limited')
+      unless $self->_check_rate_limit($opts{conn_id});
   }
 
   if (defined $self->min_pow_difficulty) {
     my $min = $self->min_pow_difficulty;
     my $committed = $event->committed_target_difficulty;
-    if (!defined $committed || $committed < $min) {
-      $conn->send(Net::Nostr::Message->new(
-        type => 'OK',
-        event_id => $event->id,
-        accepted => 0,
-        message => "invalid: proof-of-work commitment below required $min",
-      )->serialize);
-      return;
-    }
-    if ($event->difficulty < $min) {
-      $conn->send(Net::Nostr::Message->new(
-        type => 'OK',
-        event_id => $event->id,
-        accepted => 0,
-        message => "invalid: insufficient proof of work (need $min bits)",
-      )->serialize);
-      return;
-    }
+    return $accept->(
+      accepted => 0,
+      stored => 0,
+      message => "invalid: proof-of-work commitment below required $min",
+    ) if !defined($committed) || $committed < $min;
+
+    return $accept->(
+      accepted => 0,
+      stored => 0,
+      message => "invalid: insufficient proof of work (need $min bits)",
+    ) if $event->difficulty < $min;
   }
 
   if ($event->is_expired && !$event->is_ephemeral) {
-    $conn->send(Net::Nostr::Message->new(
-      type => 'OK',
-      event_id => $event->id,
-      accepted => 0,
-      message => 'invalid: event has expired',
-    )->serialize);
-    return;
+    return $accept->(accepted => 0, stored => 0, message => 'invalid: event has expired');
   }
 
-  if ($event->is_protected) {
-    my $authed = $self->_authenticated->{$conn_id} || {};
-    unless ($authed->{$event->pubkey}) {
-      $conn->send(Net::Nostr::Message->new(
-        type => 'OK',
-        event_id => $event->id,
-        accepted => 0,
-        message => 'unauthorized: protected event requires author authentication',
-      )->serialize);
-      return;
-    }
+  if ($opts{require_author_auth} && $event->is_protected) {
+    my $authed = $self->_authenticated->{$opts{conn_id}} || {};
+    return $accept->(
+      accepted => 0,
+      stored => 0,
+      message => 'unauthorized: protected event requires author authentication',
+    ) unless $authed->{$event->pubkey};
   }
 
   if ($event->kind == 22242) {
-    $conn->send(Net::Nostr::Message->new(
-      type => 'OK',
-      event_id => $event->id,
-      accepted => 0,
-      message => 'invalid: auth events must use AUTH',
-    )->serialize);
-    return;
+    return $accept->(accepted => 0, stored => 0, message => 'invalid: auth events must use AUTH');
   }
 
   if ($self->store->get_by_id($event->id)) {
-    $conn->send(Net::Nostr::Message->new(
-      type => 'OK',
-      event_id => $event->id,
+    return $accept->(
       accepted => 1,
+      stored => 0,
       message => 'accepted: duplicate event already stored',
-    )->serialize);
-    return;
+    );
   }
 
   if ($event->is_ephemeral) {
-    $conn->send(Net::Nostr::Message->new(
-      type => 'OK',
-      event_id => $event->id,
+    $self->broadcast($event) if $opts{broadcast};
+    return $accept->(
       accepted => 1,
+      stored => 0,
       message => 'accepted: ephemeral event broadcast',
-    )->serialize);
-    $self->broadcast($event);
-    return;
+    );
   }
 
   if ($event->is_replaceable) {
@@ -449,13 +417,11 @@ sub _handle_event {
       if (_is_newer_event($event, $existing)) {
         $self->store->delete_by_id($existing->id);
       } else {
-        $conn->send(Net::Nostr::Message->new(
-          type => 'OK',
-          event_id => $event->id,
+        return $accept->(
           accepted => 1,
+          stored => 0,
           message => 'accepted: newer replaceable event already stored',
-        )->serialize);
-        return;
+        );
       }
     }
   }
@@ -466,29 +432,23 @@ sub _handle_event {
       if (_is_newer_event($event, $existing)) {
         $self->store->delete_by_id($existing->id);
       } else {
-        $conn->send(Net::Nostr::Message->new(
-          type => 'OK',
-          event_id => $event->id,
+        return $accept->(
           accepted => 1,
+          stored => 0,
           message => 'accepted: newer addressable event already stored',
-        )->serialize);
-        return;
+        );
       }
     }
   }
 
-  if ($event->kind == 5) {
-    $self->_handle_deletion($event);
-  }
-
   $self->store->store($event);
-  $conn->send(Net::Nostr::Message->new(
-    type => 'OK',
-    event_id => $event->id,
+  $self->broadcast($event) if $opts{broadcast};
+
+  return $accept->(
     accepted => 1,
+    stored => 1,
     message => 'accepted: stored',
-  )->serialize);
-  $self->broadcast($event);
+  );
 }
 
 sub _handle_req {
@@ -793,5 +753,20 @@ sub _first_tag_values {
 =head1 NAME
 
 Overnet::Relay - First Overnet relay wrapper on top of Net::Nostr::Relay
+
+=head1 METHODS
+
+=head2 accept_synced_event
+
+  my $result = $relay->accept_synced_event($event);
+
+Validates and ingests an event that arrived through relay-to-relay sync.
+This follows the same Overnet event validation and replaceable/addressable
+storage semantics as a normal publish, but it skips client-specific publish
+controls such as per-connection rate limiting and author-authenticated
+protected-event checks.
+
+Returns a hashref containing C<accepted>, C<stored>, C<event_id>, and
+C<message>.
 
 =cut
