@@ -23,6 +23,7 @@ WriteMakefile(
         t/00-load-program-runtime.t
         t/authority-hosted-channel.t
         t/makemaker-metadata.t
+        t/manifest-skip-policy.t
         t/program-host.t
         t/program-instance.t
         t/program-protocol.t
