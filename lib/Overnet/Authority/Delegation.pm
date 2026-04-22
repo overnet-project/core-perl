@@ -2,9 +2,35 @@ package Overnet::Authority::Delegation;
 
 use strict;
 use warnings;
+use Time::HiRes qw(time);
 use Overnet::Core::Nostr;
 
 our $VERSION = '0.001';
+
+sub create_auth_event {
+  my ($class, %args) = @_;
+  my $key = _require_key($args{key});
+  my $challenge = $args{challenge};
+  my $scope = $args{scope};
+  my $created_at = exists $args{created_at} ? $args{created_at} : int(time());
+
+  return _invalid('challenge is required')
+    unless defined $challenge && !ref($challenge) && length($challenge);
+  return _invalid('scope is required')
+    unless defined $scope && !ref($scope) && length($scope);
+  return _invalid('created_at is required')
+    unless defined $created_at && !ref($created_at);
+
+  return $key->create_event_hash(
+    kind       => 22242,
+    created_at => $created_at + 0,
+    content    => '',
+    tags       => [
+      [ 'relay', $scope ],
+      [ 'challenge', $challenge ],
+    ],
+  );
+}
 
 sub verify_auth_event {
   my ($class, %args) = @_;
@@ -35,6 +61,50 @@ sub verify_auth_event {
     event_id => $event->id,
     event    => $event->to_hash,
   };
+}
+
+sub create_delegation_grant_event {
+  my ($class, %args) = @_;
+  my $key = _require_key($args{key});
+  my $relay_url = $args{relay_url};
+  my $scope = $args{scope};
+  my $delegate_pubkey = $args{delegate_pubkey};
+  my $session_id = $args{session_id};
+  my $expires_at = $args{expires_at};
+  my $kind = exists $args{kind} ? $args{kind} : 14142;
+  my $nick = $args{nick};
+  my $created_at = exists $args{created_at} ? $args{created_at} : int(time());
+
+  return _invalid('relay_url is required')
+    unless defined $relay_url && !ref($relay_url) && length($relay_url);
+  return _invalid('scope is required')
+    unless defined $scope && !ref($scope) && length($scope);
+  return _invalid('delegate_pubkey is required')
+    unless defined $delegate_pubkey && !ref($delegate_pubkey) && $delegate_pubkey =~ /\A[0-9a-f]{64}\z/;
+  return _invalid('session_id is required')
+    unless defined $session_id && !ref($session_id) && length($session_id);
+  return _invalid('expires_at is required')
+    unless defined $expires_at && !ref($expires_at) && $expires_at =~ /\A\d+\z/;
+  return _invalid('kind must be a positive integer')
+    unless defined $kind && !ref($kind) && $kind =~ /\A[1-9]\d*\z/;
+  return _invalid('created_at is required')
+    unless defined $created_at && !ref($created_at);
+  return _invalid('nick must be a non-empty string')
+    if defined $nick && (ref($nick) || !length($nick));
+
+  return $key->create_event_hash(
+    kind       => 0 + $kind,
+    created_at => $created_at + 0,
+    content    => '',
+    tags       => [
+      [ 'relay', $relay_url ],
+      [ 'server', $scope ],
+      [ 'delegate', $delegate_pubkey ],
+      [ 'session', $session_id ],
+      [ 'expires_at', "$expires_at" ],
+      (defined $nick ? ([ 'nick', $nick ]) : ()),
+    ],
+  );
 }
 
 sub verify_delegation_grant {
@@ -122,6 +192,13 @@ sub _invalid {
     valid  => 0,
     reason => $reason,
   };
+}
+
+sub _require_key {
+  my ($key) = @_;
+  return $key
+    if ref($key) && ref($key) eq 'Overnet::Core::Nostr::Key';
+  die "key must be an Overnet::Core::Nostr::Key instance\n";
 }
 
 1;

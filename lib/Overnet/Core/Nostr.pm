@@ -4,8 +4,10 @@ use strict;
 use warnings;
 
 use AnyEvent;
+use Crypt::PK::ECC;
 use Digest::SHA qw(sha256_hex);
 use JSON::PP ();
+use Net::Nostr::Bech32 qw(decode_nsec);
 use Net::Nostr::DirectMessage;
 use Net::Nostr::Client;
 use Net::Nostr::Event;
@@ -19,7 +21,19 @@ sub load_key {
   die "privkey is required\n"
     unless defined $args{privkey} && !ref($args{privkey}) && length($args{privkey});
 
-  my $key = Net::Nostr::Key->new(privkey => $args{privkey});
+  my $input = $args{privkey};
+  my $key;
+
+  if ($input =~ /\A[0-9a-f]{64}\z/) {
+    $key = _key_from_hex_secret($input);
+  } elsif ($input =~ /\Ansec1/i) {
+    $key = _key_from_hex_secret(decode_nsec(lc $input));
+  } elsif ($input =~ /\A-----BEGIN /) {
+    $key = Net::Nostr::Key->new(privkey => \$input);
+  } else {
+    $key = Net::Nostr::Key->new(privkey => $input);
+  }
+
   return bless { key => $key }, 'Overnet::Core::Nostr::Key';
 }
 
@@ -234,6 +248,16 @@ sub _coerce_signed_event {
 
   my $event = Net::Nostr::Event->from_wire($input);
   return bless { event => $event }, 'Overnet::Core::Nostr::Event';
+}
+
+sub _key_from_hex_secret {
+  my ($hex) = @_;
+  my $pk = Crypt::PK::ECC->new;
+  $pk->import_key_raw(pack('H*', $hex), 'secp256k1');
+
+  my $key = bless {}, 'Net::Nostr::Key';
+  $key->_cryptpkecc($pk);
+  return $key;
 }
 
 package Overnet::Core::Nostr::Key;

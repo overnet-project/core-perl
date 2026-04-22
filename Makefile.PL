@@ -13,6 +13,7 @@ WriteMakefile(
   MIN_PERL_VERSION => '5.024',
   PREREQ_PM        => {
     'AnyEvent'        => 0,
+    'CryptX'          => 0,
     'IO::Socket::SSL' => 0,
     'Net::Nostr'      => 0,
   },
@@ -21,6 +22,7 @@ WriteMakefile(
       ' ',
       qw(
         t/00-load-program-runtime.t
+        t/authority-delegation.t
         t/authority-hosted-channel.t
         t/makemaker-metadata.t
         t/manifest-skip-policy.t

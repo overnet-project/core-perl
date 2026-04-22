@@ -25,6 +25,7 @@ is_deeply(
   $args->{PREREQ_PM},
   {
     'AnyEvent'        => 0,
+    'CryptX'          => 0,
     'IO::Socket::SSL' => 0,
     'Net::Nostr'      => 0,
   },
@@ -55,6 +56,7 @@ is_deeply(
       ' ',
       qw(
         t/00-load-program-runtime.t
+        t/authority-delegation.t
         t/authority-hosted-channel.t
         t/makemaker-metadata.t
         t/manifest-skip-policy.t

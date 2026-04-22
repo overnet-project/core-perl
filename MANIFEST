@@ -28,6 +28,7 @@ MANIFEST			This list of files
 MANIFEST.SKIP
 README.md
 t/00-load-program-runtime.t
+t/authority-delegation.t
 t/authority-hosted-channel.t
 t/fixtures/invalid-adapted-external-identity-not-string.json
 t/fixtures/invalid-adapted-limitations-item-not-string.json
