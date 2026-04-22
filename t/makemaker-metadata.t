@@ -57,6 +57,7 @@ is_deeply(
       qw(
         t/00-load-program-runtime.t
         t/auth-agent.t
+        t/auth-backends.t
         t/auth-fixtures.t
         t/authority-delegation.t
         t/authority-hosted-channel.t

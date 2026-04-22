@@ -4,8 +4,8 @@ use strict;
 use warnings;
 
 use Time::HiRes qw(time);
+use Scalar::Util qw(blessed);
 use Overnet::Authority::Delegation;
-use Overnet::Core::Nostr;
 
 our $VERSION = '0.001';
 
@@ -27,7 +27,6 @@ sub new {
     next unless defined $identity_id && !ref($identity_id) && length($identity_id);
 
     my %stored = %{$identity};
-    $stored{_signing_key} = _identity_signing_key(\%stored);
     $self->{identities}{$identity_id} = \%stored;
     push @{$self->{identity_order}}, $identity_id;
   }
@@ -398,10 +397,10 @@ sub _build_artifact {
   return (undef, [ 'invalid_request', 'artifact params must be an object' ])
     unless ref($params) eq 'HASH';
 
-  my $key = $args{identity}{_signing_key};
+  my ($key, $backend_error) = _identity_signing_key($args{identity});
   my $event;
 
-  return (undef, [ 'backend_unavailable', 'no signing backend is available for the selected identity' ])
+  return (undef, [ $backend_error->{code}, $backend_error->{message} ])
     unless defined $key;
 
   if (($args{action} || '') eq 'session.authenticate') {
@@ -482,16 +481,12 @@ sub _store_session {
 
 sub _identity_signing_key {
   my ($identity) = @_;
-
-  if (defined($identity->{private_key}) && !ref($identity->{private_key}) && length($identity->{private_key})) {
-    return Overnet::Core::Nostr->load_key(privkey => $identity->{private_key});
-  }
-
-  if (defined($identity->{privkey_secret}) && !ref($identity->{privkey_secret}) && length($identity->{privkey_secret})) {
-    return Overnet::Core::Nostr->load_key(privkey => $identity->{privkey_secret});
-  }
-
-  return undef;
+  my ($backend, $backend_error) = _identity_backend($identity);
+  return (undef, $backend_error) unless $backend;
+  return $backend->load_signing_key(
+    identity       => $identity,
+    backend_config => $identity->{backend_config},
+  );
 }
 
 sub _session_handle_id {
@@ -541,6 +536,37 @@ sub _sorted_list {
   my ($values) = @_;
   return '' unless ref($values) eq 'ARRAY';
   return join "\0", sort @{$values};
+}
+
+sub _identity_backend {
+  my ($identity) = @_;
+
+  if (blessed($identity->{backend}) && $identity->{backend}->can('load_signing_key')) {
+    return ($identity->{backend}, undef);
+  }
+
+  my $backend_type = $identity->{backend_type};
+  $backend_type = 'direct_secret'
+    unless defined $backend_type && !ref($backend_type) && length($backend_type);
+
+  my %backend_classes = (
+    direct_secret => 'Overnet::Auth::Backend::DirectSecret',
+    pass          => 'Overnet::Auth::Backend::Pass',
+  );
+
+  my $class = $backend_classes{$backend_type};
+  return (undef, {
+    code    => 'backend_unavailable',
+    message => "unsupported backend_type: $backend_type",
+  }) unless defined $class;
+
+  eval "require $class; 1"
+    or return (undef, {
+      code    => 'backend_unavailable',
+      message => "$@",
+    });
+
+  return ($class->new, undef);
 }
 
 sub _error_response {
