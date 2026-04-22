@@ -12,6 +12,7 @@ use Scalar::Util qw(reftype);
 use Test::More;
 
 our @EXPORT_OK = qw(
+  run_auth_agent_conformance
   run_core_validator_conformance
   run_private_messaging_conformance
   run_irc_adapter_map_conformance
@@ -73,6 +74,64 @@ sub run_private_messaging_conformance {
       }
 
       _assertions($result, $expected->{assertions});
+    },
+  );
+}
+
+sub run_auth_agent_conformance {
+  _run_fixture_family(
+    family => 'auth',
+    runner => sub {
+      my ($fixture) = @_;
+      my $input = $fixture->{input} || {};
+      my $expected = $fixture->{expected} || {};
+
+      if (ref($input->{request}) eq 'HASH') {
+        require Overnet::Auth::Agent;
+
+        my $agent = Overnet::Auth::Agent->new(%{$input->{agent} || {}});
+        my $response = $agent->dispatch($input->{request});
+
+        if (ref($expected->{response}) eq 'HASH') {
+          ok(
+            _subset_match($response, $expected->{response}),
+            'response contains expected fields',
+          );
+        }
+
+        _assertions($response, $expected->{assertions});
+        return;
+      }
+
+      if (ref($input->{artifact}) eq 'HASH' && ref($input->{bridge}) eq 'HASH') {
+        require Overnet::Auth::Bridge::IRC;
+
+        my $wire_output = Overnet::Auth::Bridge::IRC->encode_artifact(
+          artifact => $input->{artifact},
+          %{$input->{bridge}},
+        );
+        my $decoded_artifact = Overnet::Auth::Bridge::IRC->decode_artifact(
+          %{$wire_output},
+        );
+
+        if (ref($expected->{wire_output}) eq 'HASH') {
+          ok(
+            _subset_match($wire_output, $expected->{wire_output}),
+            'wire output contains expected fields',
+          );
+        }
+
+        if (ref($expected->{decoded_artifact}) eq 'HASH') {
+          ok(
+            _subset_match($decoded_artifact, $expected->{decoded_artifact}),
+            'decoded artifact contains expected fields',
+          );
+        }
+
+        return;
+      }
+
+      die "Unsupported auth fixture shape\n";
     },
   );
 }
@@ -1072,6 +1131,32 @@ sub _assertions {
 
     fail("Unsupported assertion shape for path $path");
   }
+}
+
+sub _subset_match {
+  my ($got, $expected) = @_;
+
+  return !defined($got) if !defined($expected);
+
+  if (ref($expected) eq 'HASH') {
+    return 0 unless ref($got) eq 'HASH';
+    for my $key (keys %{$expected}) {
+      return 0 unless exists $got->{$key};
+      return 0 unless _subset_match($got->{$key}, $expected->{$key});
+    }
+    return 1;
+  }
+
+  if (ref($expected) eq 'ARRAY') {
+    return 0 unless ref($got) eq 'ARRAY';
+    return 0 unless @{$got} == @{$expected};
+    for my $idx (0 .. $#{$expected}) {
+      return 0 unless _subset_match($got->[$idx], $expected->[$idx]);
+    }
+    return 1;
+  }
+
+  return defined($got) && $got eq $expected;
 }
 
 sub _plain_data {
