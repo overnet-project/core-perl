@@ -34,13 +34,13 @@ Current implemented scope:
 Run the core test suite with:
 
 ```bash
-/home/_73/.local/bin/plx prove -Ilib -Ilocal/lib/perl5 -r t
+prove -r t
 ```
 
 Regenerate shared fixtures from `spec` with:
 
 ```bash
-/home/_73/.local/bin/plx perl -Ilib -Ilocal/lib/perl5 t/generate-fixtures.pl
+perl t/generate-fixtures.pl
 ```
 
 Relay daemons, relay sync, deploy packaging, and the heavy IRC release gate now live in [relay-perl](https://github.com/overnet-project/relay-perl).
@@ -54,4 +54,4 @@ Relay daemons, relay sync, deploy packaging, and the heavy IRC release gate now 
 
 ## Notes
 
-Local Perl build artifacts in `.plx/` and `local/` are intentionally ignored by git.
+Generated build artifacts and dependency caches are intentionally ignored by git.
