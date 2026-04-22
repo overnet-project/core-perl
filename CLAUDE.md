@@ -1,8 +1,8 @@
-# Overnet Code — Project Instructions
+# Overnet Core Perl — Project Instructions
 
-This directory contains the Perl reference implementation for the Overnet core specification.
+This directory contains the Perl reference implementation for the shared Overnet core, authority, and program runtime layers.
 
-The specification in `../overnet-spec/` is authoritative. The implementation must conform to the spec and its fixtures. If implementation work reveals a gap or ambiguity, fix the spec first, then update the implementation.
+The specification in `../spec/` is authoritative. The implementation must conform to the spec and its fixtures. If implementation work reveals a gap or ambiguity, fix the spec first, then update the implementation.
 
 ## Priorities
 
@@ -18,10 +18,10 @@ If a change tightens validation or otherwise changes behavior, update the spec, 
 
 ## Spec-First Workflow
 
-Work on `overnet-spec/` and `overnet-code/` in parallel, but in this order:
+Work on `spec/` and `core-perl/` in parallel, but in this order:
 
-1. Update or clarify the normative spec text in `../overnet-spec/docs/`
-2. Add or update conformance fixtures in `../overnet-spec/fixtures/core/`
+1. Update or clarify the normative spec text in `../spec/docs/`
+2. Add or update conformance fixtures in `../spec/fixtures/core/`
 3. Run `t/generate-fixtures.pl` to regenerate `t/fixtures/`
 4. Run tests and confirm the new case fails for the expected reason
 5. Implement the code change until tests pass
@@ -51,31 +51,8 @@ Useful commands:
 
 ```bash
 /home/_73/.local/bin/plx prove -Ilib -Ilocal/lib/perl5 -v t/validator.t
-/home/_73/.local/bin/plx perl -Ilib -Ilocal/lib/perl5 bin/overnet-release-gate.pl
-/home/_73/.local/bin/plx prove -Ilib -Ilocal/lib/perl5 \
-  t/spec-conformance-irc-server.t \
-  t/program-irc-server.t \
-  t/program-irc-server-relay.t \
-  t/program-irc-server-relay-fault.t \
-  t/program-irc-server-relay-failover.t \
-  t/relay-live.t \
-  t/relay-sync-live.t \
-  t/deploy-restore-drill-live.t
 /home/_73/.local/bin/plx perl -Ilib -Ilocal/lib/perl5 t/generate-fixtures.pl
 ```
-
-The default release gate is `bin/overnet-release-gate.pl`.
-
-It runs the IRC verification path:
-
-- `t/spec-conformance-irc-server.t`
-- `t/program-irc-server.t`
-- `t/program-irc-server-relay.t`
-- `t/program-irc-server-relay-fault.t`
-- `t/program-irc-server-relay-failover.t`
-- `t/relay-live.t`
-- `t/relay-sync-live.t`
-- `t/deploy-restore-drill-live.t`
 
 After making changes, always run the relevant tests. If a fix introduces new failures, keep iterating until all relevant tests pass.
 
@@ -83,7 +60,7 @@ When a task changes fixture generation, re-run fixture generation and then the v
 
 ## Fixtures
 
-Spec fixtures in `../overnet-spec/fixtures/core/` are the source of truth.
+Spec fixtures in `../spec/fixtures/core/` are the source of truth.
 
 Implementation fixtures in `t/fixtures/` are generated from them:
 
@@ -126,8 +103,12 @@ The implementation is currently narrow on purpose:
 - `lib/Overnet/Core/Validator.pm` contains the core validator
 - `t/validator.t` runs the fixture-driven test suite
 - `t/generate-fixtures.pl` syncs implementation fixtures from the spec
+- `lib/Overnet/Program/` contains the shared runtime/program service layer
+- `lib/Overnet/Authority/` contains non-relay authority helpers
 
 Keep the implementation aligned with the currently specified core. Do not implement speculative profile or adapter behavior unless it has a clear normative home in the spec.
+
+Relay daemons, relay persistence/sync, deploy packaging, and the relay-heavy IRC gate live in `../relay-perl/`.
 
 ## Documentation and Drift Control
 

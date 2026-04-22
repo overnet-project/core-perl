@@ -222,7 +222,7 @@ subtest 'runtime can instantiate adapters from class definitions' => sub {
 
 subtest 'runtime can load the real IRC adapter implementation path' => sub {
   my $runtime = Overnet::Program::Runtime->new;
-  my $irc_lib = '/home/_73/p/Overnet/overnet-adapter-irc/lib';
+  my $irc_lib = '/home/_73/p/Overnet/adapter-irc-perl/lib';
 
   ok $runtime->register_adapter_definition(
     adapter_id => 'irc.real',
@@ -253,7 +253,7 @@ subtest 'runtime can load the real IRC adapter implementation path' => sub {
 
 subtest 'services normalize real IRC adapter outputs and support derive operations' => sub {
   my $runtime = Overnet::Program::Runtime->new;
-  my $irc_lib = '/home/_73/p/Overnet/overnet-adapter-irc/lib';
+  my $irc_lib = '/home/_73/p/Overnet/adapter-irc-perl/lib';
 
   ok $runtime->register_adapter_definition(
     adapter_id => 'irc.real',
@@ -739,7 +739,7 @@ subtest 'real IRC adapter declares secure secret slots and accepts secret-backed
     },
     random_bytes_cb => _random_bytes_cb(80),
   );
-  my $irc_lib = '/home/_73/p/Overnet/overnet-adapter-irc/lib';
+  my $irc_lib = '/home/_73/p/Overnet/adapter-irc-perl/lib';
 
   ok $runtime->register_adapter_definition(
     adapter_id => 'irc.real',

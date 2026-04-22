@@ -1,6 +1,6 @@
 #!/usr/bin/env perl
 #
-# Generates t/fixtures/ from overnet-spec/fixtures/core/.
+# Generates t/fixtures/ from spec/fixtures/core/.
 #
 # Valid fixtures are re-signed with real keys so the validator can do
 # full Nostr crypto verification.  Invalid fixtures are copied as-is
@@ -20,7 +20,7 @@ my $json = JSON::PP->new->utf8->pretty->canonical;
 
 my $script_dir = dirname(__FILE__);
 my $out_dir    = File::Spec->catdir($script_dir, 'fixtures');
-my $spec_dir   = File::Spec->catdir($script_dir, '..', '..', 'overnet-spec', 'fixtures', 'core');
+my $spec_dir   = File::Spec->catdir($script_dir, '..', '..', 'spec', 'fixtures', 'core');
 
 die "Spec fixtures not found at $spec_dir\n" unless -d $spec_dir;
 make_path($out_dir);

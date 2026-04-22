@@ -12,7 +12,7 @@ my $fixtures_dir = File::Spec->catdir(
   dirname(__FILE__),
   '..',
   '..',
-  'overnet-spec',
+  'spec',
   'fixtures',
   'private-messaging',
 );
