@@ -1,16 +1,18 @@
-# Overnet Core Implementation
+# Overnet Core Perl
 
-Perl reference implementation workspace for the current Overnet core validation surface.
+Perl reference implementation workspace for the shared Overnet core, authority, and program runtime layers.
+
+GitHub: <https://github.com/overnet-project/core-perl>
 
 This repository tracks the draft specifications in:
 
-- `../overnet-spec/docs/core.md`
-- `../overnet-spec/docs/decisions.md`
-- `../overnet-spec/fixtures/core/`
+- [spec/docs/core.md](https://github.com/overnet-project/spec/blob/main/docs/core.md)
+- [spec/docs/decisions.md](https://github.com/overnet-project/spec/blob/main/docs/decisions.md)
+- [spec/fixtures/core/](https://github.com/overnet-project/spec/tree/main/fixtures/core)
 
 ## Status
 
-This is an early reference implementation, not a complete Overnet stack.
+This repo intentionally excludes the relay application and relay-heavy integration gate.
 
 Current implemented scope:
 
@@ -22,22 +24,10 @@ Current implemented scope:
 - `7801` removal checks
 - baseline removal authorization
 - baseline delegation semantics for delegated removal
-- shared fixture regeneration from `overnet-spec`
-- initial Overnet Program Runtime module scaffolding
-
-This repository is intentionally narrow right now. It is acting as a conformance gate for the currently implemented core event model.
-
-## What This Repo Is Not
-
-This repository does not currently implement:
-
-- a full Overnet relay
-- a full client stack
-- application profiles
-- adapter implementations
-- a complete Overnet Program Runtime behavior surface
-
-Those concerns are expected to live in companion repositories.
+- hosted-channel authority helpers
+- Overnet program runtime modules
+- shared fixture regeneration from `spec`
+- non-relay program/runtime tests
 
 ## Tests
 
@@ -47,31 +37,20 @@ Run the core test suite with:
 /home/_73/.local/bin/plx prove -Ilib -Ilocal/lib/perl5 -r t
 ```
 
-Run the default release gate with:
-
-```bash
-/home/_73/.local/bin/plx perl -Ilib -Ilocal/lib/perl5 bin/overnet-release-gate.pl
-```
-
-The default release gate runs the IRC verification path:
-
-```bash
-/home/_73/.local/bin/plx prove -Ilib -Ilocal/lib/perl5 \
-  t/spec-conformance-irc-server.t \
-  t/program-irc-server.t \
-  t/program-irc-server-relay.t \
-  t/program-irc-server-relay-fault.t \
-  t/program-irc-server-relay-failover.t \
-  t/relay-live.t \
-  t/relay-sync-live.t \
-  t/deploy-restore-drill-live.t
-```
-
-Regenerate shared fixtures from `overnet-spec` with:
+Regenerate shared fixtures from `spec` with:
 
 ```bash
 /home/_73/.local/bin/plx perl -Ilib -Ilocal/lib/perl5 t/generate-fixtures.pl
 ```
+
+Relay daemons, relay sync, deploy packaging, and the heavy IRC release gate now live in [relay-perl](https://github.com/overnet-project/relay-perl).
+
+## Related Repositories
+
+- [spec](https://github.com/overnet-project/spec)
+- [relay-perl](https://github.com/overnet-project/relay-perl)
+- [adapter-irc-perl](https://github.com/overnet-project/adapter-irc-perl)
+- [irc-server](https://github.com/overnet-project/irc-server)
 
 ## Notes
 
