@@ -786,4 +786,156 @@ subtest 'policies.grant advances policy ids past preloaded policy ids and accept
   }, 'service_identity-only policies are accepted';
 };
 
+subtest 'state_writer persists policy and service-pin changes' => sub {
+  my @writes;
+  my $agent = Overnet::Auth::Agent->new(
+    state_writer => sub {
+      my ($state) = @_;
+      push @writes, $state;
+      return 1;
+    },
+  );
+
+  my $grant = $agent->dispatch({
+    type   => 'request',
+    id     => 'policy-grant-write-1',
+    method => 'policies.grant',
+    params => {
+      policy => {
+        identity_id => 'default',
+        program_id  => 'irc.bridge',
+        service_identity => {
+          scheme => 'nostr.pubkey',
+          value  => ('1' x 64),
+        },
+        scope  => 'irc://irc.example.test/overnet',
+        action => 'session.delegate',
+      },
+    },
+  });
+  my $set = $agent->dispatch({
+    type   => 'request',
+    id     => 'service-pin-set-write-1',
+    method => 'service_pins.set',
+    params => {
+      locator => 'wss://relay.example.test/auth',
+      service_identity => {
+        scheme => 'nostr.pubkey',
+        value  => ('2' x 64),
+      },
+    },
+  });
+
+  is $grant->{ok}, 1, 'policy grant succeeds';
+  is $set->{ok}, 1, 'service pin set succeeds';
+  is scalar(@writes), 2, 'state_writer was invoked for both mutations';
+  is $writes[0]{policies}[0]{policy_id}, 'policy-1', 'policy grant persisted policy state';
+  is $writes[1]{service_pins}{'wss://relay.example.test/auth'}{value}, ('2' x 64),
+    'service pin set persisted service-pin state';
+};
+
+subtest 'authorize and revoke persist session state and roll back on state write failure' => sub {
+  my @writes;
+  my $fail = 0;
+  my $agent = Overnet::Auth::Agent->new(
+    identities => [
+      {
+        identity_id  => 'default',
+        backend_type => 'direct_secret',
+        backend_config => {
+          secret => $fixture_secret,
+        },
+        public_identity => {
+          scheme => 'nostr.pubkey',
+          value  => $fixture_pubkey,
+        },
+      },
+    ],
+    state_writer => sub {
+      my ($state) = @_;
+      die "write failed\n" if $fail;
+      push @writes, $state;
+      return 1;
+    },
+  );
+
+  my $authorize = $agent->dispatch({
+    type   => 'request',
+    id     => 'authorize-write-1',
+    method => 'sessions.authorize',
+    params => {
+      program_id  => 'irc.bridge',
+      identity_id => 'default',
+      service     => {
+        locators => [ 'wss://relay.example.test/auth' ],
+        service_identity => {
+          scheme => 'nostr.pubkey',
+          value  => ('1' x 64),
+        },
+      },
+      scope     => 'irc://irc.example.test/overnet',
+      action    => 'session.authenticate',
+      challenge => {
+        type  => 'opaque',
+        value => '6cf8a952df516a8e691c6138496516abe84ccfefa9678f518bb52f70b1ca966f',
+      },
+      artifacts => [
+        {
+          type => 'nostr.event',
+          params => {
+            kind => 22242,
+            tags => [
+              [ relay => 'irc://irc.example.test/overnet' ],
+              [ challenge => '6cf8a952df516a8e691c6138496516abe84ccfefa9678f518bb52f70b1ca966f' ],
+            ],
+          },
+        },
+      ],
+    },
+  });
+
+  is $authorize->{ok}, 1, 'authorize succeeds';
+  is scalar(@{$writes[0]{sessions} || []}), 1, 'authorize persisted a session';
+  is $writes[0]{service_pins}{'wss://relay.example.test/auth'}{value}, ('1' x 64),
+    'authorize persisted first-contact service pin state';
+
+  my $revoke = $agent->dispatch({
+    type   => 'request',
+    id     => 'revoke-write-1',
+    method => 'sessions.revoke',
+    params => {
+      session_handle => { id => $authorize->{result}{session_handle}{id} },
+    },
+  });
+
+  is $revoke->{ok}, 1, 'revoke succeeds';
+  is_deeply $writes[1]{sessions}, [], 'revoke persisted session removal';
+
+  $fail = 1;
+  my $failed = $agent->dispatch({
+    type   => 'request',
+    id     => 'policy-grant-write-fail-1',
+    method => 'policies.grant',
+    params => {
+      policy => {
+        identity_id => 'default',
+        program_id  => 'irc.bridge',
+        locators    => [ 'irc://irc.example.test/overnet' ],
+        scope       => 'irc://irc.example.test/overnet',
+        action      => 'session.authenticate',
+      },
+    },
+  });
+  my $policies = $agent->dispatch({
+    type   => 'request',
+    id     => 'policies-list-after-fail-1',
+    method => 'policies.list',
+    params => {},
+  });
+
+  is $failed->{ok}, 0, 'failed persistence turns the mutation into an error';
+  is $failed->{error}{code}, 'internal_failure', 'state write failure is surfaced';
+  is_deeply $policies->{result}{policies}, [], 'failed persistence rolled the in-memory mutation back';
+};
+
 done_testing;

@@ -14,6 +14,7 @@ lib/Overnet/Auth/CLI.pm
 lib/Overnet/Auth/Config.pm
 lib/Overnet/Auth/Daemon.pm
 lib/Overnet/Auth/Server.pm
+lib/Overnet/Auth/StateStore.pm
 lib/Overnet/Authority/Delegation.pm
 lib/Overnet/Authority/HostedChannel.pm
 lib/Overnet/Core/Nostr.pm
@@ -48,6 +49,7 @@ t/auth-config.t
 t/auth-daemon-cli.t
 t/auth-daemon.t
 t/auth-readme.t
+t/auth-state-store.t
 t/auth-fixtures.t
 t/authority-delegation.t
 t/authority-hosted-channel.t

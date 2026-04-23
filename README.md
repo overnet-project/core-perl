@@ -34,12 +34,15 @@ Current implemented scope:
 
 The reference auth-agent daemon reads one JSON config file and listens on one local auth socket.
 
+Static identity and backend configuration live in the daemon config file. Mutable auth-agent state lives in a separate state file managed by the daemon.
+
 Example config:
 
 ```json
 {
   "daemon": {
-    "endpoint": "/tmp/overnet-auth.sock"
+    "endpoint": "/tmp/overnet-auth.sock",
+    "state_file": "/home/alice/.local/state/overnet/auth-state.json"
   },
   "identities": [
     {
@@ -53,29 +56,11 @@ Example config:
         "value": "274722f14ff06e2a790322ae1cee2d28c9cb0ffcd18d78d3bc7cca3f19e9764d"
       }
     }
-  ],
-  "policies": [
-    {
-      "identity_id": "default",
-      "program_id": "irc.bridge",
-      "locators": [
-        "irc://irc.example.test/overnet"
-      ],
-      "scope": "irc://irc.example.test/overnet",
-      "action": "session.authenticate"
-    },
-    {
-      "identity_id": "default",
-      "program_id": "irc.bridge",
-      "locators": [
-        "irc://irc.example.test/overnet"
-      ],
-      "scope": "irc://irc.example.test/overnet",
-      "action": "session.delegate"
-    }
   ]
 }
 ```
+
+The daemon writes `policies`, `service_pins`, and `sessions` into the configured state file atomically whenever those mutable records change.
 
 Start the daemon with:
 

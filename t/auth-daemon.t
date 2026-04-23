@@ -129,6 +129,117 @@ subtest 'daemon rejects a pre-existing non-socket file at the endpoint path' => 
     'daemon refuses to unlink non-socket endpoint paths';
 };
 
+subtest 'daemon loads mutable state from the configured state file' => sub {
+  my $dir = tempdir(CLEANUP => 1, DIR => File::Spec->catdir($FindBin::Bin, '..'));
+  my $config_file = File::Spec->catfile($dir, 'auth-agent.json');
+  my $state_file = File::Spec->catfile($dir, 'auth-state.json');
+  my $socket_path = File::Spec->catfile($dir, 'auth.sock');
+
+  _write_config($config_file, $socket_path, state_file => $state_file, with_policies => 0);
+  _write_state($state_file, {
+    policies => [
+      {
+        policy_id   => 'policy-1',
+        identity_id => 'default',
+        program_id  => 'irc.bridge',
+        locators    => [ 'irc://irc.example.test/overnet' ],
+        scope       => 'irc://irc.example.test/overnet',
+        action      => 'session.authenticate',
+      },
+    ],
+    service_pins => {},
+    sessions     => [],
+  });
+
+  my ($pid, $client) = _start_daemon(
+    config_file     => $config_file,
+    max_connections => 1,
+    endpoint        => $socket_path,
+  );
+
+  my $response = $client->sessions_authorize(
+    program_id   => 'irc.bridge',
+    identity_id  => 'default',
+    interactive  => 0,
+    service      => {
+      locators => [ 'irc://irc.example.test/overnet' ],
+    },
+    scope     => 'irc://irc.example.test/overnet',
+    action    => 'session.authenticate',
+    challenge => {
+      type  => 'opaque',
+      value => $challenge,
+    },
+    artifacts => [
+      {
+        type => 'nostr.event',
+        params => {
+          kind => 22242,
+          tags => [
+            [ relay => 'irc://irc.example.test/overnet' ],
+            [ challenge => $challenge ],
+          ],
+        },
+      },
+    ],
+  );
+
+  is $response->{ok}, 1, 'headless authorization succeeds from persisted policy state';
+  _wait_for_child($pid, 'daemon exits cleanly after loading persisted mutable state');
+};
+
+subtest 'daemon persists mutable session and service-pin state to the configured state file' => sub {
+  my $dir = tempdir(CLEANUP => 1, DIR => File::Spec->catdir($FindBin::Bin, '..'));
+  my $config_file = File::Spec->catfile($dir, 'auth-agent.json');
+  my $state_file = File::Spec->catfile($dir, 'auth-state.json');
+  my $socket_path = File::Spec->catfile($dir, 'auth.sock');
+
+  _write_config($config_file, $socket_path, state_file => $state_file, with_policies => 0);
+  my ($pid, $client) = _start_daemon(
+    config_file     => $config_file,
+    max_connections => 1,
+    endpoint        => $socket_path,
+  );
+
+  my $response = $client->sessions_authorize(
+    program_id  => 'irc.bridge',
+    identity_id => 'default',
+    service     => {
+      locators => [ 'wss://relay.example.test/auth' ],
+      service_identity => {
+        scheme => 'nostr.pubkey',
+        value  => ('1' x 64),
+      },
+    },
+    scope     => 'irc://irc.example.test/overnet',
+    action    => 'session.authenticate',
+    challenge => {
+      type  => 'opaque',
+      value => $challenge,
+    },
+    artifacts => [
+      {
+        type => 'nostr.event',
+        params => {
+          kind => 22242,
+          tags => [
+            [ relay => 'irc://irc.example.test/overnet' ],
+            [ challenge => $challenge ],
+          ],
+        },
+      },
+    ],
+  );
+
+  is $response->{ok}, 1, 'authorization succeeds';
+  _wait_for_child($pid, 'daemon exits cleanly after persisting mutable state');
+
+  my $state = _read_json($state_file);
+  is scalar(@{$state->{sessions} || []}), 1, 'persisted state includes the new session';
+  is $state->{service_pins}{'wss://relay.example.test/auth'}{value}, ('1' x 64),
+    'persisted state includes the first-contact service pin';
+};
+
 done_testing;
 
 sub _start_daemon {
@@ -182,12 +293,23 @@ sub _config_endpoint {
 }
 
 sub _write_config {
-  my ($path, $socket_path) = @_;
+  my ($path, $socket_path, %args) = @_;
+  my @policies = $args{with_policies} || !exists($args{with_policies}) ? (
+    {
+      identity_id => 'default',
+      program_id  => 'irc.bridge',
+      locators    => [ 'irc://irc.example.test/overnet' ],
+      scope       => 'irc://irc.example.test/overnet',
+      action      => 'session.authenticate',
+    },
+  ) : ();
+
   open my $fh, '>', $path
     or die "open $path failed: $!";
   print {$fh} encode_json({
     daemon => {
       endpoint => $socket_path,
+      (defined($args{state_file}) ? (state_file => $args{state_file}) : ()),
     },
     identities => [
       {
@@ -202,17 +324,29 @@ sub _write_config {
         },
       },
     ],
-    policies => [
-      {
-        identity_id => 'default',
-        program_id  => 'irc.bridge',
-        locator     => 'irc://irc.example.test/overnet',
-        scope       => 'irc://irc.example.test/overnet',
-        action      => 'session.authenticate',
-      },
-    ],
+    policies => \@policies,
   })
     or die "write $path failed: $!";
   close $fh
     or die "close $path failed: $!";
+}
+
+sub _write_state {
+  my ($path, $value) = @_;
+  open my $fh, '>', $path
+    or die "open $path failed: $!";
+  print {$fh} encode_json($value)
+    or die "write $path failed: $!";
+  close $fh
+    or die "close $path failed: $!";
+}
+
+sub _read_json {
+  my ($path) = @_;
+  open my $fh, '<', $path
+    or die "open $path failed: $!";
+  my $value = JSON::PP::decode_json(do { local $/; <$fh> });
+  close $fh
+    or die "close $path failed: $!";
+  return $value;
 }

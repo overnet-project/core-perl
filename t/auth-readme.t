@@ -37,11 +37,11 @@ ok defined $config_json, 'README includes a JSON auth-agent config example'
 my $config = decode_json($config_json);
 is ref($config), 'HASH', 'config example decodes to an object';
 ok ref($config->{daemon}) eq 'HASH', 'config example includes a daemon section';
+ok defined($config->{daemon}{state_file}) && length($config->{daemon}{state_file}),
+  'config example includes a mutable auth state file';
 ok ref($config->{identities}) eq 'ARRAY' && @{$config->{identities}},
   'config example includes at least one identity';
-ok ref($config->{policies}) eq 'ARRAY' && @{$config->{policies}},
-  'config example includes at least one policy';
-ok ref($config->{policies}[0]{locators}) eq 'ARRAY' && @{$config->{policies}[0]{locators}},
-  'config example uses policy locators arrays';
+ok !exists($config->{policies}) || ref($config->{policies}) eq 'ARRAY',
+  'config example no longer requires mutable policies inline';
 
 done_testing;

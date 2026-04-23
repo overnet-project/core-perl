@@ -11,6 +11,7 @@ use Socket qw(SOCK_STREAM);
 use Overnet::Auth::Agent;
 use Overnet::Auth::Config;
 use Overnet::Auth::Server;
+use Overnet::Auth::StateStore;
 
 our $VERSION = '0.001';
 
@@ -38,7 +39,28 @@ sub new {
   $socket_mode = 0600
     unless defined $socket_mode;
 
-  my $agent = $args{agent} || Overnet::Auth::Agent->new(%{$config->agent_args});
+  my $state_store = $args{state_store};
+  my $state_file = defined($args{state_file}) && !ref($args{state_file}) && length($args{state_file})
+    ? $args{state_file}
+    : $config->state_file;
+  $state_store = Overnet::Auth::StateStore->new(path => $state_file)
+    if !defined($state_store) && defined($state_file) && !ref($state_file) && length($state_file);
+
+  my $mutable_state = $config->mutable_state;
+  if ($state_store) {
+    my $loaded_state = $state_store->load_state;
+    $mutable_state = $loaded_state if defined $loaded_state;
+  }
+
+  my $agent = $args{agent} || Overnet::Auth::Agent->new(
+    %{$config->agent_args(state => $mutable_state)},
+    (ref($state_store) ? (
+      state_writer => sub {
+        my ($state) = @_;
+        return $state_store->save_state(state => $state);
+      },
+    ) : ()),
+  );
   die "agent must support dispatch\n"
     unless ref($agent) && $agent->can('dispatch');
 
@@ -50,6 +72,7 @@ sub new {
     socket_mode     => $socket_mode,
     max_connections => $args{max_connections},
     server          => $server,
+    state_store     => $state_store,
     listen_factory  => $args{listen_factory},
     listen_socket   => undef,
   }, $class;

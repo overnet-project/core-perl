@@ -34,6 +34,7 @@ WriteMakefile(
         t/auth-daemon-cli.t
         t/auth-daemon.t
         t/auth-readme.t
+        t/auth-state-store.t
         t/auth-fixtures.t
         t/authority-delegation.t
         t/authority-hosted-channel.t

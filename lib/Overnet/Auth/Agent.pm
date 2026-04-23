@@ -19,6 +19,7 @@ sub new {
     policies       => [],
     service_pins   => {},
     sessions       => {},
+    state_writer   => $args{state_writer},
     next_policy_id => 1,
     next_session_id => 1,
   }, $class;
@@ -182,16 +183,21 @@ sub _dispatch_policies_grant {
   my $stored = _normalize_policy_input($params->{policy})
     or return $self->_error_response($id, 'invalid_request', 'policy must be a valid policy object');
 
-  my $policy_id = $self->_next_policy_id;
-  $stored->{policy_id} = $policy_id;
-  push @{$self->{policies}}, $stored;
+  my ($policy, $persist_error) = $self->_persist_mutation(sub {
+    my $policy_id = $self->_next_policy_id;
+    $stored->{policy_id} = $policy_id;
+    push @{$self->{policies}}, $stored;
+    return _policy_descriptor($stored);
+  });
+  return $self->_error_response($id, @{$persist_error})
+    unless $policy;
 
   return {
     type   => 'response',
     id     => $id,
     ok     => JSON::PP::true,
     result => {
-      policy => _policy_descriptor($stored),
+      policy => $policy,
     },
   };
 }
@@ -208,10 +214,15 @@ sub _dispatch_policies_revoke {
   return $self->_error_response($id, 'invalid_request', 'policy_id is required')
     unless defined $policy_id;
 
-  $self->{policies} = [
-    grep { (($_->{policy_id} || '') ne $policy_id) }
-    @{$self->{policies}}
-  ];
+  my ($revoked, $persist_error) = $self->_persist_mutation(sub {
+    $self->{policies} = [
+      grep { (($_->{policy_id} || '') ne $policy_id) }
+      @{$self->{policies}}
+    ];
+    return 1;
+  });
+  return $self->_error_response($id, @{$persist_error})
+    unless $revoked;
 
   return {
     type   => 'response',
@@ -260,7 +271,12 @@ sub _dispatch_service_pins_set {
   return $self->_error_response($id, 'invalid_request', 'service_identity must be a valid descriptor')
     unless $service_identity;
 
-  $self->{service_pins}{$locator} = $service_identity;
+  my ($stored, $persist_error) = $self->_persist_mutation(sub {
+    $self->{service_pins}{$locator} = $service_identity;
+    return _clone_hash($service_identity);
+  });
+  return $self->_error_response($id, @{$persist_error})
+    unless $stored;
 
   return {
     type   => 'response',
@@ -268,7 +284,7 @@ sub _dispatch_service_pins_set {
     ok     => JSON::PP::true,
     result => {
       locator          => $locator,
-      service_identity => _clone_hash($service_identity),
+      service_identity => $stored,
     },
   };
 }
@@ -285,7 +301,12 @@ sub _dispatch_service_pins_forget {
   return $self->_error_response($id, 'invalid_request', 'locator is required')
     unless defined $locator && !ref($locator) && length($locator);
 
-  delete $self->{service_pins}{$locator};
+  my ($forgotten, $persist_error) = $self->_persist_mutation(sub {
+    delete $self->{service_pins}{$locator};
+    return 1;
+  });
+  return $self->_error_response($id, @{$persist_error})
+    unless $forgotten;
 
   return {
     type   => 'response',
@@ -375,18 +396,22 @@ sub _dispatch_authorize {
     push @returned, $built;
   }
 
-  $self->_pin_service_identity($service)
-    if $service_pin_state eq 'first_contact';
+  my ($session_handle, $persist_error) = $self->_persist_mutation(sub {
+    $self->_pin_service_identity($service)
+      if $service_pin_state eq 'first_contact';
 
-  my $session_handle = $self->_store_session(
-    identity_id    => $identity->{identity_id},
-    program_id     => $program_id,
-    service        => _clone_hash($service),
-    scope          => $scope,
-    action         => $action,
-    renewable      => 1,
-    artifacts      => [ map { _clone_hash($_) } @{$artifacts} ],
-  );
+    return $self->_store_session(
+      identity_id    => $identity->{identity_id},
+      program_id     => $program_id,
+      service        => _clone_hash($service),
+      scope          => $scope,
+      action         => $action,
+      renewable      => 1,
+      artifacts      => [ map { _clone_hash($_) } @{$artifacts} ],
+    );
+  });
+  return $self->_error_response($id, @{$persist_error})
+    unless $session_handle;
 
   return {
     type   => 'response',
@@ -478,7 +503,12 @@ sub _dispatch_revoke {
   return $self->_error_response($id, 'invalid_request', 'session_handle.id is required')
     unless defined $session_handle;
 
-  delete $self->{sessions}{$session_handle};
+  my ($revoked, $persist_error) = $self->_persist_mutation(sub {
+    delete $self->{sessions}{$session_handle};
+    return 1;
+  });
+  return $self->_error_response($id, @{$persist_error})
+    unless $revoked;
 
   return {
     type   => 'response',
@@ -593,6 +623,9 @@ sub _normalize_policy_input {
   my $service = ref($policy->{service}) eq 'HASH'
     ? $policy->{service}
     : {
+        (defined($policy->{locator}) && !ref($policy->{locator}) && length($policy->{locator})
+          ? (locators => [ $policy->{locator} ])
+          : ()),
         (ref($policy->{locators}) eq 'ARRAY' ? (locators => $policy->{locators}) : ()),
         (ref($policy->{service_identity}) eq 'HASH' ? (service_identity => $policy->{service_identity}) : ()),
       };
@@ -641,6 +674,58 @@ sub _policy_id_value {
   my ($policy_id) = @_;
   return undef unless defined $policy_id && !ref($policy_id) && length($policy_id);
   return $policy_id;
+}
+
+sub _persist_mutation {
+  my ($self, $mutator) = @_;
+  my $snapshot = $self->_mutable_state_snapshot;
+  my $result = $mutator->();
+  my $writer = $self->{state_writer};
+
+  if (ref($writer) eq 'CODE') {
+    my $ok = eval { $writer->($self->_persistent_state) };
+    if ($@ || !$ok) {
+      my $message = $@ || 'auth state write failed';
+      chomp $message;
+      $self->_restore_mutable_state_snapshot($snapshot);
+      return (undef, [ 'internal_failure', $message ]);
+    }
+  }
+
+  return ($result, undef);
+}
+
+sub _mutable_state_snapshot {
+  my ($self) = @_;
+  return {
+    policies        => _clone_hash($self->{policies}),
+    service_pins    => _clone_hash($self->{service_pins}),
+    sessions        => _clone_hash($self->{sessions}),
+    next_policy_id  => $self->{next_policy_id},
+    next_session_id => $self->{next_session_id},
+  };
+}
+
+sub _restore_mutable_state_snapshot {
+  my ($self, $snapshot) = @_;
+  $self->{policies} = _clone_hash($snapshot->{policies}) || [];
+  $self->{service_pins} = _clone_hash($snapshot->{service_pins}) || {};
+  $self->{sessions} = _clone_hash($snapshot->{sessions}) || {};
+  $self->{next_policy_id} = $snapshot->{next_policy_id};
+  $self->{next_session_id} = $snapshot->{next_session_id};
+  return 1;
+}
+
+sub _persistent_state {
+  my ($self) = @_;
+  return {
+    policies => [ map { _clone_hash($_) } @{$self->{policies}} ],
+    service_pins => _clone_hash($self->{service_pins}),
+    sessions => [
+      map { _clone_hash($self->{sessions}{$_}) }
+      sort keys %{$self->{sessions}}
+    ],
+  };
 }
 
 sub _service_pin_state {
