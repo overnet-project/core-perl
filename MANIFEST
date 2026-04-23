@@ -1,4 +1,5 @@
 .gitignore
+bin/overnet-auth.pl
 bin/overnet-auth-agent.pl
 CLAUDE.md
 cpanfile
@@ -9,6 +10,7 @@ lib/Overnet/Auth/Backend/DirectSecret.pm
 lib/Overnet/Auth/Backend/Pass.pm
 lib/Overnet/Auth/Bridge/IRC.pm
 lib/Overnet/Auth/Client.pm
+lib/Overnet/Auth/CLI.pm
 lib/Overnet/Auth/Config.pm
 lib/Overnet/Auth/Daemon.pm
 lib/Overnet/Auth/Server.pm
@@ -41,9 +43,11 @@ t/00-load-program-runtime.t
 t/auth-agent.t
 t/auth-backends.t
 t/auth-client.t
+t/auth-cli.t
 t/auth-config.t
 t/auth-daemon-cli.t
 t/auth-daemon.t
+t/auth-readme.t
 t/auth-fixtures.t
 t/authority-delegation.t
 t/authority-hosted-channel.t

@@ -23,9 +23,10 @@ is $args->{MIN_PERL_VERSION}, '5.024', 'minimum Perl version';
 is_deeply(
   $args->{EXE_FILES},
   [
+    'bin/overnet-auth.pl',
     'bin/overnet-auth-agent.pl',
   ],
-  'auth-agent daemon script is installed',
+  'auth scripts are installed',
 );
 
 is_deeply(
@@ -66,9 +67,11 @@ is_deeply(
         t/auth-agent.t
         t/auth-backends.t
         t/auth-client.t
+        t/auth-cli.t
         t/auth-config.t
         t/auth-daemon-cli.t
         t/auth-daemon.t
+        t/auth-readme.t
         t/auth-fixtures.t
         t/authority-delegation.t
         t/authority-hosted-channel.t

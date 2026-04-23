@@ -26,8 +26,72 @@ Current implemented scope:
 - baseline delegation semantics for delegated removal
 - hosted-channel authority helpers
 - Overnet program runtime modules
+- local auth-agent config, daemon, and client CLI
 - shared fixture regeneration from `spec`
 - non-relay program/runtime tests
+
+## Auth Agent
+
+The reference auth-agent daemon reads one JSON config file and listens on one local auth socket.
+
+Example config:
+
+```json
+{
+  "daemon": {
+    "endpoint": "/tmp/overnet-auth.sock"
+  },
+  "identities": [
+    {
+      "identity_id": "default",
+      "backend_type": "pass",
+      "backend_config": {
+        "entry": "overnet-priv-key"
+      },
+      "public_identity": {
+        "scheme": "nostr.pubkey",
+        "value": "274722f14ff06e2a790322ae1cee2d28c9cb0ffcd18d78d3bc7cca3f19e9764d"
+      }
+    }
+  ],
+  "policies": [
+    {
+      "identity_id": "default",
+      "program_id": "irc.bridge",
+      "locator": "irc://irc.example.test/overnet",
+      "scope": "irc://irc.example.test/overnet",
+      "action": "session.authenticate"
+    },
+    {
+      "identity_id": "default",
+      "program_id": "irc.bridge",
+      "locator": "irc://irc.example.test/overnet",
+      "scope": "irc://irc.example.test/overnet",
+      "action": "session.delegate"
+    }
+  ]
+}
+```
+
+Start the daemon with:
+
+```bash
+overnet-auth-agent.pl --config-file ~/.config/overnet/auth-agent.json
+```
+
+Query it with:
+
+```bash
+OVERNET_AUTH_SOCK=/tmp/overnet-auth.sock overnet-auth.pl identities
+```
+
+The generic client CLI also exposes:
+
+```text
+overnet-auth.pl authorize
+overnet-auth.pl renew
+overnet-auth.pl revoke
+```
 
 ## Tests
 
