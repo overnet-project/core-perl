@@ -58,14 +58,18 @@ Example config:
     {
       "identity_id": "default",
       "program_id": "irc.bridge",
-      "locator": "irc://irc.example.test/overnet",
+      "locators": [
+        "irc://irc.example.test/overnet"
+      ],
       "scope": "irc://irc.example.test/overnet",
       "action": "session.authenticate"
     },
     {
       "identity_id": "default",
       "program_id": "irc.bridge",
-      "locator": "irc://irc.example.test/overnet",
+      "locators": [
+        "irc://irc.example.test/overnet"
+      ],
       "scope": "irc://irc.example.test/overnet",
       "action": "session.delegate"
     }
@@ -85,7 +89,25 @@ Query it with:
 OVERNET_AUTH_SOCK=/tmp/overnet-auth.sock overnet-auth.pl identities
 ```
 
-The generic client CLI also exposes:
+Inspect daemon-managed state with:
+
+```text
+overnet-auth.pl identities
+overnet-auth.pl policies
+overnet-auth.pl service-pins
+overnet-auth.pl sessions
+```
+
+Manage daemon-held approval state with:
+
+```text
+overnet-auth.pl policy-grant
+overnet-auth.pl policy-revoke
+overnet-auth.pl service-pin-set
+overnet-auth.pl service-pin-forget
+```
+
+The generic client CLI also exposes the auth/session flow methods:
 
 ```text
 overnet-auth.pl authorize

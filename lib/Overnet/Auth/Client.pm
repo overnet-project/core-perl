@@ -78,6 +78,62 @@ sub identities_list {
   );
 }
 
+sub policies_list {
+  my ($self) = @_;
+  return $self->request(
+    method => 'policies.list',
+    params => {},
+  );
+}
+
+sub policies_grant {
+  my ($self, %params) = @_;
+  return $self->request(
+    method => 'policies.grant',
+    params => \%params,
+  );
+}
+
+sub policies_revoke {
+  my ($self, %params) = @_;
+  return $self->request(
+    method => 'policies.revoke',
+    params => \%params,
+  );
+}
+
+sub service_pins_list {
+  my ($self) = @_;
+  return $self->request(
+    method => 'service_pins.list',
+    params => {},
+  );
+}
+
+sub service_pins_set {
+  my ($self, %params) = @_;
+  return $self->request(
+    method => 'service_pins.set',
+    params => \%params,
+  );
+}
+
+sub service_pins_forget {
+  my ($self, %params) = @_;
+  return $self->request(
+    method => 'service_pins.forget',
+    params => \%params,
+  );
+}
+
+sub sessions_list {
+  my ($self) = @_;
+  return $self->request(
+    method => 'sessions.list',
+    params => {},
+  );
+}
+
 sub sessions_authorize {
   my ($self, %params) = @_;
   return $self->request(

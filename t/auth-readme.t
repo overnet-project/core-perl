@@ -21,6 +21,14 @@ like $content, qr/overnet-auth-agent\.pl --config-file/,
   'README documents starting the auth-agent daemon';
 like $content, qr/overnet-auth\.pl identities/,
   'README documents the auth client CLI';
+like $content, qr/overnet-auth\.pl policies/,
+  'README documents policy inspection';
+like $content, qr/overnet-auth\.pl policy-grant/,
+  'README documents policy management';
+like $content, qr/overnet-auth\.pl service-pins/,
+  'README documents service pin inspection';
+like $content, qr/overnet-auth\.pl sessions/,
+  'README documents session inspection';
 
 my ($config_json) = $content =~ /```json\n(.*?)\n```/s;
 ok defined $config_json, 'README includes a JSON auth-agent config example'
@@ -33,5 +41,7 @@ ok ref($config->{identities}) eq 'ARRAY' && @{$config->{identities}},
   'config example includes at least one identity';
 ok ref($config->{policies}) eq 'ARRAY' && @{$config->{policies}},
   'config example includes at least one policy';
+ok ref($config->{policies}[0]{locators}) eq 'ARRAY' && @{$config->{policies}[0]{locators}},
+  'config example uses policy locators arrays';
 
 done_testing;

@@ -19,6 +19,7 @@ sub new {
     policies       => [],
     service_pins   => {},
     sessions       => {},
+    next_policy_id => 1,
     next_session_id => 1,
   }, $class;
 
@@ -32,10 +33,17 @@ sub new {
     push @{$self->{identity_order}}, $identity_id;
   }
 
-  $self->{policies} = [
-    map { ref($_) eq 'HASH' ? { %$_ } : () }
-    @{$args{policies} || []}
-  ];
+  for my $policy (@{$args{policies} || []}) {
+    next unless ref($policy) eq 'HASH';
+    my $stored = _normalize_policy_input($policy);
+    next unless $stored;
+
+    my $policy_id = _policy_id_value($policy->{policy_id});
+    $policy_id = $self->_next_policy_id unless defined $policy_id;
+    $stored->{policy_id} = $policy_id;
+    push @{$self->{policies}}, $stored;
+    $self->_note_policy_id($policy_id);
+  }
 
   $self->{service_pins} = {
     map { $_ => { %{$args{service_pins}{$_}} } }
@@ -74,11 +82,18 @@ sub dispatch {
     unless defined $method && !ref($method) && length($method);
 
   my %dispatch = (
-    'agent.info'         => sub { $self->_dispatch_agent_info($request) },
-    'identities.list'    => sub { $self->_dispatch_identities_list($request) },
-    'sessions.authorize' => sub { $self->_dispatch_authorize($request) },
-    'sessions.renew'     => sub { $self->_dispatch_renew($request) },
-    'sessions.revoke'    => sub { $self->_dispatch_revoke($request) },
+    'agent.info'           => sub { $self->_dispatch_agent_info($request) },
+    'identities.list'      => sub { $self->_dispatch_identities_list($request) },
+    'policies.list'        => sub { $self->_dispatch_policies_list($request) },
+    'policies.grant'       => sub { $self->_dispatch_policies_grant($request) },
+    'policies.revoke'      => sub { $self->_dispatch_policies_revoke($request) },
+    'service_pins.list'    => sub { $self->_dispatch_service_pins_list($request) },
+    'service_pins.set'     => sub { $self->_dispatch_service_pins_set($request) },
+    'service_pins.forget'  => sub { $self->_dispatch_service_pins_forget($request) },
+    'sessions.list'        => sub { $self->_dispatch_sessions_list($request) },
+    'sessions.authorize'   => sub { $self->_dispatch_authorize($request) },
+    'sessions.renew'       => sub { $self->_dispatch_renew($request) },
+    'sessions.revoke'      => sub { $self->_dispatch_revoke($request) },
   );
 
   my $handler = $dispatch{$method}
@@ -100,6 +115,13 @@ sub _dispatch_agent_info {
       capabilities     => [
         'agent.info',
         'identities.list',
+        'policies.list',
+        'policies.grant',
+        'policies.revoke',
+        'service_pins.list',
+        'service_pins.set',
+        'service_pins.forget',
+        'sessions.list',
         'sessions.authorize',
         'sessions.renew',
         'sessions.revoke',
@@ -129,6 +151,164 @@ sub _dispatch_identities_list {
     ok     => JSON::PP::true,
     result => {
       identities => \@identities,
+    },
+  };
+}
+
+sub _dispatch_policies_list {
+  my ($self, $request) = @_;
+
+  return {
+    type   => 'response',
+    id     => $request->{id},
+    ok     => JSON::PP::true,
+    result => {
+      policies => [
+        map { _policy_descriptor($_) }
+        @{$self->{policies}}
+      ],
+    },
+  };
+}
+
+sub _dispatch_policies_grant {
+  my ($self, $request) = @_;
+  my $id = $request->{id};
+  my $params = $request->{params};
+
+  return $self->_error_response($id, 'invalid_request', 'params must be an object')
+    unless ref($params) eq 'HASH';
+
+  my $stored = _normalize_policy_input($params->{policy})
+    or return $self->_error_response($id, 'invalid_request', 'policy must be a valid policy object');
+
+  my $policy_id = $self->_next_policy_id;
+  $stored->{policy_id} = $policy_id;
+  push @{$self->{policies}}, $stored;
+
+  return {
+    type   => 'response',
+    id     => $id,
+    ok     => JSON::PP::true,
+    result => {
+      policy => _policy_descriptor($stored),
+    },
+  };
+}
+
+sub _dispatch_policies_revoke {
+  my ($self, $request) = @_;
+  my $id = $request->{id};
+  my $params = $request->{params};
+
+  return $self->_error_response($id, 'invalid_request', 'params must be an object')
+    unless ref($params) eq 'HASH';
+
+  my $policy_id = _policy_id_value($params->{policy_id});
+  return $self->_error_response($id, 'invalid_request', 'policy_id is required')
+    unless defined $policy_id;
+
+  $self->{policies} = [
+    grep { (($_->{policy_id} || '') ne $policy_id) }
+    @{$self->{policies}}
+  ];
+
+  return {
+    type   => 'response',
+    id     => $id,
+    ok     => JSON::PP::true,
+    result => {
+      policy_id => $policy_id,
+    },
+  };
+}
+
+sub _dispatch_service_pins_list {
+  my ($self, $request) = @_;
+
+  return {
+    type   => 'response',
+    id     => $request->{id},
+    ok     => JSON::PP::true,
+    result => {
+      service_pins => [
+        map {
+          {
+            locator          => $_,
+            service_identity => _clone_hash($self->{service_pins}{$_}),
+          }
+        }
+        sort keys %{$self->{service_pins}}
+      ],
+    },
+  };
+}
+
+sub _dispatch_service_pins_set {
+  my ($self, $request) = @_;
+  my $id = $request->{id};
+  my $params = $request->{params};
+
+  return $self->_error_response($id, 'invalid_request', 'params must be an object')
+    unless ref($params) eq 'HASH';
+
+  my $locator = $params->{locator};
+  return $self->_error_response($id, 'invalid_request', 'locator is required')
+    unless defined $locator && !ref($locator) && length($locator);
+
+  my $service_identity = _normalize_service_identity($params->{service_identity});
+  return $self->_error_response($id, 'invalid_request', 'service_identity must be a valid descriptor')
+    unless $service_identity;
+
+  $self->{service_pins}{$locator} = $service_identity;
+
+  return {
+    type   => 'response',
+    id     => $id,
+    ok     => JSON::PP::true,
+    result => {
+      locator          => $locator,
+      service_identity => _clone_hash($service_identity),
+    },
+  };
+}
+
+sub _dispatch_service_pins_forget {
+  my ($self, $request) = @_;
+  my $id = $request->{id};
+  my $params = $request->{params};
+
+  return $self->_error_response($id, 'invalid_request', 'params must be an object')
+    unless ref($params) eq 'HASH';
+
+  my $locator = $params->{locator};
+  return $self->_error_response($id, 'invalid_request', 'locator is required')
+    unless defined $locator && !ref($locator) && length($locator);
+
+  delete $self->{service_pins}{$locator};
+
+  return {
+    type   => 'response',
+    id     => $id,
+    ok     => JSON::PP::true,
+    result => {
+      locator => $locator,
+    },
+  };
+}
+
+sub _dispatch_sessions_list {
+  my ($self, $request) = @_;
+
+  return {
+    type   => 'response',
+    id     => $request->{id},
+    ok     => JSON::PP::true,
+    result => {
+      sessions => [
+        map { _session_descriptor($self->{sessions}{$_}) }
+        sort keys %{$self->{sessions}}
+      ],
     },
   };
 }
@@ -349,6 +529,118 @@ sub _policy_matches {
   }
 
   return 0;
+}
+
+sub _next_policy_id {
+  my ($self) = @_;
+  my $policy_id = 'policy-' . $self->{next_policy_id}++;
+  return $policy_id;
+}
+
+sub _note_policy_id {
+  my ($self, $policy_id) = @_;
+  return unless defined $policy_id && $policy_id =~ /\Apolicy-(\d+)\z/;
+  my $next = $1 + 1;
+  $self->{next_policy_id} = $next
+    if $next > $self->{next_policy_id};
+}
+
+sub _policy_descriptor {
+  my ($policy) = @_;
+  my %descriptor = (
+    policy_id   => $policy->{policy_id},
+    identity_id => $policy->{identity_id},
+    program_id  => $policy->{program_id},
+    scope       => $policy->{scope},
+    action      => $policy->{action},
+  );
+  $descriptor{locators} = _clone_hash($policy->{locators})
+    if ref($policy->{locators}) eq 'ARRAY';
+  $descriptor{service_identity} = _clone_hash($policy->{service_identity})
+    if ref($policy->{service_identity}) eq 'HASH';
+  return \%descriptor;
+}
+
+sub _session_descriptor {
+  my ($session) = @_;
+  my %descriptor = (
+    session_handle => _clone_hash($session->{session_handle}),
+    identity_id    => $session->{identity_id},
+    program_id     => $session->{program_id},
+    service        => _clone_hash($session->{service}),
+    scope          => $session->{scope},
+    action         => $session->{action},
+    renewable      => $session->{renewable} ? 1 : 0,
+  );
+  $descriptor{expires_at} = $session->{expires_at}
+    if defined $session->{expires_at} && !ref($session->{expires_at});
+  return \%descriptor;
+}
+
+sub _normalize_policy_input {
+  my ($policy) = @_;
+  return undef unless ref($policy) eq 'HASH';
+
+  my $identity_id = $policy->{identity_id};
+  my $program_id = $policy->{program_id};
+  my $scope = $policy->{scope};
+  my $action = $policy->{action};
+  return undef unless defined $identity_id && !ref($identity_id) && length($identity_id);
+  return undef unless defined $program_id && !ref($program_id) && length($program_id);
+  return undef unless defined $scope && !ref($scope) && length($scope);
+  return undef unless defined $action && !ref($action) && length($action);
+
+  my $service = ref($policy->{service}) eq 'HASH'
+    ? $policy->{service}
+    : {
+        (ref($policy->{locators}) eq 'ARRAY' ? (locators => $policy->{locators}) : ()),
+        (ref($policy->{service_identity}) eq 'HASH' ? (service_identity => $policy->{service_identity}) : ()),
+      };
+
+  my @locators = ref($service->{locators}) eq 'ARRAY'
+    ? grep { defined($_) && !ref($_) && length($_) } @{$service->{locators}}
+    : ();
+  my $service_identity = _normalize_service_identity($service->{service_identity});
+
+  return undef unless @locators || $service_identity;
+
+  my %stored = (
+    identity_id => $identity_id,
+    program_id  => $program_id,
+    scope       => $scope,
+    action      => $action,
+  );
+  $stored{locators} = \@locators if @locators;
+  $stored{service_identity} = $service_identity if $service_identity;
+
+  return \%stored;
+}
+
+sub _normalize_service_identity {
+  my ($service_identity) = @_;
+  return undef unless ref($service_identity) eq 'HASH';
+
+  my $scheme = $service_identity->{scheme};
+  my $value = $service_identity->{value};
+  return undef unless defined $scheme && !ref($scheme) && length($scheme);
+  return undef unless defined $value && !ref($value) && length($value);
+
+  my %normalized = (
+    scheme => $scheme,
+    value  => $value,
+  );
+  $normalized{display} = $service_identity->{display}
+    if defined $service_identity->{display}
+       && !ref($service_identity->{display})
+       && length($service_identity->{display});
+
+  return \%normalized;
+}
+
+sub _policy_id_value {
+  my ($policy_id) = @_;
+  return undef unless defined $policy_id && !ref($policy_id) && length($policy_id);
+  return $policy_id;
 }
 
 sub _service_pin_state {

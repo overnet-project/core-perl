@@ -29,6 +29,12 @@ subtest 'agent_info discovers the endpoint from OVERNET_AUTH_SOCK' => sub {
       is $response->{result}{protocol_version}, '0.1.0', 'protocol version is returned';
       ok scalar grep { $_ eq 'sessions.authorize' } @{$response->{result}{capabilities} || []},
         'capabilities include sessions.authorize';
+      ok scalar grep { $_ eq 'policies.grant' } @{$response->{result}{capabilities} || []},
+        'capabilities include policies.grant';
+      ok scalar grep { $_ eq 'service_pins.set' } @{$response->{result}{capabilities} || []},
+        'capabilities include service_pins.set';
+      ok scalar grep { $_ eq 'sessions.list' } @{$response->{result}{capabilities} || []},
+        'capabilities include sessions.list';
     },
   );
 };
@@ -146,6 +152,123 @@ subtest 'sessions_authorize preserves structured error responses' => sub {
 
       is $response->{ok}, 0, 'sessions.authorize fails';
       is $response->{error}{code}, 'headless_unavailable', 'the auth-agent error response is preserved';
+    },
+  );
+};
+
+subtest 'policies.list, service_pins.set, and sessions.list work through the socket client' => sub {
+  _with_auth_server(
+    agent => Overnet::Auth::Agent->new(
+      service_pins => {
+        'wss://relay.example.test/auth' => {
+          scheme => 'nostr.pubkey',
+          value  => ('1' x 64),
+        },
+      },
+      sessions => [
+        {
+          session_handle => { id => 'sess-1' },
+          identity_id    => 'default',
+          program_id     => 'irc.bridge',
+          service        => {
+            locators => [ 'wss://relay.example.test/auth' ],
+          },
+          scope     => 'irc://irc.example.test/overnet',
+          action    => 'session.authenticate',
+          renewable => 1,
+          artifacts => [],
+        },
+      ],
+      policies => [
+        {
+          identity_id => 'default',
+          program_id  => 'irc.bridge',
+          locators    => [ 'wss://relay.example.test/auth' ],
+          scope       => 'irc://irc.example.test/overnet',
+          action      => 'session.authenticate',
+        },
+      ],
+    ),
+    connections => 3,
+    run         => sub {
+      my (%args) = @_;
+
+      my $client = Overnet::Auth::Client->new(
+        endpoint       => $args{endpoint},
+        socket_factory => $args{socket_factory},
+      );
+
+      my $policies = $client->policies_list;
+      my $set_pin = $client->service_pins_set(
+        locator => 'wss://relay2.example.test/auth',
+        service_identity => {
+          scheme => 'nostr.pubkey',
+          value  => ('2' x 64),
+        },
+      );
+      my $sessions = $client->sessions_list;
+
+      is $policies->{ok}, 1, 'policies.list succeeds';
+      is $policies->{result}{policies}[0]{policy_id}, 'policy-1', 'policy ids are returned over the client';
+      is $set_pin->{ok}, 1, 'service_pins.set succeeds';
+      is $set_pin->{result}{locator}, 'wss://relay2.example.test/auth', 'service_pins.set returns the locator';
+      is $sessions->{ok}, 1, 'sessions.list succeeds';
+      is $sessions->{result}{sessions}[0]{session_handle}{id}, 'sess-1', 'sessions.list returns stored sessions';
+    },
+  );
+};
+
+subtest 'policies.grant, policies.revoke, service_pins.list, and service_pins.forget work through the socket client' => sub {
+  _with_auth_server(
+    agent => Overnet::Auth::Agent->new(
+      service_pins => {
+        'wss://relay.example.test/auth' => {
+          scheme => 'nostr.pubkey',
+          value  => ('1' x 64),
+        },
+      },
+    ),
+    connections => 4,
+    run         => sub {
+      my (%args) = @_;
+
+      my $client = Overnet::Auth::Client->new(
+        endpoint       => $args{endpoint},
+        socket_factory => $args{socket_factory},
+      );
+
+      my $grant = $client->policies_grant(
+        policy => {
+          identity_id => 'default',
+          program_id  => 'irc.bridge',
+          service     => {
+            locators => [ 'wss://relay.example.test/auth' ],
+            service_identity => {
+              scheme => 'nostr.pubkey',
+              value  => ('1' x 64),
+            },
+          },
+          scope  => 'irc://irc.example.test/overnet',
+          action => 'session.delegate',
+        },
+      );
+      my $pins = $client->service_pins_list;
+      my $forget = $client->service_pins_forget(
+        locator => 'wss://relay.example.test/auth',
+      );
+      my $revoke = $client->policies_revoke(
+        policy_id => 'policy-1',
+      );
+
+      is $grant->{ok}, 1, 'policies.grant succeeds';
+      is $grant->{result}{policy}{policy_id}, 'policy-1', 'policies.grant returns a stable policy id';
+      is $pins->{ok}, 1, 'service_pins.list succeeds';
+      is $pins->{result}{service_pins}[0]{locator}, 'wss://relay.example.test/auth',
+        'service_pins.list returns the stored locator';
+      is $forget->{ok}, 1, 'service_pins.forget succeeds';
+      is $forget->{result}{locator}, 'wss://relay.example.test/auth', 'service_pins.forget echoes the locator';
+      is $revoke->{ok}, 1, 'policies.revoke succeeds';
+      is $revoke->{result}{policy_id}, 'policy-1', 'policies.revoke echoes the policy id';
     },
   );
 };

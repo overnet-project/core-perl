@@ -29,6 +29,7 @@ sub run {
   GetOptionsFromArray(
     \@argv,
     'auth-sock=s'               => \$options{auth_sock},
+    'policy-id=s'               => \$options{policy_id},
     'identity-id=s'             => \$options{identity_id},
     'program-id=s'              => \$options{program_id},
     'service-locator=s@'        => \$options{service_locators},
@@ -55,7 +56,17 @@ sub run {
   }
 
   die _usage()
-    unless $command eq 'identities' || $command eq 'authorize' || $command eq 'renew' || $command eq 'revoke';
+    unless $command eq 'identities'
+        || $command eq 'policies'
+        || $command eq 'policy-grant'
+        || $command eq 'policy-revoke'
+        || $command eq 'service-pins'
+        || $command eq 'service-pin-set'
+        || $command eq 'service-pin-forget'
+        || $command eq 'sessions'
+        || $command eq 'authorize'
+        || $command eq 'renew'
+        || $command eq 'revoke';
 
   die "unexpected positional arguments: @argv\n"
     if @argv;
@@ -76,6 +87,35 @@ sub run {
   my $response;
   if ($command eq 'identities') {
     $response = $client->identities_list;
+  }
+  elsif ($command eq 'policies') {
+    $response = $client->policies_list;
+  }
+  elsif ($command eq 'policy-grant') {
+    $response = $client->policies_grant(
+      policy => $class->_policy_descriptor(%options),
+    );
+  }
+  elsif ($command eq 'policy-revoke') {
+    $response = $client->policies_revoke(
+      $class->_policy_id_params(%options),
+    );
+  }
+  elsif ($command eq 'service-pins') {
+    $response = $client->service_pins_list;
+  }
+  elsif ($command eq 'service-pin-set') {
+    $response = $client->service_pins_set(
+      $class->_service_pin_set_params(%options),
+    );
+  }
+  elsif ($command eq 'service-pin-forget') {
+    $response = $client->service_pins_forget(
+      $class->_service_locator_params(%options),
+    );
+  }
+  elsif ($command eq 'sessions') {
+    $response = $client->sessions_list;
   }
   elsif ($command eq 'authorize') {
     $response = $client->sessions_authorize(
@@ -108,14 +148,8 @@ sub _authorize_params {
     unless defined($options{scope}) && !ref($options{scope}) && length($options{scope});
   die "--action is required\n"
     unless defined($options{action}) && !ref($options{action}) && length($options{action});
-  die "--service-locator is required\n"
-    unless ref($options{service_locators}) eq 'ARRAY' && @{$options{service_locators}};
 
-  my $service = {
-    locators => [ @{$options{service_locators}} ],
-  };
-  my $service_identity = $class->_service_identity_descriptor(%options);
-  $service->{service_identity} = $service_identity if $service_identity;
+  my $service = $class->_service_descriptor(%options);
 
   my %params = (
     program_id  => $options{program_id},
@@ -141,6 +175,38 @@ sub _authorize_params {
   return %params;
 }
 
+sub _policy_descriptor {
+  my ($class, %options) = @_;
+
+  die "--identity-id is required\n"
+    unless defined($options{identity_id}) && !ref($options{identity_id}) && length($options{identity_id});
+  die "--program-id is required\n"
+    unless defined($options{program_id}) && !ref($options{program_id}) && length($options{program_id});
+  die "--scope is required\n"
+    unless defined($options{scope}) && !ref($options{scope}) && length($options{scope});
+  die "--action is required\n"
+    unless defined($options{action}) && !ref($options{action}) && length($options{action});
+
+  return {
+    identity_id => $options{identity_id},
+    program_id  => $options{program_id},
+    service     => $class->_service_descriptor(%options),
+    scope       => $options{scope},
+    action      => $options{action},
+  };
+}
+
+sub _policy_id_params {
+  my ($class, %options) = @_;
+
+  die "--policy-id is required\n"
+    unless defined($options{policy_id}) && !ref($options{policy_id}) && length($options{policy_id});
+
+  return (
+    policy_id => $options{policy_id},
+  );
+}
+
 sub _session_params {
   my ($class, %options) = @_;
 
@@ -157,6 +223,45 @@ sub _session_params {
   }
 
   return %params;
+}
+
+sub _service_pin_set_params {
+  my ($class, %options) = @_;
+  my %params = $class->_service_locator_params(%options);
+  my $service_identity = $class->_service_identity_descriptor(%options);
+  die "--service-identity-scheme and --service-identity-value are required\n"
+    unless $service_identity;
+
+  $params{service_identity} = $service_identity;
+  return %params;
+}
+
+sub _service_locator_params {
+  my ($class, %options) = @_;
+
+  die "--service-locator is required\n"
+    unless ref($options{service_locators}) eq 'ARRAY' && @{$options{service_locators}};
+  die "exactly one --service-locator is required\n"
+    unless @{$options{service_locators}} == 1;
+
+  return (
+    locator => $options{service_locators}[0],
+  );
+}
+
+sub _service_descriptor {
+  my ($class, %options) = @_;
+
+  die "--service-locator is required\n"
+    unless ref($options{service_locators}) eq 'ARRAY' && @{$options{service_locators}};
+
+  my $service = {
+    locators => [ @{$options{service_locators}} ],
+  };
+  my $service_identity = $class->_service_identity_descriptor(%options);
+  $service->{service_identity} = $service_identity if $service_identity;
+
+  return $service;
 }
 
 sub _artifacts {
@@ -235,6 +340,13 @@ sub _usage {
   return <<'USAGE';
 Usage:
   overnet-auth.pl identities [options]
+  overnet-auth.pl policies [options]
+  overnet-auth.pl policy-grant [options]
+  overnet-auth.pl policy-revoke [options]
+  overnet-auth.pl service-pins [options]
+  overnet-auth.pl service-pin-set [options]
+  overnet-auth.pl service-pin-forget [options]
+  overnet-auth.pl sessions [options]
   overnet-auth.pl authorize [options]
   overnet-auth.pl renew [options]
   overnet-auth.pl revoke [options]
@@ -243,6 +355,25 @@ Shared options:
   --auth-sock PATH
   --pretty / --no-pretty
   --help
+
+Policy grant options:
+  --identity-id ID
+  --program-id PROGRAM_ID
+  --service-locator LOCATOR
+  --service-identity-scheme SCHEME
+  --service-identity-value VALUE
+  --service-identity-display DISPLAY
+  --scope SCOPE
+  --action ACTION
+
+Policy revoke options:
+  --policy-id ID
+
+Service pin options:
+  --service-locator LOCATOR
+  --service-identity-scheme SCHEME
+  --service-identity-value VALUE
+  --service-identity-display DISPLAY
 
 Authorize options:
   --identity-id ID
