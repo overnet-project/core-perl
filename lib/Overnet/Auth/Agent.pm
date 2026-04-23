@@ -3,6 +3,7 @@ package Overnet::Auth::Agent;
 use strict;
 use warnings;
 
+use JSON::PP ();
 use Time::HiRes qw(time);
 use Scalar::Util qw(blessed);
 use Overnet::Authority::Delegation;
@@ -93,7 +94,7 @@ sub _dispatch_agent_info {
   return {
     type   => 'response',
     id     => $id,
-    ok     => 1,
+    ok     => JSON::PP::true,
     result => {
       protocol_version => '0.1.0',
       capabilities     => [
@@ -125,7 +126,7 @@ sub _dispatch_identities_list {
   return {
     type   => 'response',
     id     => $id,
-    ok     => 1,
+    ok     => JSON::PP::true,
     result => {
       identities => \@identities,
     },
@@ -210,7 +211,7 @@ sub _dispatch_authorize {
   return {
     type   => 'response',
     id     => $id,
-    ok     => 1,
+    ok     => JSON::PP::true,
     result => {
       identity_id      => $identity->{identity_id},
       service_pin_state => $service_pin_state,
@@ -275,7 +276,7 @@ sub _dispatch_renew {
   return {
     type   => 'response',
     id     => $id,
-    ok     => 1,
+    ok     => JSON::PP::true,
     result => {
       identity_id      => $session->{identity_id},
       service_pin_state => $service_pin_state,
@@ -302,7 +303,7 @@ sub _dispatch_revoke {
   return {
     type   => 'response',
     id     => $id,
-    ok     => 1,
+    ok     => JSON::PP::true,
     result => {},
   };
 }
@@ -574,7 +575,7 @@ sub _error_response {
   return {
     type  => 'response',
     id    => $id,
-    ok    => 0,
+    ok    => JSON::PP::false,
     error => {
       code    => $code,
       message => $message,

@@ -2,6 +2,13 @@
 CLAUDE.md
 cpanfile
 lib/Overnet.pm
+lib/Overnet/Auth/Agent.pm
+lib/Overnet/Auth/Backend.pm
+lib/Overnet/Auth/Backend/DirectSecret.pm
+lib/Overnet/Auth/Backend/Pass.pm
+lib/Overnet/Auth/Bridge/IRC.pm
+lib/Overnet/Auth/Client.pm
+lib/Overnet/Auth/Server.pm
 lib/Overnet/Authority/Delegation.pm
 lib/Overnet/Authority/HostedChannel.pm
 lib/Overnet/Core/Nostr.pm
@@ -28,6 +35,10 @@ MANIFEST			This list of files
 MANIFEST.SKIP
 README.md
 t/00-load-program-runtime.t
+t/auth-agent.t
+t/auth-backends.t
+t/auth-client.t
+t/auth-fixtures.t
 t/authority-delegation.t
 t/authority-hosted-channel.t
 t/fixtures/invalid-adapted-external-identity-not-string.json
