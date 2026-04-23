@@ -11,6 +11,9 @@ WriteMakefile(
   VERSION_FROM     => 'lib/Overnet.pm',
   LICENSE          => 'gpl_3',
   MIN_PERL_VERSION => '5.024',
+  EXE_FILES        => [
+    'bin/overnet-auth-agent.pl',
+  ],
   PREREQ_PM        => {
     'AnyEvent'        => 0,
     'CryptX'          => 0,
@@ -25,6 +28,9 @@ WriteMakefile(
         t/auth-agent.t
         t/auth-backends.t
         t/auth-client.t
+        t/auth-config.t
+        t/auth-daemon-cli.t
+        t/auth-daemon.t
         t/auth-fixtures.t
         t/authority-delegation.t
         t/authority-hosted-channel.t

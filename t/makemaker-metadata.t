@@ -20,6 +20,13 @@ is $args->{ABSTRACT}, 'Perl reference implementation of the Overnet core and pro
 is $args->{VERSION_FROM}, 'lib/Overnet.pm', 'version comes from root module';
 is $args->{LICENSE}, 'gpl_3', 'license';
 is $args->{MIN_PERL_VERSION}, '5.024', 'minimum Perl version';
+is_deeply(
+  $args->{EXE_FILES},
+  [
+    'bin/overnet-auth-agent.pl',
+  ],
+  'auth-agent daemon script is installed',
+);
 
 is_deeply(
   $args->{PREREQ_PM},
@@ -59,6 +66,9 @@ is_deeply(
         t/auth-agent.t
         t/auth-backends.t
         t/auth-client.t
+        t/auth-config.t
+        t/auth-daemon-cli.t
+        t/auth-daemon.t
         t/auth-fixtures.t
         t/authority-delegation.t
         t/authority-hosted-channel.t
