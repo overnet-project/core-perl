@@ -158,10 +158,14 @@ sub pump {
   my $progress = 0;
 
   while (1) {
+    $progress += $self->_poll_io(timeout_ms => 0);
     $progress += $self->_flush_runtime_notifications;
 
     my $remaining = $deadline - _now_ms();
-    last if $remaining < 0;
+    if ($remaining < 0) {
+      $progress += $self->_poll_io(timeout_ms => 0);
+      last;
+    }
 
     my $step_timeout = $remaining > $self->{poll_interval_ms}
       ? $self->{poll_interval_ms}
@@ -195,8 +199,18 @@ sub pump_until {
     my $remaining = $deadline - _now_ms();
     last if $remaining < 0;
 
+    $self->_poll_io(timeout_ms => 0);
+    return 1 if $condition->($self);
+
     $self->_flush_runtime_notifications;
     return 1 if $condition->($self);
+
+    $remaining = $deadline - _now_ms();
+    if ($remaining < 0) {
+      $self->_poll_io(timeout_ms => 0);
+      return 1 if $condition->($self);
+      last;
+    }
 
     my $step_timeout = $remaining > $self->{poll_interval_ms}
       ? $self->{poll_interval_ms}

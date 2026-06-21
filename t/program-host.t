@@ -23,6 +23,42 @@ sub _method_seen {
   return 0;
 }
 
+{
+  package Test::SlowFlushHost;
+  use parent 'Overnet::Program::Host';
+  use Time::HiRes qw(sleep);
+
+  sub new {
+    my ($class) = @_;
+    return bless {
+      poll_interval_ms => 1,
+      poll_calls       => [],
+    }, $class;
+  }
+
+  sub _poll_io {
+    my ($self, %args) = @_;
+    push @{$self->{poll_calls}}, $args{timeout_ms};
+    return 1;
+  }
+
+  sub _flush_runtime_notifications {
+    my ($self) = @_;
+    sleep 0.02;
+    return 0;
+  }
+}
+
+subtest 'pump polls child pipes even when notification flush exceeds budget' => sub {
+  my $host = Test::SlowFlushHost->new;
+
+  $host->pump(timeout_ms => 1);
+
+  ok @{$host->{poll_calls}} >= 2, 'pump polls before and after the slow flush';
+  is $host->{poll_calls}[0], 0, 'first poll is nonblocking before flushing notifications';
+  is $host->{poll_calls}[-1], 0, 'last poll is nonblocking after over-budget flushing';
+};
+
 subtest 'host supervises a real child program over stdio' => sub {
   my $host = Overnet::Program::Host->new(
     command => [$^X, $happy_program],
