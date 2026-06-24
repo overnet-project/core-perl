@@ -9,6 +9,7 @@ use Overnet::Program::Host;
 my $happy_program = File::Spec->catfile($FindBin::Bin, 'program-fixtures', 'host-happy-program.pl');
 my $invalid_program = File::Spec->catfile($FindBin::Bin, 'program-fixtures', 'host-invalid-program.pl');
 my $silent_program = File::Spec->catfile($FindBin::Bin, 'program-fixtures', 'host-silent-program.pl');
+my $stderr_exit_program = File::Spec->catfile($FindBin::Bin, 'program-fixtures', 'host-stderr-exit-program.pl');
 my $truncated_program = File::Spec->catfile($FindBin::Bin, 'program-fixtures', 'host-truncated-program.pl');
 my $version_mismatch_program = File::Spec->catfile($FindBin::Bin, 'program-fixtures', 'host-version-mismatch-program.pl');
 
@@ -172,6 +173,26 @@ subtest 'host treats early stdout closure as fatal transport loss' => sub {
 
   like $error, qr/Protocol transport error: program stdout closed before orderly shutdown/,
     'host fails fast when the protocol stdout channel closes unexpectedly';
+};
+
+subtest 'host includes child diagnostics when stdout closes unexpectedly' => sub {
+  my $host = Overnet::Program::Host->new(
+    command => [$^X, $stderr_exit_program],
+    startup_timeout_ms => 200,
+  );
+
+  my $error;
+  eval {
+    $host->start;
+    1;
+  } or $error = $@;
+
+  like $error, qr/Protocol transport error: program stdout closed before orderly shutdown/,
+    'host reports the transport failure';
+  like $error, qr/child exit_code=42/,
+    'host includes child exit code';
+  like $error, qr/fixture fatal: child exploded before handshake/,
+    'host includes captured child stderr';
 };
 
 subtest 'host sends runtime.fatal on handshake version mismatch before terminating the session' => sub {

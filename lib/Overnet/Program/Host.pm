@@ -457,8 +457,11 @@ sub _handle_eof {
   if ($self->_is_child_out($handle)) {
     $self->{protocol}->finish;
     close delete $self->{child_out};
-    die "Protocol transport error: program stdout closed before orderly shutdown\n"
-      unless $self->state eq 'shutdown_complete';
+    unless ($self->state eq 'shutdown_complete') {
+      $self->_drain_child_stderr;
+      $self->_reap_child;
+      die $self->_unexpected_stdout_close_error;
+    }
     return;
   }
 
@@ -530,6 +533,62 @@ sub _stream_name_for_handle {
   return 'stdout' if $self->_is_child_out($handle);
   return 'stderr' if $self->_is_child_err($handle);
   return 'unknown stream';
+}
+
+sub _drain_child_stderr {
+  my ($self) = @_;
+  return unless defined $self->{child_err};
+
+  my $selector = IO::Select->new($self->{child_err});
+  while ($selector->can_read(0)) {
+    my $bytes = sysread($self->{child_err}, my $chunk, $self->{read_chunk_size});
+    if (!defined $bytes) {
+      next if $!{EINTR};
+      last;
+    }
+    if ($bytes == 0) {
+      close delete $self->{child_err};
+      last;
+    }
+    $self->{stderr_output} .= $chunk;
+  }
+}
+
+sub _unexpected_stdout_close_error {
+  my ($self) = @_;
+
+  my @details;
+  if (defined $self->{wait_status}) {
+    if (defined $self->{exit_signal} && $self->{exit_signal}) {
+      push @details, "child signal=$self->{exit_signal}";
+    } elsif (defined $self->{exit_code}) {
+      push @details, "child exit_code=$self->{exit_code}";
+    } else {
+      push @details, "child wait_status=$self->{wait_status}";
+    }
+  } else {
+    push @details, 'child exit_status=unavailable';
+  }
+
+  my $stderr = $self->{stderr_output};
+  if (defined $stderr && length $stderr) {
+    my $max_stderr_bytes = 4096;
+    if (length($stderr) > $max_stderr_bytes) {
+      $stderr = substr($stderr, -$max_stderr_bytes);
+      push @details, "child stderr_tail_bytes=$max_stderr_bytes";
+    } else {
+      push @details, "child stderr_bytes=" . length($stderr);
+    }
+  } else {
+    push @details, 'child stderr_bytes=0';
+  }
+
+  my $message = 'Protocol transport error: program stdout closed before orderly shutdown';
+  $message .= ' (' . join(', ', @details) . ')';
+  $message .= "\n";
+  $message .= "Child stderr:\n$stderr" if defined $stderr && length $stderr;
+
+  return $message;
 }
 
 sub _best_effort_terminate {
