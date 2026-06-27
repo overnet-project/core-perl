@@ -2,7 +2,7 @@
 
 This directory contains the Perl reference implementation for the shared Overnet core, authority, and program runtime layers.
 
-The specification in `../spec/` is authoritative. The implementation must conform to the spec and its fixtures. If implementation work reveals a gap or ambiguity, fix the spec first, then update the implementation.
+The [Overnet specification](https://github.com/overnet-project/spec) is authoritative. The implementation must conform to the spec and its fixtures. If implementation work reveals a gap or ambiguity, fix the spec first, then update the implementation.
 
 ## Priorities
 
@@ -18,11 +18,11 @@ If a change tightens validation or otherwise changes behavior, update the spec, 
 
 ## Spec-First Workflow
 
-Work on `spec/` and `core-perl/` in parallel, but in this order:
+Work on the [Overnet specification](https://github.com/overnet-project/spec) and `core-perl` in parallel, but in this order:
 
-1. Update or clarify the normative spec text in `../spec/docs/`
-2. Add or update conformance fixtures in `../spec/fixtures/core/`
-3. Run `t/generate-fixtures.pl` to regenerate `t/fixtures/`
+1. Update or clarify the normative spec text in [`docs/`](https://github.com/overnet-project/spec/tree/main/docs)
+2. Add or update conformance fixtures in [`fixtures/core/`](https://github.com/overnet-project/spec/tree/main/fixtures/core)
+3. With a local checkout of the spec fixtures available, run `t/generate-fixtures.pl` to regenerate `t/fixtures/`
 4. Run tests and confirm the new case fails for the expected reason
 5. Implement the code change until tests pass
 6. Re-run the relevant tests and fix all failures before considering the work done
@@ -45,22 +45,13 @@ We care deeply about test quality. Cover:
 
 The core validator is fixture-driven. Every normative MUST or MUST NOT that the implementation enforces should have at least one corresponding fixture.
 
-Run tests with the pinned Perl toolchain from `.plx/perl.spec`. In this repo, use `plx` so the normal commands stay consistent.
-
-Useful commands:
-
-```bash
-/home/_73/.local/bin/plx prove -Ilib -Ilocal/lib/perl5 -v t/validator.t
-/home/_73/.local/bin/plx perl -Ilib -Ilocal/lib/perl5 t/generate-fixtures.pl
-```
-
 After making changes, always run the relevant tests. If a fix introduces new failures, keep iterating until all relevant tests pass.
 
 When a task changes fixture generation, re-run fixture generation and then the validator tests.
 
 ## Fixtures
 
-Spec fixtures in `../spec/fixtures/core/` are the source of truth.
+Spec fixtures in [`fixtures/core/`](https://github.com/overnet-project/spec/tree/main/fixtures/core) are the source of truth.
 
 Implementation fixtures in `t/fixtures/` are generated from them:
 
@@ -80,10 +71,10 @@ Be strict and be consistent. Callers should not have to guess what gets rejected
 
 Rules:
 
+- Always leverage `Net::Nostr` when it already provides the needed Nostr-level parsing, serialization, event-object, kind-classification, hashing, signing, or validation behavior. Do not re-implement Nostr primitives.
 - Parsing of untrusted Nostr events must reject malformed input as early as possible.
 - Structural checks belong as early as they can be performed reliably.
 - Semantic Overnet checks belong in `validate`.
-- Always leverage `Net::Nostr` when it already provides the needed Nostr-level parsing, serialization, event-object, kind-classification, hashing, signing, or validation behavior. Do not re-implement Nostr primitives locally unless Overnet has a concrete requirement that `Net::Nostr` does not cover.
 - Do not silently accept malformed protocol-critical data.
 - Do not treat missing or malformed required core fields as profile-specific concerns.
 - Error messages should be specific enough that fixture failures clearly identify the rejected rule.
@@ -108,7 +99,7 @@ The implementation is currently narrow on purpose:
 
 Keep the implementation aligned with the currently specified core. Do not implement speculative profile or adapter behavior unless it has a clear normative home in the spec.
 
-Relay daemons, relay persistence/sync, deploy packaging, and the relay-heavy IRC gate live in `../relay-perl/`.
+Relay daemons, relay persistence/sync, deploy packaging, and the relay-heavy IRC gate live in the [relay Perl repository](https://github.com/overnet-project/relay-perl).
 
 ## Documentation and Drift Control
 
