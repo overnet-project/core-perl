@@ -144,6 +144,12 @@ sub validate_contract_set {
     }
   }
 
+  if (!@errors) {
+    for my $contract (@{$contracts}) {
+      _validate_external_event_object_types_in_set($contract, \%by_profile, \@errors);
+    }
+  }
+
   return _result(errors => \@errors, contracts => $contracts, by_profile => \%by_profile);
 }
 
@@ -363,11 +369,14 @@ sub _validate_event_type {
     push @{$errors}, 'profile_contract.invalid_event_kind';
   }
 
-  push @{$errors}, 'profile_contract.invalid_event_object_type'
-    unless _is_profile_scoped_name($event_type->{object_type});
-
-  if (!defined $event_type->{object_type} || !exists $object_types->{$event_type->{object_type}}) {
-    push @{$errors}, 'profile_contract.event_object_type_undefined';
+  my $event_object_type = $event_type->{object_type};
+  if (!_is_profile_scoped_name($event_object_type)) {
+    push @{$errors}, 'profile_contract.invalid_event_object_type';
+  } elsif (_is_local_name($contract->{profile}, $event_object_type)) {
+    push @{$errors}, 'profile_contract.event_object_type_undefined'
+      unless exists $object_types->{$event_object_type};
+  } elsif (!_dependency_for_target($contract, $event_object_type)) {
+    push @{$errors}, 'profile_contract.event_object_type_dependency_missing';
   }
 
   _validate_required_tags($event_type->{required_tags}, $errors);
@@ -578,6 +587,22 @@ sub _validate_external_references_in_set {
         push @{$errors}, 'profile_contract_set.reference_target_missing';
       }
     }
+  }
+}
+
+sub _validate_external_event_object_types_in_set {
+  my ($contract, $by_profile, $errors) = @_;
+  for my $event_type (values %{$contract->{event_types} || {}}) {
+    next unless ref($event_type) eq 'HASH';
+    my $target = $event_type->{object_type};
+    next unless defined $target && !_is_local_name($contract->{profile}, $target);
+
+    my $dependency = _dependency_for_target($contract, $target);
+    my $dependency_contract = $dependency ? $by_profile->{$dependency->{profile}} : undef;
+    next unless $dependency_contract;
+
+    push @{$errors}, 'profile_contract_set.event_object_type_missing'
+      unless exists $dependency_contract->{object_types}{$target};
   }
 }
 
