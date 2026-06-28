@@ -1,7 +1,6 @@
-use strict;
-use warnings;
+use strictures 2;
 use Test::More;
-use JSON::PP qw(decode_json);
+use JSON ();
 use File::Basename qw(dirname);
 use File::Spec;
 
@@ -18,7 +17,7 @@ sub _load_fixture_input {
   my $json = do { local $/; <$fh> };
   close $fh;
 
-  return decode_json($json)->{input};
+  return JSON::decode_json($json)->{input};
 }
 
 sub _ready_instance {

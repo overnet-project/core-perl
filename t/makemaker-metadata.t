@@ -1,5 +1,4 @@
-use strict;
-use warnings;
+use strictures 2;
 
 use Cwd qw(getcwd);
 use File::Spec;
@@ -21,6 +20,14 @@ is $args->{VERSION_FROM}, 'lib/Overnet.pm', 'version comes from root module';
 is $args->{LICENSE}, 'gpl_3', 'license';
 is $args->{MIN_PERL_VERSION}, '5.024', 'minimum Perl version';
 is_deeply(
+  $args->{CONFIGURE_REQUIRES},
+  {
+    'ExtUtils::MakeMaker' => 0,
+    'strictures'         => 2,
+  },
+  'configure prerequisites include modules required to load Makefile.PL',
+);
+is_deeply(
   $args->{EXE_FILES},
   [
     'bin/overnet-auth.pl',
@@ -35,8 +42,10 @@ is_deeply(
     'AnyEvent'             => 0,
     'CryptX'               => 0,
     'IO::Socket::SSL'      => 0,
+    'JSON'                 => 0,
     'JSON::Schema::Modern' => 0,
     'Net::Nostr'           => 0,
+    'strictures'           => 2,
   },
   'runtime prerequisites are limited to top-level non-core distributions',
 );

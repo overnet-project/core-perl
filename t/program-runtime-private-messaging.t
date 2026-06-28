@@ -1,7 +1,6 @@
-use strict;
-use warnings;
+use strictures 2;
 use Test::More;
-use JSON::PP qw(encode_json);
+use JSON ();
 
 use Net::Nostr::DirectMessage;
 use Net::Nostr::Key;
@@ -49,7 +48,7 @@ sub _private_message_candidate {
 
   my $rumor = Net::Nostr::DirectMessage->create(
     sender_pubkey => $sender_key->pubkey_hex,
-    content       => encode_json($payload),
+    content       => JSON::encode_json($payload),
     recipients    => [$recipient_key->pubkey_hex],
   );
   my ($wrap) = Net::Nostr::DirectMessage->wrap_for_recipients(
@@ -94,7 +93,7 @@ sub _opaque_private_message_candidate {
 
   my $rumor = Net::Nostr::DirectMessage->create(
     sender_pubkey => $sender_key->pubkey_hex,
-    content       => encode_json($payload),
+    content       => JSON::encode_json($payload),
     recipients    => [$recipient_key->pubkey_hex],
   );
   my ($wrap) = Net::Nostr::DirectMessage->wrap_for_recipients(
@@ -144,7 +143,7 @@ subtest 'services accept encrypted private messages and deliver matching subscri
     permissions => ['overnet.emit_private_message'],
   );
 
-  is $result->{accepted}, JSON::PP::true, 'private message is accepted';
+  is $result->{accepted}, JSON::true, 'private message is accepted';
   like $result->{event_id}, qr/\A[0-9a-f]{64}\z/, 'accepted private message returns visible wrap event id';
   like $result->{rumor_id}, qr/\A[0-9a-f]{64}\z/, 'accepted private message returns rumor id';
 
@@ -173,7 +172,7 @@ subtest 'services reject relay-carried private intent encoded as a public core e
       'overnet.emit_private_message',
       {
         message => {
-          relay_carried_private_intent => JSON::PP::true,
+          relay_carried_private_intent => JSON::true,
           event => {
             kind => 7800,
             tags => [
@@ -237,7 +236,7 @@ subtest 'services accept opaque endpoint-blind private messages without decrypte
     permissions => ['overnet.emit_private_message'],
   );
 
-  is $result->{accepted}, JSON::PP::true, 'opaque private message is accepted';
+  is $result->{accepted}, JSON::true, 'opaque private message is accepted';
   like $result->{event_id}, qr/\A[0-9a-f]{64}\z/, 'opaque private message returns visible wrap event id';
   ok !exists($result->{rumor_id}), 'opaque private message does not return a rumor id';
 

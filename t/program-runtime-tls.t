@@ -1,7 +1,6 @@
-use strict;
-use warnings;
+use strictures 2;
 use Test::More;
-use JSON::PP ();
+use JSON ();
 
 use IO::Socket::SSL qw(SSL_VERIFY_NONE);
 use Overnet::Program::TLSConfig;
@@ -11,7 +10,7 @@ sub exception (&);
 subtest 'normalize accepts enabled server TLS config with implicit mode' => sub {
   my $tls = Overnet::Program::TLSConfig->normalize(
     tls => {
-      enabled          => JSON::PP::true,
+      enabled          => JSON::true,
       cert_chain_file  => '/tmp/server-cert.pem',
       private_key_file => '/tmp/server-key.pem',
       min_version      => 'TLSv1.2',
@@ -47,7 +46,7 @@ subtest 'normalize rejects invalid baseline TLS shapes' => sub {
     exception {
       Overnet::Program::TLSConfig->normalize(
         tls => {
-          enabled => JSON::PP::true,
+          enabled => JSON::true,
           mode    => 'server',
         },
       );
@@ -60,7 +59,7 @@ subtest 'normalize rejects invalid baseline TLS shapes' => sub {
     exception {
       Overnet::Program::TLSConfig->normalize(
         tls => {
-          enabled          => JSON::PP::true,
+          enabled          => JSON::true,
           mode             => 'server',
           cert_chain_file  => '/tmp/server-cert.pem',
           private_key_file => '/tmp/server-key.pem',

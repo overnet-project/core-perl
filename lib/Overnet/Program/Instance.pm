@@ -1,7 +1,6 @@
 package Overnet::Program::Instance;
 
-use strict;
-use warnings;
+use strictures 2;
 use Overnet::Program::Protocol;
 use Overnet::Program::Services;
 

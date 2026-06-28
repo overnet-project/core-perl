@@ -1,7 +1,6 @@
 package Overnet::Auth::Client;
 
-use strict;
-use warnings;
+use strictures 2;
 
 use IO::Socket::UNIX;
 use Socket qw(SOCK_STREAM);

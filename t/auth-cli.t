@@ -1,9 +1,8 @@
-use strict;
-use warnings;
+use strictures 2;
 
 use File::Spec;
 use FindBin;
-use JSON::PP qw(decode_json);
+use JSON ();
 use Test::More;
 
 use Overnet::Auth::CLI;
@@ -133,7 +132,7 @@ subtest 'identities command prints the identity list result as JSON' => sub {
       'identities.list' => {
         type   => 'response',
         id     => 'auth-1',
-        ok     => JSON::PP::true,
+        ok     => JSON::true,
         result => {
           identities => [
             {
@@ -155,8 +154,8 @@ subtest 'identities command prints the identity list result as JSON' => sub {
   );
 
   is $result->{exit_code}, 0, 'identities exits successfully';
-  is_deeply decode_json($result->{output}), {
-    ok     => JSON::PP::true,
+  is_deeply JSON::decode_json($result->{output}), {
+    ok     => JSON::true,
     result => {
       identities => [
         {
@@ -188,7 +187,7 @@ JSON
       'sessions.authorize' => {
         type   => 'response',
         id     => 'auth-1',
-        ok     => JSON::PP::true,
+        ok     => JSON::true,
         result => {
           session_handle => { id => 'sess-1' },
         },
@@ -216,8 +215,8 @@ JSON
   );
 
   is $result->{exit_code}, 0, 'authorize exits successfully';
-  is_deeply decode_json($result->{output}), {
-    ok     => JSON::PP::true,
+  is_deeply JSON::decode_json($result->{output}), {
+    ok     => JSON::true,
     result => {
       session_handle => { id => 'sess-1' },
     },
@@ -238,7 +237,7 @@ JSON
         },
         scope       => 'irc://irc.example.test/overnet',
         action      => 'session.authenticate',
-        interactive => JSON::PP::false,
+        interactive => JSON::false,
         challenge   => {
           type  => 'opaque',
           value => 'abcd',
@@ -268,7 +267,7 @@ subtest 'policies and sessions commands print daemon-managed state as JSON' => s
       'policies.list' => {
         type   => 'response',
         id     => 'auth-1',
-        ok     => JSON::PP::true,
+        ok     => JSON::true,
         result => {
           policies => [
             {
@@ -285,7 +284,7 @@ subtest 'policies and sessions commands print daemon-managed state as JSON' => s
       'sessions.list' => {
         type   => 'response',
         id     => 'auth-2',
-        ok     => JSON::PP::true,
+        ok     => JSON::true,
         result => {
           sessions => [
             {
@@ -310,8 +309,8 @@ subtest 'policies and sessions commands print daemon-managed state as JSON' => s
 
   is $policies->{exit_code}, 0, 'policies exits successfully';
   is $sessions->{exit_code}, 0, 'sessions exits successfully';
-  is_deeply decode_json($policies->{output}), {
-    ok     => JSON::PP::true,
+  is_deeply JSON::decode_json($policies->{output}), {
+    ok     => JSON::true,
     result => {
       policies => [
         {
@@ -325,8 +324,8 @@ subtest 'policies and sessions commands print daemon-managed state as JSON' => s
       ],
     },
   }, 'policies prints daemon-managed policy state';
-  is_deeply decode_json($sessions->{output}), {
-    ok     => JSON::PP::true,
+  is_deeply JSON::decode_json($sessions->{output}), {
+    ok     => JSON::true,
     result => {
       sessions => [
         {
@@ -345,7 +344,7 @@ subtest 'policy-grant, policy-revoke, service-pins, service-pin-set, and service
       'policies.grant' => {
         type   => 'response',
         id     => 'auth-1',
-        ok     => JSON::PP::true,
+        ok     => JSON::true,
         result => {
           policy => { policy_id => 'policy-1' },
         },
@@ -353,7 +352,7 @@ subtest 'policy-grant, policy-revoke, service-pins, service-pin-set, and service
       'policies.revoke' => {
         type   => 'response',
         id     => 'auth-2',
-        ok     => JSON::PP::true,
+        ok     => JSON::true,
         result => {
           policy_id => 'policy-1',
         },
@@ -361,7 +360,7 @@ subtest 'policy-grant, policy-revoke, service-pins, service-pin-set, and service
       'service_pins.list' => {
         type   => 'response',
         id     => 'auth-3',
-        ok     => JSON::PP::true,
+        ok     => JSON::true,
         result => {
           service_pins => [],
         },
@@ -369,7 +368,7 @@ subtest 'policy-grant, policy-revoke, service-pins, service-pin-set, and service
       'service_pins.set' => {
         type   => 'response',
         id     => 'auth-4',
-        ok     => JSON::PP::true,
+        ok     => JSON::true,
         result => {
           locator => 'wss://relay.example.test/auth',
         },
@@ -377,7 +376,7 @@ subtest 'policy-grant, policy-revoke, service-pins, service-pin-set, and service
       'service_pins.forget' => {
         type   => 'response',
         id     => 'auth-5',
-        ok     => JSON::PP::true,
+        ok     => JSON::true,
         result => {
           locator => 'wss://relay.example.test/auth',
         },
@@ -481,7 +480,7 @@ subtest 'renew and revoke commands wrap session ids as session handles' => sub {
       'sessions.renew' => {
         type   => 'response',
         id     => 'auth-1',
-        ok     => JSON::PP::true,
+        ok     => JSON::true,
         result => {
           session_handle => { id => 'sess-2' },
         },
@@ -489,9 +488,9 @@ subtest 'renew and revoke commands wrap session ids as session handles' => sub {
       'sessions.revoke' => {
         type   => 'response',
         id     => 'auth-2',
-        ok     => JSON::PP::true,
+        ok     => JSON::true,
         result => {
-          revoked => JSON::PP::true,
+          revoked => JSON::true,
         },
       },
     },
@@ -513,7 +512,7 @@ subtest 'renew and revoke commands wrap session ids as session handles' => sub {
       method => 'sessions.renew',
       params => {
         session_handle => { id => 'sess-2' },
-        interactive    => JSON::PP::false,
+        interactive    => JSON::false,
       },
     },
     {

@@ -1,11 +1,10 @@
 package Overnet::Program::Host;
 
-use strict;
-use warnings;
+use strictures 2;
 use IO::Handle ();
 use IO::Select;
 use IPC::Open3 qw(open3);
-use JSON::PP ();
+use JSON ();
 use POSIX qw(WNOHANG);
 use Symbol qw(gensym);
 use Time::HiRes qw(time);
@@ -623,8 +622,8 @@ sub _is_positive_integer {
 
 sub _clone_json {
   my ($value) = @_;
-  return JSON::PP->new->canonical->decode(
-    JSON::PP->new->canonical->encode($value)
+  return JSON->new->canonical->decode(
+    JSON->new->canonical->encode($value)
   );
 }
 

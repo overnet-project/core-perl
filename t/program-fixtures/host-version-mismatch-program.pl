@@ -1,5 +1,4 @@
-use strict;
-use warnings;
+use strictures 2;
 use IO::Handle;
 use FindBin;
 use lib "$FindBin::Bin/../../lib";

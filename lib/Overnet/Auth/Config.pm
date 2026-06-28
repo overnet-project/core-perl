@@ -1,9 +1,8 @@
 package Overnet::Auth::Config;
 
-use strict;
-use warnings;
+use strictures 2;
 
-use JSON::PP ();
+use JSON ();
 
 our $VERSION = '0.001';
 
@@ -46,7 +45,7 @@ sub load_file {
   close $fh
     or die "close $path failed: $!";
 
-  my $decoded = eval { JSON::PP->new->utf8->decode($json) };
+  my $decoded = eval { JSON->new->utf8->decode($json) };
   die "auth config file $path is not valid JSON: $@"
     unless defined $decoded;
   die "auth config must decode to an object\n"

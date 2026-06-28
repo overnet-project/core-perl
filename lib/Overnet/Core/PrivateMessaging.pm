@@ -1,13 +1,12 @@
 package Overnet::Core::PrivateMessaging;
 
-use strict;
-use warnings;
+use strictures 2;
 
-use JSON::PP ();
+use JSON ();
 use Net::Nostr::GiftWrap;
 
 my %VALID_PRIVATE_TYPES = map { $_ => 1 } qw(chat.dm_message chat.dm_notice);
-my $JSON = JSON::PP->new->utf8->canonical;
+my $JSON = JSON->new->utf8->canonical;
 
 sub validate_transport {
   my ($input) = @_;

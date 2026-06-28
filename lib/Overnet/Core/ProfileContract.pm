@@ -1,13 +1,12 @@
 package Overnet::Core::ProfileContract;
 
-use strict;
-use warnings;
+use strictures 2;
 use B qw(SVp_IOK SVp_NOK SVp_POK svref_2object);
-use JSON::PP ();
+use JSON ();
 use JSON::Schema::Modern;
 use Scalar::Util qw(blessed);
 
-my $JSON = JSON::PP->new->utf8;
+my $JSON = JSON->new->utf8;
 my $JSON_SCHEMA = JSON::Schema::Modern->new(
   specification_version => 'draft2020-12',
   output_format         => 'flag',
@@ -502,7 +501,7 @@ sub _validate_references {
       unless _is_non_empty_string($reference->{name});
 
     push @{$errors}, 'profile_contract.invalid_reference_required'
-      unless JSON::PP::is_bool($reference->{required});
+      unless JSON::is_bool($reference->{required});
 
     push @{$errors}, 'profile_contract.invalid_reference_tag'
       if exists $reference->{tag} && defined $reference->{tag} && !_is_tag_name($reference->{tag});
@@ -529,7 +528,7 @@ sub _validate_references {
     }
 
     push @{$errors}, 'profile_contract.required_reference_tag_missing'
-      if JSON::PP::is_bool($reference->{required}) && $reference->{required} && !defined $reference->{tag};
+      if JSON::is_bool($reference->{required}) && $reference->{required} && !defined $reference->{tag};
 
     my ($target, $kind) = $has_object
       ? ($target_object_type, 'object')

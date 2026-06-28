@@ -1,5 +1,4 @@
-use strict;
-use warnings;
+use strictures 2;
 
 use File::Spec;
 use Socket qw(AF_UNIX PF_UNSPEC SOCK_STREAM);

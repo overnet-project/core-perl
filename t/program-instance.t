@@ -1,5 +1,5 @@
-use strict;
-use warnings;
+use strictures 2;
+use JSON ();
 use Test::More;
 
 use Overnet::Program::Instance;
@@ -46,7 +46,7 @@ subtest 'program.hello negotiates version and emits runtime.init' => sub {
     supported_protocol_versions => ['0.2', '0.1'],
     config                      => { mode => 'test' },
     permissions                 => ['config.read'],
-    services                    => { config => { available => JSON::PP::true } },
+    services                    => { config => { available => JSON::true } },
   );
 
   my $result = $instance->process_program_message(

@@ -1,7 +1,6 @@
-use strict;
-use warnings;
+use strictures 2;
 use Test::More;
-use JSON::PP;
+use JSON ();
 use File::Basename;
 use File::Spec;
 
@@ -18,7 +17,7 @@ for my $file (@fixture_files) {
   my $json = do { local $/; <$fh> };
   close $fh;
 
-  my $fixture = decode_json($json);
+  my $fixture = JSON::decode_json($json);
   my $desc = $fixture->{description};
   my $input = $fixture->{input};
   my $expected = $fixture->{expected};

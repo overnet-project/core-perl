@@ -1,5 +1,5 @@
-use strict;
-use warnings;
+use strictures 2;
+use JSON ();
 use Test::More;
 
 use Overnet::Program::Protocol;
@@ -222,7 +222,7 @@ subtest 'rejects malformed responses' => sub {
   my ($ok, $code, $message) = $protocol->validate_message({
     type  => 'response',
     id    => '1',
-    ok    => JSON::PP::true,
+    ok    => JSON::true,
     error => { code => 'x', message => 'y' },
   });
 

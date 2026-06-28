@@ -1,7 +1,6 @@
 package Overnet::Authority::HostedChannel;
 
-use strict;
-use warnings;
+use strictures 2;
 use Net::Nostr::Group ();
 
 sub irc_casefold {

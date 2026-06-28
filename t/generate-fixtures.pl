@@ -6,9 +6,8 @@
 # full Nostr crypto verification.  Invalid fixtures are copied as-is
 # since they fail Overnet structural checks before crypto is reached.
 #
-use strict;
-use warnings;
-use JSON::PP;
+use strictures 2;
+use JSON ();
 use File::Basename;
 use File::Spec;
 use File::Path qw(make_path);
@@ -16,7 +15,7 @@ use File::Path qw(make_path);
 use Net::Nostr::Key;
 use Net::Nostr::Event;
 
-my $json = JSON::PP->new->utf8->pretty->canonical;
+my $json = JSON->new->utf8->pretty->canonical;
 
 my $script_dir = dirname(__FILE__);
 my $out_dir    = File::Spec->catdir($script_dir, 'fixtures');

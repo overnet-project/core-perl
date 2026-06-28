@@ -1,7 +1,6 @@
 package Overnet::Auth::Daemon;
 
-use strict;
-use warnings;
+use strictures 2;
 
 use File::Basename qw(dirname);
 use File::Path qw(make_path);

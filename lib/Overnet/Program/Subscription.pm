@@ -1,7 +1,6 @@
 package Overnet::Program::Subscription;
 
-use strict;
-use warnings;
+use strictures 2;
 use Net::Nostr::Event;
 
 our $VERSION = '0.001';

@@ -1,8 +1,7 @@
 package Overnet::Program::Protocol;
 
-use strict;
-use warnings;
-use JSON::PP ();
+use strictures 2;
+use JSON ();
 
 our $VERSION = '0.001';
 my $DEFAULT_MAX_FRAME_SIZE = 1024 * 1024;
@@ -104,7 +103,7 @@ sub encode_message {
   my ($self, $message) = @_;
   _assert_message_object($message);
 
-  my $json = JSON::PP->new->utf8->canonical->encode($message);
+  my $json = JSON->new->utf8->canonical->encode($message);
   my $length = length $json;
 
   if ($length > $self->{max_frame_size}) {
@@ -179,7 +178,7 @@ sub build_response_ok {
   return {
     type   => 'response',
     id     => $args{id},
-    ok     => JSON::PP::true,
+    ok     => JSON::true,
     result => $args{result} || {},
   };
 }
@@ -200,7 +199,7 @@ sub build_response_error {
   return {
     type  => 'response',
     id    => $args{id},
-    ok    => JSON::PP::false,
+    ok    => JSON::false,
     error => $error,
   };
 }
@@ -382,7 +381,7 @@ sub _decode_payload {
 
   my $decoded;
   eval {
-    $decoded = JSON::PP->new->utf8->decode($payload);
+    $decoded = JSON->new->utf8->decode($payload);
     1;
   } or do {
     my $err = $@ || 'unknown error';
@@ -440,7 +439,7 @@ sub _validate_response {
 
   my $ok = $message->{ok};
   return (0, 'protocol.invalid_message', 'Response ok field must be a boolean')
-    unless JSON::PP::is_bool($ok);
+    unless JSON::is_bool($ok);
 
   if ($ok) {
     return (0, 'protocol.invalid_params', 'Successful response result must be an object')

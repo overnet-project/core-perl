@@ -1,10 +1,9 @@
-use strict;
-use warnings;
+use strictures 2;
 
 use FindBin;
 use File::Spec;
 use File::Temp qw(tempdir);
-use JSON::PP qw(encode_json);
+use JSON ();
 use Test::More;
 
 use Overnet::Auth::Config;
@@ -178,7 +177,7 @@ done_testing;
 
 sub _write_json {
   my ($path, $value) = @_;
-  _write_raw($path, encode_json($value));
+  _write_raw($path, JSON::encode_json($value));
 }
 
 sub _write_raw {

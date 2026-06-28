@@ -1,7 +1,6 @@
 package Overnet::Auth::Backend::Pass;
 
-use strict;
-use warnings;
+use strictures 2;
 
 use parent 'Overnet::Auth::Backend';
 

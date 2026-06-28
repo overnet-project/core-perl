@@ -1,11 +1,10 @@
 package Overnet::Auth::StateStore;
 
-use strict;
-use warnings;
+use strictures 2;
 
 use File::Basename qw(dirname);
 use File::Path qw(make_path);
-use JSON::PP ();
+use JSON ();
 
 our $VERSION = '0.001';
 
@@ -38,7 +37,7 @@ sub load_state {
   close $fh
     or die "close $path failed: $!";
 
-  my $decoded = eval { JSON::PP->new->utf8->decode($json) };
+  my $decoded = eval { JSON->new->utf8->decode($json) };
   die "auth state file $path is not valid JSON: $@"
     unless defined $decoded;
 
@@ -55,7 +54,7 @@ sub save_state {
   make_path($parent)
     unless -d $parent;
 
-  my $json = JSON::PP->new->utf8->canonical->pretty->encode($state);
+  my $json = JSON->new->utf8->canonical->pretty->encode($state);
 
   open my $fh, '>', $tmp
     or die "open $tmp failed: $!";

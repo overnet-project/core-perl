@@ -1,8 +1,7 @@
 package Overnet::Program::SecretProvider;
 
-use strict;
-use warnings;
-use JSON::PP ();
+use strictures 2;
+use JSON ();
 use Time::HiRes qw(time);
 
 our $VERSION = '0.001';
@@ -505,7 +504,7 @@ sub _optional_string_arg {
 sub _clone_json {
   my ($value) = @_;
   return undef unless defined $value;
-  return JSON::PP::decode_json(JSON::PP::encode_json($value));
+  return JSON::decode_json(JSON::encode_json($value));
 }
 
 sub _ms_to_unix_seconds {

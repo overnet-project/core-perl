@@ -1,12 +1,11 @@
 package Overnet::Test::SpecConformance;
 
-use strict;
-use warnings;
+use strictures 2;
 
 use Exporter qw(import);
 use File::Basename qw(dirname);
 use File::Spec;
-use JSON::PP qw(decode_json);
+use JSON ();
 use Overnet::Core::Nostr;
 use Scalar::Util qw(reftype);
 use Test::More;
@@ -161,8 +160,8 @@ sub run_irc_adapter_map_conformance {
 
         is_deeply($got_event, $expected_event, 'mapped event envelope matches fixture');
         is_deeply(
-          decode_json($got_content),
-          decode_json($expected_content),
+          JSON::decode_json($got_content),
+          JSON::decode_json($expected_content),
           'mapped event content matches fixture semantically',
         );
       } else {
@@ -197,8 +196,8 @@ sub run_irc_adapter_derived_presence_conformance {
 
         is_deeply($got_event, $expected_event, 'derived event envelope matches fixture');
         is_deeply(
-          decode_json($got_content),
-          decode_json($expected_content),
+          JSON::decode_json($got_content),
+          JSON::decode_json($expected_content),
           'derived event content matches fixture semantically',
         );
       } else {
@@ -756,7 +755,7 @@ sub _build_irc_server_harness {
     next unless ref($item->{data}) eq 'HASH';
 
     my $event_hash = _coerce_fixture_wire_event($item->{data});
-    my $content = eval { decode_json($event_hash->{content}) };
+    my $content = eval { JSON::decode_json($event_hash->{content}) };
     next unless ref($content) eq 'HASH';
     next unless ref($content->{body}) eq 'HASH';
     next unless defined($content->{body}{topic}) && !ref($content->{body}{topic});
@@ -1118,7 +1117,7 @@ sub _load_fixture {
   open my $fh, '<', $path or die "Can't read $path: $!";
   my $json = do { local $/; <$fh> };
   close $fh;
-  return decode_json($json);
+  return JSON::decode_json($json);
 }
 
 sub _assertions {
@@ -1259,8 +1258,7 @@ sub _first_tag_values {
 
 package Overnet::Test::SpecConformance::IRCServerHarness;
 
-use strict;
-use warnings;
+use strictures 2;
 
 our @ISA = ('Overnet::Program::IRC::Server');
 
@@ -1357,7 +1355,7 @@ sub _request {
     }
     if ($method eq 'nostr.close_subscription') {
       delete $self->{_spec_nostr_subscriptions}{$params->{subscription_id}};
-      return { closed => JSON::PP::true };
+      return { closed => JSON::true };
     }
     return {};
   }
@@ -1388,7 +1386,7 @@ sub _request {
       }
     }
     return {
-      accepted => JSON::PP::true,
+      accepted => JSON::true,
       (defined($event->{id}) ? (event_id => $event->{id}) : ()),
     };
   }

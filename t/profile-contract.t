@@ -1,7 +1,6 @@
-use strict;
-use warnings;
+use strictures 2;
 use Test::More;
-use JSON::PP;
+use JSON ();
 use File::Basename qw(dirname);
 use File::Spec;
 use FindBin;
@@ -86,7 +85,7 @@ subtest 'contract set resolves dotted dependency profile targets through depends
         references  => [
           {
             name               => 'sender_avatar',
-            required           => JSON::PP::false,
+            required           => JSON::false,
             tag                => 'p',
             target_object_type => 'com.example.identity.profile.avatar',
             target_event_type  => undef,
@@ -486,7 +485,7 @@ sub _load_fixture {
   open my $fh, '<', $path or die "Can't read $path: $!";
   my $json = do { local $/; <$fh> };
   close $fh;
-  return decode_json($json);
+  return JSON::decode_json($json);
 }
 
 sub _contract {
@@ -543,7 +542,7 @@ sub _reference {
   my (%extra) = @_;
   return {
     name               => exists $extra{name} ? $extra{name} : 'related',
-    required           => exists $extra{required} ? $extra{required} : JSON::PP::false,
+    required           => exists $extra{required} ? $extra{required} : JSON::false,
     tag                => exists $extra{tag} ? $extra{tag} : 'e',
     target_object_type => exists $extra{target_object_type} ? $extra{target_object_type} : 'schema.test.object',
     target_event_type  => exists $extra{target_event_type} ? $extra{target_event_type} : undef,
@@ -565,7 +564,7 @@ sub _event_for_body {
       [ o           => 'schema.test.object' ],
       [ d           => 'object-1' ],
     ],
-    content => encode_json({
+    content => JSON::encode_json({
       provenance => {
         type => 'native',
       },

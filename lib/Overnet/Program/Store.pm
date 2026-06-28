@@ -1,8 +1,7 @@
 package Overnet::Program::Store;
 
-use strict;
-use warnings;
-use JSON::PP ();
+use strictures 2;
+use JSON ();
 
 our $VERSION = '0.001';
 
@@ -145,8 +144,8 @@ sub read_events {
 
 sub _clone_json_object {
   my ($value) = @_;
-  return JSON::PP->new->utf8->canonical->decode(
-    JSON::PP->new->utf8->canonical->encode($value)
+  return JSON->new->utf8->canonical->decode(
+    JSON->new->utf8->canonical->encode($value)
   );
 }
 

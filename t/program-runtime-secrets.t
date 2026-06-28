@@ -1,7 +1,6 @@
-use strict;
-use warnings;
+use strictures 2;
 use Test::More;
-use JSON::PP ();
+use JSON ();
 
 use Overnet::Program::Instance;
 use Overnet::Program::Protocol;
@@ -243,7 +242,7 @@ subtest 'secret-provider-backed secrets enforce per-secret ACLs and keep audit o
   is $error->{code}, 'protocol.invalid_params', 'policy denial uses invalid params';
   is $error->{message}, 'Secret access denied or unavailable', 'policy denial is redacted';
 
-  my $audit_json = JSON::PP::encode_json($secret_provider->audit_events);
+  my $audit_json = JSON::encode_json($secret_provider->audit_events);
   unlike $audit_json, qr/top-secret/, 'audit log never includes plaintext secret material';
   unlike $audit_json, qr/\Q$issued->{secret_handle}{id}\E/, 'audit log never includes raw handle ids';
   like $audit_json, qr/secret_handle\.issue/, 'audit log records issue attempts';

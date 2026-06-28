@@ -1,10 +1,9 @@
 package Overnet::Auth::CLI;
 
-use strict;
-use warnings;
+use strictures 2;
 
 use Getopt::Long qw(GetOptionsFromArray);
-use JSON::PP ();
+use JSON ();
 
 use Overnet::Auth::Client;
 
@@ -156,7 +155,7 @@ sub _authorize_params {
     service     => $service,
     scope       => $options{scope},
     action      => $options{action},
-    interactive => $options{interactive} ? JSON::PP::true : JSON::PP::false,
+    interactive => $options{interactive} ? JSON::true : JSON::false,
     artifacts   => $class->_artifacts(%options),
   );
   $params{identity_id} = $options{identity_id}
@@ -219,7 +218,7 @@ sub _session_params {
     },
   );
   if ($options{include_interactive}) {
-    $params{interactive} = $options{interactive} ? JSON::PP::true : JSON::PP::false;
+    $params{interactive} = $options{interactive} ? JSON::true : JSON::false;
   }
 
   return %params;
@@ -288,7 +287,7 @@ sub _artifacts {
 
 sub _decode_artifact_json {
   my ($class, $json, $source) = @_;
-  my $artifact = eval { JSON::PP->new->utf8->decode($json) };
+  my $artifact = eval { JSON->new->utf8->decode($json) };
   die "$source did not contain valid JSON: $@"
     unless defined $artifact;
   die "$source must decode to an object\n"
@@ -320,18 +319,18 @@ sub _service_identity_descriptor {
 
 sub _render_response {
   my ($class, $response, %options) = @_;
-  my $encoder = JSON::PP->new->utf8->canonical;
+  my $encoder = JSON->new->utf8->canonical;
   $encoder = $encoder->pretty if $options{pretty};
 
   if ($response->{ok}) {
     return $encoder->encode({
-      ok     => JSON::PP::true,
+      ok     => JSON::true,
       result => $response->{result} || {},
     });
   }
 
   return $encoder->encode({
-    ok    => JSON::PP::false,
+    ok    => JSON::false,
     error => $response->{error} || {},
   });
 }

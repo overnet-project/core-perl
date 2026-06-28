@@ -1,11 +1,10 @@
-use strict;
-use warnings;
+use strictures 2;
 
 use FindBin;
 use File::Glob qw(bsd_glob);
 use File::Spec;
 use File::Temp qw(tempdir);
-use JSON::PP qw(encode_json);
+use JSON ();
 use Test::More;
 
 use Overnet::Auth::StateStore;
@@ -70,7 +69,7 @@ subtest 'load_state rejects invalid JSON state objects' => sub {
   my $path = File::Spec->catfile($dir, 'auth-state.json');
 
   open my $fh, '>', $path or die "open $path failed: $!";
-  print {$fh} encode_json([ 'not', 'an', 'object' ]) or die "write $path failed: $!";
+  print {$fh} JSON::encode_json([ 'not', 'an', 'object' ]) or die "write $path failed: $!";
   close $fh or die "close $path failed: $!";
 
   my $store = Overnet::Auth::StateStore->new(path => $path);

@@ -1,7 +1,6 @@
 package Overnet::Auth::Backend::DirectSecret;
 
-use strict;
-use warnings;
+use strictures 2;
 
 use parent 'Overnet::Auth::Backend';
 

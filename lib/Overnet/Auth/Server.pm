@@ -1,7 +1,6 @@
 package Overnet::Auth::Server;
 
-use strict;
-use warnings;
+use strictures 2;
 
 use Overnet::Program::Protocol;
 

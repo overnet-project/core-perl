@@ -1,9 +1,8 @@
 package Overnet::Auth::Bridge::IRC;
 
-use strict;
-use warnings;
+use strictures 2;
 
-use JSON::PP qw(encode_json decode_json);
+use JSON ();
 use MIME::Base64 qw(encode_base64 decode_base64);
 
 our $VERSION = '0.001';
@@ -30,7 +29,7 @@ sub encode_artifact {
   return {
     command  => $command,
     encoding => $encoding,
-    payload  => encode_base64(encode_json($artifact->{value}), ''),
+    payload  => encode_base64(JSON::encode_json($artifact->{value}), ''),
   };
 }
 
@@ -49,7 +48,7 @@ sub decode_artifact {
   return {
     type   => 'nostr.event',
     format => 'nostr.event',
-    value  => decode_json(decode_base64($payload)),
+    value  => JSON::decode_json(decode_base64($payload)),
   };
 }
 

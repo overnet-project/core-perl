@@ -1,12 +1,11 @@
 package Overnet::Core::Nostr;
 
-use strict;
-use warnings;
+use strictures 2;
 
 use AnyEvent;
 use Crypt::PK::ECC;
 use Digest::SHA qw(sha256_hex);
-use JSON::PP ();
+use JSON ();
 use Net::Nostr::Bech32 qw(decode_nsec);
 use Net::Nostr::DirectMessage;
 use Net::Nostr::Client;
@@ -14,7 +13,7 @@ use Net::Nostr::Event;
 use Net::Nostr::Filter;
 use Net::Nostr::Key;
 
-my $JSON = JSON::PP->new->utf8->canonical;
+my $JSON = JSON->new->utf8->canonical;
 
 sub load_key {
   my ($class, %args) = @_;
@@ -262,8 +261,7 @@ sub _key_from_hex_secret {
 
 package Overnet::Core::Nostr::Key;
 
-use strict;
-use warnings;
+use strictures 2;
 
 sub pubkey_hex {
   my ($self) = @_;
@@ -296,8 +294,7 @@ sub save_privkey {
 
 package Overnet::Core::Nostr::Event;
 
-use strict;
-use warnings;
+use strictures 2;
 
 sub id         { $_[0]{event}->id }
 sub kind       { $_[0]{event}->kind }

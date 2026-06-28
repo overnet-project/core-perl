@@ -1,9 +1,8 @@
-use strict;
-use warnings;
+use strictures 2;
 
 use File::Basename qw(dirname);
 use File::Spec;
-use JSON::PP qw(decode_json);
+use JSON ();
 use Test::More;
 
 use Overnet::Core::PrivateMessaging;
@@ -24,7 +23,7 @@ for my $file (@fixture_files) {
   my $json = do { local $/; <$fh> };
   close $fh;
 
-  my $fixture = decode_json($json);
+  my $fixture = JSON::decode_json($json);
   my $desc = $fixture->{description};
   my $input = $fixture->{input};
   my $expected = $fixture->{expected};

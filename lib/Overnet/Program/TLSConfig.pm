@@ -1,7 +1,7 @@
 package Overnet::Program::TLSConfig;
 
-use strict;
-use warnings;
+use strictures 2;
+use JSON ();
 use IO::Socket::SSL qw(SSL_VERIFY_NONE SSL_VERIFY_PEER);
 
 our $VERSION = '0.001';
@@ -97,7 +97,7 @@ sub _normalize_bool {
   my ($label, $value) = @_;
 
   return $value ? 1 : 0
-    if ref($value) eq 'JSON::PP::Boolean';
+    if JSON::is_bool($value);
   return 0 + $value
     if defined $value && !ref($value) && ($value eq '0' || $value eq '1');
 

@@ -1,13 +1,12 @@
 package Overnet::Core::Validator;
 
-use strict;
-use warnings;
-use JSON::PP ();
+use strictures 2;
+use JSON ();
 use Net::Nostr::Event;
 
 my %VALID_KINDS = (7800 => 1, 37800 => 1, 7801 => 1);
 my %SINGULAR_TAGS = map { $_ => 1 } qw(overnet_v overnet_et overnet_ot overnet_oid overnet_delegate);
-my $JSON = JSON::PP->new->utf8;
+my $JSON = JSON->new->utf8;
 
 sub validate {
   my ($input, $context) = @_;

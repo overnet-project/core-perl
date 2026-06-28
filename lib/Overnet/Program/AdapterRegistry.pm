@@ -1,7 +1,6 @@
 package Overnet::Program::AdapterRegistry;
 
-use strict;
-use warnings;
+use strictures 2;
 use Overnet::Program::AdapterFactory;
 
 our $VERSION = '0.001';

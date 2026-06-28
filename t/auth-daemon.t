@@ -1,10 +1,9 @@
-use strict;
-use warnings;
+use strictures 2;
 
 use FindBin;
 use File::Spec;
 use File::Temp qw(tempdir);
-use JSON::PP qw(encode_json);
+use JSON ();
 use Socket qw(AF_UNIX PF_UNSPEC SOCK_STREAM);
 use Test::More;
 
@@ -286,9 +285,9 @@ sub _wait_for_child {
 sub _config_endpoint {
   my ($path) = @_;
   open my $fh, '<', $path or die "open $path failed: $!";
-  my $decoded = do { local $/; encode_json(JSON::PP::decode_json(<$fh>)) };
+  my $decoded = do { local $/; JSON::encode_json(JSON::decode_json(<$fh>)) };
   close $fh or die "close $path failed: $!";
-  my $config = JSON::PP::decode_json($decoded);
+  my $config = JSON::decode_json($decoded);
   return $config->{daemon}{endpoint};
 }
 
@@ -306,7 +305,7 @@ sub _write_config {
 
   open my $fh, '>', $path
     or die "open $path failed: $!";
-  print {$fh} encode_json({
+  print {$fh} JSON::encode_json({
     daemon => {
       endpoint => $socket_path,
       (defined($args{state_file}) ? (state_file => $args{state_file}) : ()),
@@ -335,7 +334,7 @@ sub _write_state {
   my ($path, $value) = @_;
   open my $fh, '>', $path
     or die "open $path failed: $!";
-  print {$fh} encode_json($value)
+  print {$fh} JSON::encode_json($value)
     or die "write $path failed: $!";
   close $fh
     or die "close $path failed: $!";
@@ -345,7 +344,7 @@ sub _read_json {
   my ($path) = @_;
   open my $fh, '<', $path
     or die "open $path failed: $!";
-  my $value = JSON::PP::decode_json(do { local $/; <$fh> });
+  my $value = JSON::decode_json(do { local $/; <$fh> });
   close $fh
     or die "close $path failed: $!";
   return $value;

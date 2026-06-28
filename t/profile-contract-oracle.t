@@ -1,9 +1,8 @@
-use strict;
-use warnings;
+use strictures 2;
 use Test::More;
 use File::Spec;
 use FindBin;
-use JSON::PP qw(decode_json encode_json);
+use JSON ();
 use JSON::Schema::Modern;
 
 use Overnet::Core::ProfileContract;
@@ -222,7 +221,7 @@ subtest 'profile event body validation matches JSON Schema evaluation' => sub {
         },
       },
       {
-        ok => JSON::PP::true,
+        ok => JSON::true,
       },
     ],
     [
@@ -375,7 +374,7 @@ sub _mutated_contract_cases {
 sub _reference_contract_cases {
   my $valid_reference = {
     name               => 'related',
-    required           => JSON::PP::false,
+    required           => JSON::false,
     tag                => 'e',
     target_object_type => 'chat.channel',
     target_event_type  => undef,
@@ -392,7 +391,7 @@ sub _reference_contract_cases {
     [ 'reference target event bad', { %{$valid_reference}, target_object_type => undef, target_event_type => 'message' } ],
     [ 'reference both targets', { %{$valid_reference}, target_event_type => 'chat.message' } ],
     [ 'reference no targets', { %{$valid_reference}, target_object_type => undef, target_event_type => undef } ],
-    [ 'reference required null tag', { %{$valid_reference}, required => JSON::PP::true, tag => undef } ],
+    [ 'reference required null tag', { %{$valid_reference}, required => JSON::true, tag => undef } ],
   );
 
   return map {
@@ -410,9 +409,9 @@ sub _schema_valid {
 sub _event_with_body {
   my ($body) = @_;
   my $event = _clone($base_event);
-  my $content = decode_json($event->{content});
+  my $content = JSON::decode_json($event->{content});
   $content->{body} = $body;
-  $event->{content} = encode_json($content);
+  $event->{content} = JSON::encode_json($content);
   return $event;
 }
 
@@ -443,7 +442,7 @@ sub _delete_path {
 
 sub _clone {
   my ($value) = @_;
-  return decode_json(encode_json($value));
+  return JSON::decode_json(JSON::encode_json($value));
 }
 
 sub _load_json {
@@ -451,7 +450,7 @@ sub _load_json {
   open my $fh, '<', $path or die "Can't read $path: $!";
   my $json = do { local $/; <$fh> };
   close $fh;
-  return decode_json($json);
+  return JSON::decode_json($json);
 }
 
 sub _spec_root {

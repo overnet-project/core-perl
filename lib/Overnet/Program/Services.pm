@@ -1,7 +1,6 @@
 package Overnet::Program::Services;
 
-use strict;
-use warnings;
+use strictures 2;
 use Overnet::Core::Nostr;
 use Overnet::Program::Permissions;
 use Overnet::Program::Runtime;

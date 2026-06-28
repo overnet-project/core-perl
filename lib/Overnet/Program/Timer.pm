@@ -1,8 +1,7 @@
 package Overnet::Program::Timer;
 
-use strict;
-use warnings;
-use JSON::PP ();
+use strictures 2;
+use JSON ();
 
 our $VERSION = '0.001';
 
@@ -100,8 +99,8 @@ sub build_notification_params {
 
 sub _clone_json {
   my ($value) = @_;
-  return JSON::PP->new->utf8->canonical->decode(
-    JSON::PP->new->utf8->canonical->encode($value)
+  return JSON->new->utf8->canonical->decode(
+    JSON->new->utf8->canonical->encode($value)
   );
 }
 

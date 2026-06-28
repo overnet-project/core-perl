@@ -1,8 +1,7 @@
 package Overnet::Program::Runtime;
 
-use strict;
-use warnings;
-use JSON::PP ();
+use strictures 2;
+use JSON ();
 use Net::Nostr::Event;
 use Time::HiRes qw(time);
 use Overnet::Core::Nostr;
@@ -645,7 +644,7 @@ sub close_nostr_subscription {
   } @{$queue};
 
   return {
-    closed => JSON::PP::true,
+    closed => JSON::true,
   };
 }
 
@@ -705,7 +704,7 @@ sub accept_emitted_private_message {
   );
 
   my $result = {
-    accepted => JSON::PP::true,
+    accepted => JSON::true,
   };
   $result->{event_id} = $stored->{transport}{id}
     if defined $stored->{transport}{id};
@@ -774,7 +773,7 @@ sub accept_emitted_item {
   );
 
   my $result = {
-    accepted => JSON::PP::true,
+    accepted => JSON::true,
   };
   $result->{event_id} = $event->id;
 
@@ -835,7 +834,7 @@ sub accept_emitted_capabilities {
   }
 
   return {
-    accepted => JSON::PP::true,
+    accepted => JSON::true,
   };
 }
 
@@ -1163,8 +1162,8 @@ sub _validate_config_description {
 
 sub _clone_json {
   my ($value) = @_;
-  return JSON::PP->new->utf8->canonical->decode(
-    JSON::PP->new->utf8->canonical->encode($value)
+  return JSON->new->utf8->canonical->decode(
+    JSON->new->utf8->canonical->encode($value)
   );
 }
 

@@ -1,9 +1,8 @@
 package Overnet::Auth::Agent;
 
-use strict;
-use warnings;
+use strictures 2;
 
-use JSON::PP ();
+use JSON ();
 use Time::HiRes qw(time);
 use Scalar::Util qw(blessed);
 use Overnet::Authority::Delegation;
@@ -110,7 +109,7 @@ sub _dispatch_agent_info {
   return {
     type   => 'response',
     id     => $id,
-    ok     => JSON::PP::true,
+    ok     => JSON::true,
     result => {
       protocol_version => '0.1.0',
       capabilities     => [
@@ -149,7 +148,7 @@ sub _dispatch_identities_list {
   return {
     type   => 'response',
     id     => $id,
-    ok     => JSON::PP::true,
+    ok     => JSON::true,
     result => {
       identities => \@identities,
     },
@@ -162,7 +161,7 @@ sub _dispatch_policies_list {
   return {
     type   => 'response',
     id     => $request->{id},
-    ok     => JSON::PP::true,
+    ok     => JSON::true,
     result => {
       policies => [
         map { _policy_descriptor($_) }
@@ -195,7 +194,7 @@ sub _dispatch_policies_grant {
   return {
     type   => 'response',
     id     => $id,
-    ok     => JSON::PP::true,
+    ok     => JSON::true,
     result => {
       policy => $policy,
     },
@@ -227,7 +226,7 @@ sub _dispatch_policies_revoke {
   return {
     type   => 'response',
     id     => $id,
-    ok     => JSON::PP::true,
+    ok     => JSON::true,
     result => {
       policy_id => $policy_id,
     },
@@ -240,7 +239,7 @@ sub _dispatch_service_pins_list {
   return {
     type   => 'response',
     id     => $request->{id},
-    ok     => JSON::PP::true,
+    ok     => JSON::true,
     result => {
       service_pins => [
         map {
@@ -281,7 +280,7 @@ sub _dispatch_service_pins_set {
   return {
     type   => 'response',
     id     => $id,
-    ok     => JSON::PP::true,
+    ok     => JSON::true,
     result => {
       locator          => $locator,
       service_identity => $stored,
@@ -311,7 +310,7 @@ sub _dispatch_service_pins_forget {
   return {
     type   => 'response',
     id     => $id,
-    ok     => JSON::PP::true,
+    ok     => JSON::true,
     result => {
       locator => $locator,
     },
@@ -324,7 +323,7 @@ sub _dispatch_sessions_list {
   return {
     type   => 'response',
     id     => $request->{id},
-    ok     => JSON::PP::true,
+    ok     => JSON::true,
     result => {
       sessions => [
         map { _session_descriptor($self->{sessions}{$_}) }
@@ -416,7 +415,7 @@ sub _dispatch_authorize {
   return {
     type   => 'response',
     id     => $id,
-    ok     => JSON::PP::true,
+    ok     => JSON::true,
     result => {
       identity_id      => $identity->{identity_id},
       service_pin_state => $service_pin_state,
@@ -481,7 +480,7 @@ sub _dispatch_renew {
   return {
     type   => 'response',
     id     => $id,
-    ok     => JSON::PP::true,
+    ok     => JSON::true,
     result => {
       identity_id      => $session->{identity_id},
       service_pin_state => $service_pin_state,
@@ -513,7 +512,7 @@ sub _dispatch_revoke {
   return {
     type   => 'response',
     id     => $id,
-    ok     => JSON::PP::true,
+    ok     => JSON::true,
     result => {},
   };
 }
@@ -952,7 +951,7 @@ sub _error_response {
   return {
     type  => 'response',
     id    => $id,
-    ok    => JSON::PP::false,
+    ok    => JSON::false,
     error => {
       code    => $code,
       message => $message,

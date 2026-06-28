@@ -1,5 +1,4 @@
-use strict;
-use warnings;
+use strictures 2;
 
 use ExtUtils::MakeMaker;
 
@@ -15,12 +14,18 @@ WriteMakefile(
     'bin/overnet-auth.pl',
     'bin/overnet-auth-agent.pl',
   ],
+  CONFIGURE_REQUIRES => {
+    'ExtUtils::MakeMaker' => 0,
+    'strictures'         => 2,
+  },
   PREREQ_PM        => {
     'AnyEvent'             => 0,
     'CryptX'               => 0,
     'IO::Socket::SSL'      => 0,
+    'JSON'                 => 0,
     'JSON::Schema::Modern' => 0,
     'Net::Nostr'           => 0,
+    'strictures'           => 2,
   },
   test => {
     TESTS => join(

@@ -1,9 +1,8 @@
-use strict;
-use warnings;
+use strictures 2;
 
 use File::Spec;
 use FindBin;
-use JSON::PP qw(decode_json);
+use JSON ();
 use Test::More;
 
 my $readme = File::Spec->catfile($FindBin::Bin, '..', 'README.md');
@@ -34,7 +33,7 @@ my ($config_json) = $content =~ /```json\n(.*?)\n```/s;
 ok defined $config_json, 'README includes a JSON auth-agent config example'
   or BAIL_OUT('README auth-agent config example is required');
 
-my $config = decode_json($config_json);
+my $config = JSON::decode_json($config_json);
 is ref($config), 'HASH', 'config example decodes to an object';
 ok ref($config->{daemon}) eq 'HASH', 'config example includes a daemon section';
 ok defined($config->{daemon}{state_file}) && length($config->{daemon}{state_file}),

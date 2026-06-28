@@ -1,7 +1,6 @@
 package Overnet::Authority::Delegation;
 
-use strict;
-use warnings;
+use strictures 2;
 use Time::HiRes qw(time);
 use Overnet::Core::Nostr;
 

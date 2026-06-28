@@ -1,6 +1,6 @@
-use strict;
-use warnings;
+use strictures 2;
 
+use JSON ();
 use Test::More;
 
 use Overnet::Auth::Agent;
@@ -524,7 +524,7 @@ subtest 'policies.grant enables matching headless authorization until policies.r
     params => {
       program_id   => 'irc.bridge',
       identity_id  => 'default',
-      interactive  => JSON::PP::false,
+      interactive  => JSON::false,
       service      => {
         locators => [ 'wss://relay.example.test/auth' ],
         service_identity => {
@@ -572,7 +572,7 @@ subtest 'policies.grant enables matching headless authorization until policies.r
     params => {
       program_id   => 'irc.bridge',
       identity_id  => 'default',
-      interactive  => JSON::PP::false,
+      interactive  => JSON::false,
       service      => {
         locators => [ 'wss://relay.example.test/auth' ],
         service_identity => {
