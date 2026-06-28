@@ -144,8 +144,8 @@ subtest 'services accept encrypted private messages and deliver matching subscri
   );
 
   is $result->{accepted}, JSON::true, 'private message is accepted';
-  like $result->{event_id}, qr/\A[0-9a-f]{64}\z/, 'accepted private message returns visible wrap event id';
-  like $result->{rumor_id}, qr/\A[0-9a-f]{64}\z/, 'accepted private message returns rumor id';
+  like $result->{event_id}, qr/\A[0-9a-f]{64}\z/mx, 'accepted private message returns visible wrap event id';
+  like $result->{rumor_id}, qr/\A[0-9a-f]{64}\z/mx, 'accepted private message returns rumor id';
 
   my $emitted = $runtime->emitted_items;
   is scalar @{$emitted}, 1, 'runtime records one emitted private message';
@@ -189,7 +189,7 @@ subtest 'services reject relay-carried private intent encoded as a public core e
   };
   is ref($error), 'HASH', 'invalid private-message fallback error is structured';
   is $error->{code}, 'runtime.validation_failed', 'public-event fallback is a validation failure';
-  like $error->{details}{errors}[0], qr/NIP-17/, 'validation explains that NIP-17 transport is required';
+  like $error->{details}{errors}[0], qr/NIP-17/mx, 'validation explains that NIP-17 transport is required';
 };
 
 subtest 'services enforce overnet.emit_private_message permission' => sub {
@@ -237,7 +237,7 @@ subtest 'services accept opaque endpoint-blind private messages without decrypte
   );
 
   is $result->{accepted}, JSON::true, 'opaque private message is accepted';
-  like $result->{event_id}, qr/\A[0-9a-f]{64}\z/, 'opaque private message returns visible wrap event id';
+  like $result->{event_id}, qr/\A[0-9a-f]{64}\z/mx, 'opaque private message returns visible wrap event id';
   ok !exists($result->{rumor_id}), 'opaque private message does not return a rumor id';
 
   my $emitted = $runtime->emitted_items;

@@ -429,6 +429,7 @@ sub _set_path {
     $current = $current->{$part};
   }
   $current->{$path->[-1]} = $value;
+  return;
 }
 
 sub _delete_path {
@@ -438,6 +439,7 @@ sub _delete_path {
     $current = $current->{$part};
   }
   delete $current->{$path[-1]};
+  return;
 }
 
 sub _clone {
@@ -448,7 +450,7 @@ sub _clone {
 sub _load_json {
   my ($path) = @_;
   open my $fh, '<', $path or die "Can't read $path: $!";
-  my $json = do { local $/; <$fh> };
+  my $json = do { local $/ = undef; <$fh> };
   close $fh;
   return JSON::decode_json($json);
 }

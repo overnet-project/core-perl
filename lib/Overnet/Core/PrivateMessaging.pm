@@ -27,7 +27,7 @@ sub validate_transport {
   }
 
   my $visible_kind = $transport->{kind};
-  if (!defined $visible_kind || ref($visible_kind) || $visible_kind !~ /\A\d+\z/) {
+  if (!defined $visible_kind || ref($visible_kind) || $visible_kind !~ /\A\d+\z/mx) {
     push @errors, 'Private messaging transport kind must be an integer';
   } elsif ($visible_kind != 1059) {
     push @errors, 'Relay-carried private direct messages must use kind 1059 gift wrap events';
@@ -53,7 +53,7 @@ sub validate_transport {
 
       eval { $rumor_event = Net::Nostr::GiftWrap->create_rumor(%rumor_args) };
       if ($@) {
-        (my $err = $@) =~ s/ at .+ line \d+.*//s;
+        (my $err = $@) =~ s/\ at\ .+\ line\ \d+.*//smx;
         push @errors, "Invalid NIP-17 rumor: $err";
       }
     }
@@ -146,7 +146,7 @@ sub _validate_relay_carried_private_intent_event {
   my $event = $input->{event};
   my $kind = $event->{kind};
 
-  if (defined $kind && !ref($kind) && $kind =~ /\A\d+\z/ && $kind == 7800) {
+  if (defined $kind && !ref($kind) && $kind =~ /\A\d+\z/mx && $kind == 7800) {
     my %tag_values;
     for my $tag (@{$event->{tags} || []}) {
       next unless ref($tag) eq 'ARRAY' && @{$tag} >= 2;
@@ -241,7 +241,7 @@ sub _validate_irc_decrypted_binding {
   my $command = $parsed->{command};
   my $target = $parsed->{target};
 
-  if ($target =~ /\A[#&+!]/) {
+  if ($target =~ /\A[#&+!]/mx) {
     push @errors, 'IRC private-message binding source.line must target a nick, not a channel';
     return @errors;
   }
@@ -291,13 +291,13 @@ sub _validate_irc_opaque_binding {
     return @errors;
   }
 
-  if ($parsed->{target} =~ /\A[#&+!]/) {
+  if ($parsed->{target} =~ /\A[#&+!]/mx) {
     push @errors, 'IRC private-message binding source.line must target a nick, not a channel';
     return @errors;
   }
 
   push @errors, 'Opaque IRC private-message binding source.line must carry an overnet-e2ee-v1 transport body'
-    unless $line =~ /\s:\+overnet-e2ee-v1\s+\S/;
+    unless $line =~ /\s:\+overnet-e2ee-v1\s+\S/mx;
 
   if ($parsed->{command} eq 'PRIVMSG') {
     push @errors, 'IRC private-message binding must use private_type chat.dm_message for PRIVMSG'
@@ -350,10 +350,10 @@ sub _validate_opaque_metadata {
 
 sub _parse_irc_direct_message_line {
   my ($line) = @_;
-  return undef unless _is_non_empty_string($line);
+  return unless _is_non_empty_string($line);
 
-  my ($sender, $command, $target) = $line =~ /\A:([^\s!]+)(?:![^\s]+)?\s+([A-Z]+)\s+([^\s]+)\s+:/;
-  return undef unless defined $sender && defined $command && defined $target;
+  my ($sender, $command, $target) = $line =~ /\A:([^\s!]+)(?:![^\s]+)?\s+([A-Z]+)\s+([^\s]+)\s+:/mx;
+  return unless defined $sender && defined $command && defined $target;
 
   return {
     sender  => $sender,

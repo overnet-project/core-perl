@@ -15,7 +15,7 @@ my $fixture_pubkey = '4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b70407
 my $challenge = '6cf8a952df516a8e691c6138496516abe84ccfefa9678f518bb52f70b1ca966f';
 
 {
-  package t::auth_daemon::FakeListener;
+  package t::auth_daemon::FakeListener; ## no critic (Modules::RequireFilenameMatchesPackage)
 
   sub new {
     my ($class, %args) = @_;
@@ -124,7 +124,7 @@ subtest 'daemon rejects a pre-existing non-socket file at the endpoint path' => 
     1;
   } ? undef : $@;
 
-  like $error, qr/auth-agent endpoint path already exists and is not a socket/,
+  like $error, qr/auth-agent\ endpoint\ path\ already\ exists\ and\ is\ not\ a\ socket/mx,
     'daemon refuses to unlink non-socket endpoint paths';
 };
 
@@ -280,12 +280,13 @@ sub _wait_for_child {
   my ($pid, $name) = @_;
   waitpid($pid, 0);
   is $? >> 8, 0, $name;
+  return;
 }
 
 sub _config_endpoint {
   my ($path) = @_;
   open my $fh, '<', $path or die "open $path failed: $!";
-  my $decoded = do { local $/; JSON::encode_json(JSON::decode_json(<$fh>)) };
+  my $decoded = do { local $/ = undef; JSON::encode_json(JSON::decode_json(<$fh>)) };
   close $fh or die "close $path failed: $!";
   my $config = JSON::decode_json($decoded);
   return $config->{daemon}{endpoint};
@@ -328,6 +329,7 @@ sub _write_config {
     or die "write $path failed: $!";
   close $fh
     or die "close $path failed: $!";
+  return;
 }
 
 sub _write_state {
@@ -338,13 +340,14 @@ sub _write_state {
     or die "write $path failed: $!";
   close $fh
     or die "close $path failed: $!";
+  return;
 }
 
 sub _read_json {
   my ($path) = @_;
   open my $fh, '<', $path
     or die "open $path failed: $!";
-  my $value = JSON::decode_json(do { local $/; <$fh> });
+  my $value = JSON::decode_json(do { local $/ = undef; <$fh> });
   close $fh
     or die "close $path failed: $!";
   return $value;

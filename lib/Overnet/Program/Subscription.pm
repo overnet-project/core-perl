@@ -26,9 +26,9 @@ sub new {
   }, $class;
 }
 
-sub session_id { $_[0]->{session_id} }
-sub subscription_id { $_[0]->{subscription_id} }
-sub query { { %{$_[0]->{query}} } }
+sub session_id { return $_[0]->{session_id}; }
+sub subscription_id { return $_[0]->{subscription_id}; }
+sub query { return { %{$_[0]->{query}} }; }
 
 sub matches {
   my ($self, %args) = @_;

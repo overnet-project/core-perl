@@ -14,13 +14,13 @@ my $fixtures_dir = File::Spec->catdir(
 );
 
 opendir my $dh, $fixtures_dir or die "Can't open $fixtures_dir: $!";
-my @fixture_files = sort grep { /\.json\z/ } readdir $dh;
+my @fixture_files = sort grep { /\.json\z/mx } readdir $dh;
 closedir $dh;
 
 for my $file (@fixture_files) {
   my $path = File::Spec->catfile($fixtures_dir, $file);
   open my $fh, '<', $path or die "Can't read $path: $!";
-  my $json = do { local $/; <$fh> };
+  my $json = do { local $/ = undef; <$fh> };
   close $fh;
 
   my $fixture = JSON::decode_json($json);
@@ -35,7 +35,7 @@ for my $file (@fixture_files) {
       "valid = $expected->{private_transport_valid}";
 
     if (!$expected->{private_transport_valid} && $expected->{reason}) {
-      my $found = grep { /\Q$expected->{reason}\E/i } @{$result->{errors}};
+      my $found = grep { /\Q$expected->{reason}\E/imx } @{$result->{errors}};
       ok $found, "errors contain: $expected->{reason}";
     }
 
@@ -70,23 +70,23 @@ sub _spec_root {
 
 sub _path_get {
   my ($root, $path) = @_;
-  my @parts = split /\./, $path;
+  my @parts = split /\./mx, $path;
   my $value = $root;
 
   for my $part (@parts) {
-    return undef if !defined $value;
+    return if !defined $value;
 
     if (ref($value) eq 'HASH') {
       $value = $value->{$part};
       next;
     }
 
-    if (ref($value) eq 'ARRAY' && $part =~ /\A\d+\z/) {
+    if (ref($value) eq 'ARRAY' && $part =~ /\A\d+\z/mx) {
       $value = $value->[$part];
       next;
     }
 
-    return undef;
+    return;
   }
 
   return $value;

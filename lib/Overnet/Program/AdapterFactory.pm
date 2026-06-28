@@ -39,7 +39,11 @@ sub build {
 
     unless ($class->can('new')) {
       local @INC = (@{$lib_dirs}, @INC);
-      eval "require $class; 1"
+      eval {
+        (my $path = "$class.pm") =~ s{::}{/}gmx;
+        require $path;
+        1;
+      }
         or die "Unable to load adapter class $class: $@";
     }
 

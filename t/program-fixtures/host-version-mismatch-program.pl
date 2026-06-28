@@ -21,6 +21,7 @@ sub _send_message {
     die "write failed: $!\n" unless defined $written;
     $offset += $written;
   }
+  return;
 }
 
 _send_message(

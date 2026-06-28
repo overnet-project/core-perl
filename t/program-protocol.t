@@ -22,7 +22,7 @@ subtest 'encodes framed JSON messages' => sub {
     },
   });
 
-  like $frame, qr/\A\d+\n\{/, 'frame has length prefix and JSON payload';
+  like $frame, qr/\A\d+\n\{/mx, 'frame has length prefix and JSON payload';
   is $protocol->buffered_bytes, 0, 'encoding does not change decoder buffer';
 };
 
@@ -94,7 +94,7 @@ subtest 'decodes multiple frames from one chunk' => sub {
 subtest 'rejects non-numeric length prefixes' => sub {
   my $protocol = Overnet::Program::Protocol->new;
   like dies_with { $protocol->feed("abc\n{}") },
-    qr/non-numeric length prefix/,
+    qr/non-numeric\ length\ prefix/mx,
     'non-numeric prefix is rejected';
 };
 
@@ -103,7 +103,7 @@ subtest 'rejects oversized frames' => sub {
   my $frame = "11\n" . ('x' x 11);
 
   like dies_with { $protocol->feed($frame) },
-    qr/frame exceeds maximum size/,
+    qr/frame\ exceeds\ maximum\ size/mx,
     'oversized frame is rejected';
 };
 
@@ -112,7 +112,7 @@ subtest 'rejects invalid JSON payloads' => sub {
   my $frame = "4\nnope";
 
   like dies_with { $protocol->feed($frame) },
-    qr/invalid JSON payload/,
+    qr/invalid\ JSON\ payload/mx,
     'invalid JSON payload is rejected';
 };
 
@@ -122,7 +122,7 @@ subtest 'rejects truncated frames at end of stream' => sub {
 
   is scalar(@{$protocol->feed($frame)}), 0, 'truncated frame remains buffered until stream end';
   like dies_with { $protocol->finish },
-    qr/payload shorter than declared length|incomplete frame at end of stream/,
+    qr/payload\ shorter\ than\ declared\ length|incomplete\ frame\ at\ end\ of\ stream/mx,
     'end-of-stream validation rejects truncated frame';
 };
 
@@ -136,7 +136,7 @@ subtest 'rejects trailing bytes at end of stream after valid frames' => sub {
 
   is scalar(@{$protocol->feed($frame . 'x')}), 1, 'valid frame is decoded before trailing bytes';
   like dies_with { $protocol->finish },
-    qr/incomplete frame at end of stream|trailing payload bytes do not begin a valid next frame/,
+    qr/incomplete\ frame\ at\ end\ of\ stream|trailing\ payload\ bytes\ do\ not\ begin\ a\ valid\ next\ frame/mx,
     'end-of-stream validation rejects trailing garbage';
 };
 
@@ -145,7 +145,7 @@ subtest 'rejects JSON payloads that are not objects' => sub {
   my $frame = "2\n[]";
 
   like dies_with { $protocol->feed($frame) },
-    qr/payload must decode to a JSON object/,
+    qr/payload\ must\ decode\ to\ a\ JSON\ object/mx,
     'non-object payload is rejected';
 };
 
@@ -153,7 +153,7 @@ subtest 'encode_message rejects non-object messages' => sub {
   my $protocol = Overnet::Program::Protocol->new;
 
   like dies_with { $protocol->encode_message([]) },
-    qr/hash reference/,
+    qr/hash\ reference/mx,
     'non-hash messages are rejected';
 };
 
@@ -181,7 +181,7 @@ subtest 'rejects unknown notification methods' => sub {
 
   ok !$ok, 'notification is invalid';
   is $code, 'protocol.unknown_method', 'returns protocol.unknown_method';
-  like $message, qr/Unknown notification method/, 'error message is informative';
+  like $message, qr/Unknown\ notification\ method/mx, 'error message is informative';
 };
 
 subtest 'validates runtime.fatal notifications' => sub {
@@ -214,7 +214,7 @@ subtest 'rejects malformed runtime.fatal notifications' => sub {
 
   ok !$ok, 'runtime.fatal notification is invalid';
   is $code, 'protocol.invalid_params', 'runtime.fatal validation uses invalid params';
-  like $message, qr/runtime\.fatal params\.message is required/, 'validation error identifies missing field';
+  like $message, qr/runtime\.fatal\ params\.message\ is\ required/mx, 'validation error identifies missing field';
 };
 
 subtest 'rejects malformed responses' => sub {
@@ -228,7 +228,7 @@ subtest 'rejects malformed responses' => sub {
 
   ok !$ok, 'response is invalid';
   is $code, 'protocol.invalid_message', 'returns protocol.invalid_message';
-  like $message, qr/must not include error/, 'error message is informative';
+  like $message, qr/must\ not\ include\ error/mx, 'error message is informative';
 };
 
 subtest 'rejects response ok values that are not booleans' => sub {
@@ -242,7 +242,7 @@ subtest 'rejects response ok values that are not booleans' => sub {
 
   ok !$ok, 'response is invalid';
   is $code, 'protocol.invalid_message', 'returns protocol.invalid_message';
-  like $message, qr/ok field must be a boolean/, 'error message is informative';
+  like $message, qr/ok\ field\ must\ be\ a\ boolean/mx, 'error message is informative';
 };
 
 subtest 'rejects malformed program.hello notifications' => sub {
@@ -257,7 +257,7 @@ subtest 'rejects malformed program.hello notifications' => sub {
 
   ok !$ok, 'notification is invalid';
   is $code, 'protocol.invalid_params', 'returns protocol.invalid_params';
-  like $message, qr/supported_protocol_versions/, 'error message identifies missing field';
+  like $message, qr/supported_protocol_versions/mx, 'error message identifies missing field';
 };
 
 subtest 'builds baseline handshake messages' => sub {

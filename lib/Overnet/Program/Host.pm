@@ -7,7 +7,7 @@ use IPC::Open3 qw(open3);
 use JSON ();
 use POSIX qw(WNOHANG);
 use Symbol qw(gensym);
-use Time::HiRes qw(time);
+use Time::HiRes qw(sleep time);
 use Overnet::Program::Instance;
 use Overnet::Program::Protocol;
 use Overnet::Program::Runtime;
@@ -96,17 +96,17 @@ sub new {
   }, $class;
 }
 
-sub runtime { $_[0]->{runtime} }
-sub service_handler { $_[0]->{service_handler} }
-sub protocol { $_[0]->{protocol} }
-sub instance { $_[0]->{instance} }
-sub pid { $_[0]->{pid} }
-sub state { $_[0]->{instance}->state }
-sub wait_status { $_[0]->{wait_status} }
-sub exit_code { $_[0]->{exit_code} }
-sub exit_signal { $_[0]->{exit_signal} }
-sub has_exited { defined $_[0]->{wait_status} ? 1 : 0 }
-sub stderr_output { $_[0]->{stderr_output} }
+sub runtime { return $_[0]->{runtime}; }
+sub service_handler { return $_[0]->{service_handler}; }
+sub protocol { return $_[0]->{protocol}; }
+sub instance { return $_[0]->{instance}; }
+sub pid { return $_[0]->{pid}; }
+sub state { return $_[0]->{instance}->state; }
+sub wait_status { return $_[0]->{wait_status}; }
+sub exit_code { return $_[0]->{exit_code}; }
+sub exit_signal { return $_[0]->{exit_signal}; }
+sub has_exited { return defined $_[0]->{wait_status} ? 1 : 0; }
+sub stderr_output { return $_[0]->{stderr_output}; }
 
 sub transcript {
   my ($self) = @_;
@@ -290,6 +290,7 @@ sub DESTROY {
   my ($self) = @_;
   return unless defined $self->{pid} && !defined $self->{wait_status};
   $self->_best_effort_terminate(signal => 'TERM', timeout_ms => 100);
+  return;
 }
 
 sub _spawn_child {
@@ -315,6 +316,7 @@ sub _spawn_child {
   $self->{exit_code} = undef;
   $self->{exit_signal} = undef;
   $self->{released_runtime_resources} = 0;
+  return;
 }
 
 sub _poll_io {
@@ -325,7 +327,7 @@ sub _poll_io {
 
   my @handles = grep { defined $_ } ($self->{child_out}, $self->{child_err});
   if (!@handles) {
-    select undef, undef, undef, $timeout_ms / 1000 if $timeout_ms > 0;
+    sleep $timeout_ms / 1000 if $timeout_ms > 0;
     $self->_reap_child;
     return 0;
   }
@@ -382,7 +384,7 @@ sub _process_stdout_chunk {
       die $error;
     }
 
-    if ($message->{type} eq 'notification' && ($result->{observed} || '') =~ /\Aprogram\.(?:log|health)\z/) {
+    if ($message->{type} eq 'notification' && ($result->{observed} || '') =~ /\Aprogram\.(?:log|health)\z/mx) {
       push @{$self->{observed_notifications}}, _clone_json($message);
     }
 
@@ -448,6 +450,7 @@ sub _close_child_stdin {
   my ($self) = @_;
   return unless defined $self->{child_in};
   close delete $self->{child_in};
+  return;
 }
 
 sub _handle_eof {
@@ -483,6 +486,7 @@ sub _reap_child {
   $self->{exit_code} = ($wait_status & 127) ? undef : ($wait_status >> 8);
   $self->{exit_signal} = $wait_status & 127;
   $self->_release_runtime_resources;
+  return;
 }
 
 sub _release_runtime_resources {
@@ -498,6 +502,7 @@ sub _release_runtime_resources {
     session_id => $instance_id,
   );
   $self->{released_runtime_resources} = 1;
+  return;
 }
 
 sub _has_open_read_handles {
@@ -551,6 +556,7 @@ sub _drain_child_stderr {
     }
     $self->{stderr_output} .= $chunk;
   }
+  return;
 }
 
 sub _unexpected_stdout_close_error {
@@ -612,12 +618,12 @@ sub _is_string_array {
 
 sub _is_non_negative_integer {
   my ($value) = @_;
-  return defined $value && !ref($value) && $value =~ /\A(?:0|[1-9]\d*)\z/ ? 1 : 0;
+  return defined $value && !ref($value) && $value =~ /\A(?:0|[1-9]\d*)\z/mx ? 1 : 0;
 }
 
 sub _is_positive_integer {
   my ($value) = @_;
-  return defined $value && !ref($value) && $value =~ /\A[1-9]\d*\z/ ? 1 : 0;
+  return defined $value && !ref($value) && $value =~ /\A[1-9]\d*\z/mx ? 1 : 0;
 }
 
 sub _clone_json {

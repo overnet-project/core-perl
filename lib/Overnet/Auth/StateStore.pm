@@ -29,11 +29,11 @@ sub load_state {
   my ($self) = @_;
   my $path = $self->{path};
 
-  return undef unless -e $path;
+  return unless -e $path;
 
   open my $fh, '<', $path
     or die "open $path failed: $!";
-  my $json = do { local $/; <$fh> };
+  my $json = do { local $/ = undef; <$fh> };
   close $fh
     or die "close $path failed: $!";
 
@@ -90,7 +90,7 @@ sub _normalize_state {
 
 sub _clone {
   my ($value) = @_;
-  return undef unless defined $value;
+  return unless defined $value;
   return $value unless ref($value);
 
   if (ref($value) eq 'HASH') {

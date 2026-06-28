@@ -27,7 +27,7 @@ die _usage()
 
 if (defined $socket_mode) {
   die "--socket-mode must be an octal mode like 0600\n"
-    unless $socket_mode =~ /\A0?[0-7]{3,4}\z/;
+    unless $socket_mode =~ /\A0?[0-7]{3,4}\z/mx;
   $args{socket_mode} = oct($socket_mode);
 }
 

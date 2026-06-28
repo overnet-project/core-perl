@@ -75,11 +75,11 @@ sub new {
   }, $class;
 }
 
-sub adapter_registry { $_[0]->{adapter_registry} }
-sub store { $_[0]->{store} }
-sub secret_provider { $_[0]->{secret_provider} }
-sub config { _clone_json($_[0]->{config}) }
-sub describe_config { _clone_json($_[0]->{config_description}) }
+sub adapter_registry { return $_[0]->{adapter_registry}; }
+sub store { return $_[0]->{store}; }
+sub secret_provider { return $_[0]->{secret_provider}; }
+sub config { return _clone_json($_[0]->{config}); }
+sub describe_config { return _clone_json($_[0]->{config_description}); }
 sub has_secret {
   my ($self, %args) = @_;
   return $self->{secret_provider}->has_secret(%args);
@@ -114,7 +114,7 @@ sub secret_audit_events {
   my ($self) = @_;
   return $self->{secret_provider}->audit_events;
 }
-sub emitted_items { [ @{$_[0]->{emitted_items} || []} ] }
+sub emitted_items { return [ @{$_[0]->{emitted_items} || []} ]; }
 
 sub emitted_stream_name {
   my ($self, $item_type) = @_;
@@ -243,7 +243,7 @@ sub open_adapter_session {
 
 sub get_adapter_session {
   my ($self, $session_id) = @_;
-  return undef unless defined $session_id;
+  return unless defined $session_id;
   return $self->{adapter_sessions}{$session_id};
 }
 
@@ -397,7 +397,7 @@ sub schedule_timer {
       timer_id   => $timer_id,
     );
   die "repeat_ms must be a positive integer\n"
-    if defined $repeat_ms && (ref($repeat_ms) || $repeat_ms !~ /\A[1-9]\d*\z/);
+    if defined $repeat_ms && (ref($repeat_ms) || $repeat_ms !~ /\A[1-9]\d*\z/mx);
   die "payload must be an object\n"
     if defined $payload && ref($payload) ne 'HASH';
 
@@ -405,12 +405,12 @@ sub schedule_timer {
   if (exists $args{at}) {
     my $at = $args{at};
     die "at must be an integer\n"
-      unless defined $at && !ref($at) && $at =~ /\A-?\d+\z/;
+      unless defined $at && !ref($at) && $at =~ /\A-?\d+\z/mx;
     $due_at_ms = (0 + $at) * 1000;
   } else {
     my $delay_ms = $args{delay_ms};
     die "delay_ms must be a non-negative integer\n"
-      unless defined $delay_ms && !ref($delay_ms) && $delay_ms =~ /\A\d+\z/;
+      unless defined $delay_ms && !ref($delay_ms) && $delay_ms =~ /\A\d+\z/mx;
     $due_at_ms = $self->_now_ms + (0 + $delay_ms);
   }
 
@@ -526,7 +526,7 @@ sub publish_nostr_event {
   if (exists $args{timeout_ms}) {
     my $timeout_ms = $args{timeout_ms};
     die "timeout_ms must be a positive integer\n"
-      unless defined $timeout_ms && !ref($timeout_ms) && $timeout_ms =~ /\A[1-9]\d*\z/;
+      unless defined $timeout_ms && !ref($timeout_ms) && $timeout_ms =~ /\A[1-9]\d*\z/mx;
     $publish_args{timeout_ms} = 0 + $timeout_ms;
   }
 
@@ -548,7 +548,7 @@ sub query_nostr_events {
   if (exists $args{timeout_ms}) {
     my $timeout_ms = $args{timeout_ms};
     die "timeout_ms must be a positive integer\n"
-      unless defined $timeout_ms && !ref($timeout_ms) && $timeout_ms =~ /\A[1-9]\d*\z/;
+      unless defined $timeout_ms && !ref($timeout_ms) && $timeout_ms =~ /\A[1-9]\d*\z/mx;
     $query_args{timeout_ms} = 0 + $timeout_ms;
   }
 
@@ -574,7 +574,7 @@ sub open_nostr_subscription {
     ? $args{timeout_ms}
     : 250;
   die "timeout_ms must be a positive integer\n"
-    unless defined $timeout_ms && !ref($timeout_ms) && $timeout_ms =~ /\A[1-9]\d*\z/;
+    unless defined $timeout_ms && !ref($timeout_ms) && $timeout_ms =~ /\A[1-9]\d*\z/mx;
 
   my $events = Overnet::Core::Nostr->query_events(
     relay_url  => $relay_url,
@@ -911,13 +911,13 @@ sub _record_emitted_item {
 
 sub _event_from_wire {
   my ($input) = @_;
-  return undef unless ref($input) eq 'HASH';
+  return unless ref($input) eq 'HASH';
 
   my $event;
   eval {
     $event = Net::Nostr::Event->from_wire($input);
     1;
-  } or return undef;
+  } or return;
 
   return $event;
 }
@@ -927,7 +927,7 @@ sub _now_ms {
   my $now = $self->{now_cb}->();
 
   die "now_cb must return an integer millisecond timestamp\n"
-    unless defined $now && !ref($now) && $now =~ /\A-?\d+\z/;
+    unless defined $now && !ref($now) && $now =~ /\A-?\d+\z/mx;
 
   return 0 + $now;
 }

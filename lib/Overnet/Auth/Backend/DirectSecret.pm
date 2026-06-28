@@ -8,8 +8,7 @@ use Overnet::Core::Nostr;
 
 our $VERSION = '0.001';
 
-sub backend_type { 'direct_secret' }
-
+sub backend_type { return 'direct_secret'; }
 sub load_signing_key {
   my ($self, %args) = @_;
   my $identity = $args{identity} || {};

@@ -41,7 +41,7 @@ sub load_file {
 
   open my $fh, '<', $path
     or die "open $path failed: $!";
-  my $json = do { local $/; <$fh> };
+  my $json = do { local $/ = undef; <$fh> };
   close $fh
     or die "close $path failed: $!";
 
@@ -112,7 +112,7 @@ sub mutable_state {
 
 sub _clone {
   my ($value) = @_;
-  return undef unless defined $value;
+  return unless defined $value;
   return $value unless ref($value);
 
   if (ref($value) eq 'HASH') {

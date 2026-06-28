@@ -28,8 +28,8 @@ subtest 'create_auth_event builds a verifiable kind 22242 auth event' => sub {
     [ relay => $scope ],
     [ challenge => $challenge ],
   ], 'the auth event includes the required relay scope and challenge tags';
-  like $event->{id}, qr/\A[0-9a-f]{64}\z/, 'the auth event is signed';
-  like $event->{sig}, qr/\A[0-9a-f]{128}\z/, 'the auth event includes a Schnorr signature';
+  like $event->{id}, qr/\A[0-9a-f]{64}\z/mx, 'the auth event is signed';
+  like $event->{sig}, qr/\A[0-9a-f]{128}\z/mx, 'the auth event includes a Schnorr signature';
 
   my $verification = Overnet::Authority::Delegation->verify_auth_event(
     challenge => $challenge,
@@ -72,8 +72,8 @@ subtest 'create_delegation_grant_event builds a verifiable kind 14142 delegation
     [ expires_at => $expires_at ],
     [ nick => 'alice' ],
   ], 'the delegation grant includes the required relay, scope, delegate, session, and expiration tags';
-  like $event->{id}, qr/\A[0-9a-f]{64}\z/, 'the delegation grant is signed';
-  like $event->{sig}, qr/\A[0-9a-f]{128}\z/, 'the delegation grant includes a Schnorr signature';
+  like $event->{id}, qr/\A[0-9a-f]{64}\z/mx, 'the delegation grant is signed';
+  like $event->{sig}, qr/\A[0-9a-f]{128}\z/mx, 'the delegation grant includes a Schnorr signature';
 
   my $verification = Overnet::Authority::Delegation->verify_delegation_grant(
     authority_pubkey => $key->pubkey_hex,

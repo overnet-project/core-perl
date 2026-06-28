@@ -273,8 +273,8 @@ subtest 'policies.grant, policies.revoke, service_pins.list, and service_pins.fo
 };
 
 subtest 'client reports a missing auth-agent endpoint clearly' => sub {
-  local $ENV{OVERNET_AUTH_SOCK};
-  local $ENV{OVERNET_AUTH_ENDPOINT};
+  local $ENV{OVERNET_AUTH_SOCK} = undef;
+  local $ENV{OVERNET_AUTH_ENDPOINT} = undef;
 
   my $error = eval {
     my $client = Overnet::Auth::Client->new;
@@ -282,12 +282,12 @@ subtest 'client reports a missing auth-agent endpoint clearly' => sub {
     1;
   } ? undef : $@;
 
-  like $error, qr/auth-agent endpoint is not configured/,
+  like $error, qr/auth-agent\ endpoint\ is\ not\ configured/mx,
     'client refuses to run without a configured endpoint';
 };
 
 subtest 'endpoint falls back to OVERNET_AUTH_ENDPOINT when OVERNET_AUTH_SOCK is unset' => sub {
-  local $ENV{OVERNET_AUTH_SOCK};
+  local $ENV{OVERNET_AUTH_SOCK} = undef;
   local $ENV{OVERNET_AUTH_ENDPOINT} = '/tmp/overnet-auth.endpoint';
 
   my $client = Overnet::Auth::Client->new;
@@ -337,4 +337,5 @@ sub _with_auth_server {
   }
 
   die $error unless $result;
+  return;
 }

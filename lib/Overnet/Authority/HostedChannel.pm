@@ -5,7 +5,7 @@ use Net::Nostr::Group ();
 
 sub irc_casefold {
   my ($value) = @_;
-  return undef unless defined $value && !ref($value);
+  return unless defined $value && !ref($value);
 
   my $folded = $value;
   $folded =~ tr/A-Z[]\\^/a-z{}|~/;
@@ -15,7 +15,7 @@ sub irc_casefold {
 sub irc_user_mask {
   my (%args) = @_;
   for my $field (qw(nick user host)) {
-    return undef
+    return
       unless defined $args{$field} && !ref($args{$field}) && length($args{$field});
   }
 
@@ -40,10 +40,10 @@ sub irc_mask_matches {
   return 0 unless defined $folded_mask && defined $folded_value;
 
   my $pattern = quotemeta($folded_mask);
-  $pattern =~ s/\\\*/.*/g;
-  $pattern =~ s/\\\?/./g;
+  $pattern =~ s/\\\*/.*/gmx;
+  $pattern =~ s/\\\?/./gmx;
 
-  return $folded_value =~ /\A$pattern\z/ ? 1 : 0;
+  return $folded_value =~ /\A$pattern\z/mx ? 1 : 0;
 }
 
 sub authoritative_group_id {
@@ -51,11 +51,11 @@ sub authoritative_group_id {
   my $network = $args{network};
   my $channel = $args{channel};
 
-  return undef unless defined $network && !ref($network) && length($network);
-  return undef unless _is_channel_name($channel);
+  return unless defined $network && !ref($network) && length($network);
+  return unless _is_channel_name($channel);
 
   my $folded_channel = irc_casefold($channel);
-  return undef unless defined $folded_channel && length($folded_channel);
+  return unless defined $folded_channel && length($folded_channel);
 
   my $group_id = join(
     '-',
@@ -73,16 +73,16 @@ sub channel_name_from_group_id {
   my $network = $args{network};
   my $group_id = $args{group_id};
 
-  return undef unless defined $network && !ref($network) && length($network);
-  return undef unless defined $group_id && !ref($group_id) && length($group_id);
-  return undef unless $group_id =~ /\Airc-([0-9a-f]+)-([0-9a-f]+)\z/;
+  return unless defined $network && !ref($network) && length($network);
+  return unless defined $group_id && !ref($group_id) && length($group_id);
+  return unless $group_id =~ /\Airc-([0-9a-f]+)-([0-9a-f]+)\z/mx;
 
   my ($network_hex, $channel_hex) = ($1, $2);
   my $decoded_network = pack('H*', $network_hex);
-  return undef unless $decoded_network eq $network;
+  return unless $decoded_network eq $network;
 
   my $channel = pack('H*', $channel_hex);
-  return undef unless _is_channel_name($channel);
+  return unless _is_channel_name($channel);
 
   return $channel;
 }
@@ -136,16 +136,16 @@ sub channel_name_from_group_event {
   my $network = $args{network};
   my $event = $args{event};
 
-  return undef unless defined $network && !ref($network) && length($network);
+  return unless defined $network && !ref($network) && length($network);
   my $tags = _event_tags($event);
-  return undef unless ref($tags) eq 'ARRAY';
+  return unless ref($tags) eq 'ARRAY';
 
   my %first = _first_tag_values($tags);
   my $channel = channel_name_from_group_id(
     network  => $network,
     group_id => $first{d} || $first{h},
   );
-  return undef unless defined $channel;
+  return unless defined $channel;
 
   if (defined $first{name} && _is_channel_name($first{name})) {
     my $named = irc_casefold($first{name});
@@ -174,13 +174,13 @@ sub group_event_is_tombstoned {
 
 sub _event_tags {
   my ($event) = @_;
-  return undef unless defined $event;
+  return unless defined $event;
 
   return $event->{tags}
     if ref($event) eq 'HASH' && ref($event->{tags}) eq 'ARRAY';
   return $event->tags
     if ref($event) && $event->can('tags');
-  return undef;
+  return;
 }
 
 sub _first_tag_values {
@@ -200,7 +200,7 @@ sub _is_channel_name {
   my ($value) = @_;
   return defined $value
     && !ref($value)
-    && $value =~ /\A[#&][^\x00\x07\r\n ,:]+\z/
+    && $value =~ /\A[#&][^\x00\x07\r\n ,:]+\z/mx
       ? 1
       : 0;
 }

@@ -38,7 +38,7 @@ subtest 'normalize rejects invalid baseline TLS shapes' => sub {
         implicit_mode => 'server',
       );
     },
-    qr/tls\.enabled is required/,
+    qr/tls\.enabled\ is\ required/mx,
     'enabled is required when tls is present',
   );
 
@@ -51,7 +51,7 @@ subtest 'normalize rejects invalid baseline TLS shapes' => sub {
         },
       );
     },
-    qr/tls\.cert_chain_file is required/,
+    qr/tls\.cert_chain_file\ is\ required/mx,
     'server mode requires a cert chain file',
   );
 
@@ -67,7 +67,7 @@ subtest 'normalize rejects invalid baseline TLS shapes' => sub {
         },
       );
     },
-    qr/tls\.min_version must be TLSv1\.2 or TLSv1\.3/,
+    qr/tls\.min_version\ must\ be\ TLSv1\.2\ or\ TLSv1\.3/mx,
     'min_version is restricted to the baseline secure values',
   );
 };

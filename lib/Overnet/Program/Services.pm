@@ -47,7 +47,7 @@ sub new {
   }, $class;
 }
 
-sub runtime { $_[0]->{runtime} }
+sub runtime { return $_[0]->{runtime}; }
 
 sub is_service_method {
   my ($class, $method) = @_;
@@ -921,7 +921,7 @@ sub _require_secret_handle_map_param {
       unless defined $handle->{id} && !ref($handle->{id}) && length($handle->{id});
     _invalid_params("$name.$slot.expires_at must be an integer", { param => "$name.$slot.expires_at" })
       if exists $handle->{expires_at}
-        && (!defined($handle->{expires_at}) || ref($handle->{expires_at}) || $handle->{expires_at} !~ /\A-?\d+\z/);
+        && (!defined($handle->{expires_at}) || ref($handle->{expires_at}) || $handle->{expires_at} !~ /\A-?\d+\z/mx);
 
     $validated{$slot} = {
       id => $handle->{id},
@@ -935,21 +935,21 @@ sub _require_secret_handle_map_param {
 sub _require_integer_param {
   my ($name, $value) = @_;
   _invalid_params("$name must be an integer", { param => $name })
-    unless defined $value && !ref($value) && $value =~ /\A-?\d+\z/;
+    unless defined $value && !ref($value) && $value =~ /\A-?\d+\z/mx;
   return 0 + $value;
 }
 
 sub _require_non_negative_integer_param {
   my ($name, $value) = @_;
   _invalid_params("$name must be a non-negative integer", { param => $name })
-    unless defined $value && !ref($value) && $value =~ /\A\d+\z/;
+    unless defined $value && !ref($value) && $value =~ /\A\d+\z/mx;
   return 0 + $value;
 }
 
 sub _require_positive_integer_param {
   my ($name, $value) = @_;
   _invalid_params("$name must be a positive integer", { param => $name })
-    unless defined $value && !ref($value) && $value =~ /\A[1-9]\d*\z/;
+    unless defined $value && !ref($value) && $value =~ /\A[1-9]\d*\z/mx;
   return 0 + $value;
 }
 
@@ -968,7 +968,7 @@ sub _validate_subscription_query {
     _invalid_params(
       'query.kind must be an integer',
       { param => 'query.kind' },
-    ) unless defined $query->{kind} && !ref($query->{kind}) && $query->{kind} =~ /\A-?\d+\z/;
+    ) unless defined $query->{kind} && !ref($query->{kind}) && $query->{kind} =~ /\A-?\d+\z/mx;
   }
 
   for my $field (qw(overnet_et overnet_ot overnet_oid)) {

@@ -28,7 +28,7 @@ sub endpoint {
     if defined $ENV{OVERNET_AUTH_SOCK} && !ref($ENV{OVERNET_AUTH_SOCK}) && length($ENV{OVERNET_AUTH_SOCK});
   return $ENV{OVERNET_AUTH_ENDPOINT}
     if defined $ENV{OVERNET_AUTH_ENDPOINT} && !ref($ENV{OVERNET_AUTH_ENDPOINT}) && length($ENV{OVERNET_AUTH_ENDPOINT});
-  return undef;
+  return;
 }
 
 sub request {
@@ -210,6 +210,7 @@ sub _read_response {
 
     return $response;
   }
+  return;
 }
 
 sub _write_all {

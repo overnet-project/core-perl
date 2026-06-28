@@ -8,7 +8,7 @@ use Test::More;
 use Overnet::Auth::CLI;
 
 {
-  package t::auth_cli::FakeClient;
+  package t::auth_cli::FakeClient; ## no critic (Modules::RequireFilenameMatchesPackage)
 
   sub new {
     my ($class, %args) = @_;
@@ -533,13 +533,13 @@ subtest 'client CLI script exists and prints help' => sub {
 
   my $help = qx{$^X -I$libdir $script --help 2>&1};
   is $? >> 8, 0, '--help exits cleanly';
-  like $help, qr/Usage:\s+overnet-auth\.pl identities/,
+  like $help, qr/Usage:\s+overnet-auth\.pl\ identities/mx,
     '--help prints the command synopsis';
-  like $help, qr/overnet-auth\.pl policies/,
+  like $help, qr/overnet-auth\.pl\ policies/mx,
     '--help lists policies';
-  like $help, qr/overnet-auth\.pl service-pin-set/,
+  like $help, qr/overnet-auth\.pl\ service-pin-set/mx,
     '--help lists service pin management';
-  like $help, qr/overnet-auth\.pl sessions/,
+  like $help, qr/overnet-auth\.pl\ sessions/mx,
     '--help lists sessions';
 };
 
@@ -553,4 +553,5 @@ sub _write_file {
     or die "write $path failed: $!";
   close $fh
     or die "close $path failed: $!";
+  return;
 }

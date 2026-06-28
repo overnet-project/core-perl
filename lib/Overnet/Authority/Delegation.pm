@@ -79,13 +79,13 @@ sub create_delegation_grant_event {
   return _invalid('scope is required')
     unless defined $scope && !ref($scope) && length($scope);
   return _invalid('delegate_pubkey is required')
-    unless defined $delegate_pubkey && !ref($delegate_pubkey) && $delegate_pubkey =~ /\A[0-9a-f]{64}\z/;
+    unless defined $delegate_pubkey && !ref($delegate_pubkey) && $delegate_pubkey =~ /\A[0-9a-f]{64}\z/mx;
   return _invalid('session_id is required')
     unless defined $session_id && !ref($session_id) && length($session_id);
   return _invalid('expires_at is required')
-    unless defined $expires_at && !ref($expires_at) && $expires_at =~ /\A\d+\z/;
+    unless defined $expires_at && !ref($expires_at) && $expires_at =~ /\A\d+\z/mx;
   return _invalid('kind must be a positive integer')
-    unless defined $kind && !ref($kind) && $kind =~ /\A[1-9]\d*\z/;
+    unless defined $kind && !ref($kind) && $kind =~ /\A[1-9]\d*\z/mx;
   return _invalid('created_at is required')
     unless defined $created_at && !ref($created_at);
   return _invalid('nick must be a non-empty string')
@@ -118,19 +118,19 @@ sub verify_delegation_grant {
   my $event_hash = $args{event};
 
   return _invalid('authority_pubkey is required')
-    unless defined $authority_pubkey && !ref($authority_pubkey) && $authority_pubkey =~ /\A[0-9a-f]{64}\z/;
+    unless defined $authority_pubkey && !ref($authority_pubkey) && $authority_pubkey =~ /\A[0-9a-f]{64}\z/mx;
   return _invalid('relay_url is required')
     unless defined $relay_url && !ref($relay_url) && length($relay_url);
   return _invalid('scope is required')
     unless defined $scope && !ref($scope) && length($scope);
   return _invalid('delegate_pubkey is required')
-    unless defined $delegate_pubkey && !ref($delegate_pubkey) && $delegate_pubkey =~ /\A[0-9a-f]{64}\z/;
+    unless defined $delegate_pubkey && !ref($delegate_pubkey) && $delegate_pubkey =~ /\A[0-9a-f]{64}\z/mx;
   return _invalid('session_id is required')
     unless defined $session_id && !ref($session_id) && length($session_id);
   return _invalid('expires_at is required')
-    unless defined $expires_at && !ref($expires_at) && $expires_at =~ /\A\d+\z/;
+    unless defined $expires_at && !ref($expires_at) && $expires_at =~ /\A\d+\z/mx;
   return _invalid('kind must be a positive integer')
-    unless defined $kind && !ref($kind) && $kind =~ /\A[1-9]\d*\z/;
+    unless defined $kind && !ref($kind) && $kind =~ /\A[1-9]\d*\z/mx;
 
   my ($event, $error) = _coerce_signed_event($event_hash);
   return _invalid($error) unless $event;
@@ -150,7 +150,7 @@ sub verify_delegation_grant {
   return _invalid('delegation event session does not match')
     unless defined $tags{session} && $tags{session} eq $session_id;
   return _invalid('delegation event expiration does not match')
-    unless defined $tags{expires_at} && $tags{expires_at} =~ /\A\d+\z/ && $tags{expires_at} == $expires_at;
+    unless defined $tags{expires_at} && $tags{expires_at} =~ /\A\d+\z/mx && $tags{expires_at} == $expires_at;
 
   return {
     valid    => 1,

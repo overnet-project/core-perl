@@ -14,7 +14,7 @@ plan skip_all => "profile contract fixtures not found at $fixtures_dir"
   unless -d $fixtures_dir;
 
 opendir my $dh, $fixtures_dir or die "Can't open $fixtures_dir: $!";
-my @fixture_files = sort grep { /\.json$/ } readdir $dh;
+my @fixture_files = sort grep { /\.json$/mx } readdir $dh;
 closedir $dh;
 
 for my $file (@fixture_files) {
@@ -452,6 +452,7 @@ sub _check_result {
     my $found = grep { $_ eq $reason } @{$result->{errors}};
     ok $found, "errors contain $reason";
   }
+  return;
 }
 
 sub _contracts_from_input {
@@ -483,7 +484,7 @@ sub _contract_from_fixture {
 sub _load_fixture {
   my ($path) = @_;
   open my $fh, '<', $path or die "Can't read $path: $!";
-  my $json = do { local $/; <$fh> };
+  my $json = do { local $/ = undef; <$fh> };
   close $fh;
   return JSON::decode_json($json);
 }

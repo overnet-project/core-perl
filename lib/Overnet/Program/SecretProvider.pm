@@ -28,7 +28,7 @@ sub new {
   die "secret_handle_ttl_ms must be a positive integer\n"
     unless defined $secret_handle_ttl_ms
       && !ref($secret_handle_ttl_ms)
-      && $secret_handle_ttl_ms =~ /\A[1-9]\d*\z/;
+      && $secret_handle_ttl_ms =~ /\A[1-9]\d*\z/mx;
 
   _validate_secrets($secrets);
   _validate_secret_policies($secret_policies);
@@ -350,7 +350,7 @@ sub _now_ms {
   my $now = $self->{now_cb}->();
 
   die "now_cb must return an integer millisecond timestamp\n"
-    unless defined $now && !ref($now) && $now =~ /\A-?\d+\z/;
+    unless defined $now && !ref($now) && $now =~ /\A-?\d+\z/mx;
 
   return 0 + $now;
 }
@@ -394,7 +394,7 @@ sub _secure_random_bytes {
   my ($self, $length) = @_;
 
   die "length must be a positive integer\n"
-    unless defined $length && !ref($length) && $length =~ /\A[1-9]\d*\z/;
+    unless defined $length && !ref($length) && $length =~ /\A[1-9]\d*\z/mx;
 
   if (my $cb = $self->{random_bytes_cb}) {
     my $bytes = $cb->($length);
@@ -493,7 +493,7 @@ sub _require_string_arg {
 
 sub _optional_string_arg {
   my ($name, $value) = @_;
-  return undef unless defined $value;
+  return unless defined $value;
 
   die "$name must be a non-empty string\n"
     if ref($value) || !length($value);
@@ -503,7 +503,7 @@ sub _optional_string_arg {
 
 sub _clone_json {
   my ($value) = @_;
-  return undef unless defined $value;
+  return unless defined $value;
   return JSON::decode_json(JSON::encode_json($value));
 }
 

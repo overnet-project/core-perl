@@ -568,10 +568,11 @@ sub _next_policy_id {
 
 sub _note_policy_id {
   my ($self, $policy_id) = @_;
-  return unless defined $policy_id && $policy_id =~ /\Apolicy-(\d+)\z/;
+  return unless defined $policy_id && $policy_id =~ /\Apolicy-(\d+)\z/mx;
   my $next = $1 + 1;
   $self->{next_policy_id} = $next
     if $next > $self->{next_policy_id};
+  return;
 }
 
 sub _policy_descriptor {
@@ -608,16 +609,16 @@ sub _session_descriptor {
 
 sub _normalize_policy_input {
   my ($policy) = @_;
-  return undef unless ref($policy) eq 'HASH';
+  return unless ref($policy) eq 'HASH';
 
   my $identity_id = $policy->{identity_id};
   my $program_id = $policy->{program_id};
   my $scope = $policy->{scope};
   my $action = $policy->{action};
-  return undef unless defined $identity_id && !ref($identity_id) && length($identity_id);
-  return undef unless defined $program_id && !ref($program_id) && length($program_id);
-  return undef unless defined $scope && !ref($scope) && length($scope);
-  return undef unless defined $action && !ref($action) && length($action);
+  return unless defined $identity_id && !ref($identity_id) && length($identity_id);
+  return unless defined $program_id && !ref($program_id) && length($program_id);
+  return unless defined $scope && !ref($scope) && length($scope);
+  return unless defined $action && !ref($action) && length($action);
 
   my $service = ref($policy->{service}) eq 'HASH'
     ? $policy->{service}
@@ -634,7 +635,7 @@ sub _normalize_policy_input {
     : ();
   my $service_identity = _normalize_service_identity($service->{service_identity});
 
-  return undef unless @locators || $service_identity;
+  return unless @locators || $service_identity;
 
   my %stored = (
     identity_id => $identity_id,
@@ -650,12 +651,12 @@ sub _normalize_policy_input {
 
 sub _normalize_service_identity {
   my ($service_identity) = @_;
-  return undef unless ref($service_identity) eq 'HASH';
+  return unless ref($service_identity) eq 'HASH';
 
   my $scheme = $service_identity->{scheme};
   my $value = $service_identity->{value};
-  return undef unless defined $scheme && !ref($scheme) && length($scheme);
-  return undef unless defined $value && !ref($value) && length($value);
+  return unless defined $scheme && !ref($scheme) && length($scheme);
+  return unless defined $value && !ref($value) && length($value);
 
   my %normalized = (
     scheme => $scheme,
@@ -671,7 +672,7 @@ sub _normalize_service_identity {
 
 sub _policy_id_value {
   my ($policy_id) = @_;
-  return undef unless defined $policy_id && !ref($policy_id) && length($policy_id);
+  return unless defined $policy_id && !ref($policy_id) && length($policy_id);
   return $policy_id;
 }
 
@@ -758,6 +759,7 @@ sub _pin_service_identity {
     next unless defined $locator && !ref($locator) && length($locator);
     $self->{service_pins}{$locator} = _clone_hash($service->{service_identity});
   }
+  return;
 }
 
 sub _build_artifact {
@@ -812,11 +814,11 @@ sub _build_artifact {
     return (undef, [ 'invalid_request', 'delegation event server tag must match the requested scope' ])
       unless defined($tags{server}) && $tags{server} eq $args{scope};
     return (undef, [ 'invalid_request', 'delegation event delegate tag is required' ])
-      unless defined($tags{delegate}) && $tags{delegate} =~ /\A[0-9a-f]{64}\z/;
+      unless defined($tags{delegate}) && $tags{delegate} =~ /\A[0-9a-f]{64}\z/mx;
     return (undef, [ 'invalid_request', 'delegation event session tag is required' ])
       unless defined($tags{session}) && length($tags{session});
     return (undef, [ 'invalid_request', 'delegation event expires_at tag is required' ])
-      unless defined($tags{expires_at}) && $tags{expires_at} =~ /\A\d+\z/;
+      unless defined($tags{expires_at}) && $tags{expires_at} =~ /\A\d+\z/mx;
 
     $event = Overnet::Authority::Delegation->create_delegation_grant_event(
       key             => $key,
@@ -868,8 +870,8 @@ sub _identity_signing_key {
 
 sub _session_handle_id {
   my ($handle) = @_;
-  return undef unless ref($handle) eq 'HASH';
-  return undef unless defined($handle->{id}) && !ref($handle->{id}) && length($handle->{id});
+  return unless ref($handle) eq 'HASH';
+  return unless defined($handle->{id}) && !ref($handle->{id}) && length($handle->{id});
   return $handle->{id};
 }
 
@@ -892,7 +894,7 @@ sub _created_at {
 
 sub _clone_hash {
   my ($value) = @_;
-  return undef unless defined $value;
+  return unless defined $value;
   return $value unless ref($value);
 
   if (ref($value) eq 'HASH') {
@@ -937,7 +939,11 @@ sub _identity_backend {
     message => "unsupported backend_type: $backend_type",
   }) unless defined $class;
 
-  eval "require $class; 1"
+  eval {
+    (my $path = "$class.pm") =~ s{::}{/}gmx;
+    require $path;
+    1;
+  }
     or return (undef, {
       code    => 'backend_unavailable',
       message => "$@",

@@ -10,7 +10,7 @@ my $fixture_secret = '1111111111111111111111111111111111111111111111111111111111
 my $fixture_pubkey = '4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa';
 
 {
-  package t::auth_agent::CountingBackend;
+  package t::auth_agent::CountingBackend; ## no critic (Modules::RequireFilenameMatchesPackage)
 
   sub new {
     my ($class, %args) = @_;
@@ -29,7 +29,7 @@ my $fixture_pubkey = '4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b70407
     );
   }
 
-  sub calls { $_[0]->{calls} }
+  sub calls { return $_[0]->{calls}; }
 }
 
 subtest 'sessions.authorize uses the direct_secret backend type' => sub {

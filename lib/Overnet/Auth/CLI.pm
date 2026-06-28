@@ -273,7 +273,7 @@ sub _artifacts {
   for my $path (@{$options{artifact_files} || []}) {
     open my $fh, '<', $path
       or die "open $path failed: $!";
-    my $json = do { local $/; <$fh> };
+    my $json = do { local $/ = undef; <$fh> };
     close $fh
       or die "close $path failed: $!";
     push @artifacts, $class->_decode_artifact_json($json, "--artifact-file $path");
@@ -300,7 +300,7 @@ sub _service_identity_descriptor {
   my $scheme = $options{service_identity_scheme};
   my $value = $options{service_identity_value};
 
-  return undef
+  return
     unless defined($scheme) || defined($value) || defined($options{service_identity_display});
 
   die "--service-identity-scheme and --service-identity-value are required together\n"

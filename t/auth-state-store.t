@@ -78,7 +78,7 @@ subtest 'load_state rejects invalid JSON state objects' => sub {
     1;
   } ? undef : $@;
 
-  like $error, qr/auth state must decode to an object/,
+  like $error, qr/auth\ state\ must\ decode\ to\ an\ object/mx,
     'non-object state files are rejected';
 };
 

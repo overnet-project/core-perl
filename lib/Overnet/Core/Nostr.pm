@@ -23,11 +23,11 @@ sub load_key {
   my $input = $args{privkey};
   my $key;
 
-  if ($input =~ /\A[0-9a-f]{64}\z/) {
+  if ($input =~ /\A[0-9a-f]{64}\z/mx) {
     $key = _key_from_hex_secret($input);
-  } elsif ($input =~ /\Ansec1/i) {
+  } elsif ($input =~ /\Ansec1/imx) {
     $key = _key_from_hex_secret(decode_nsec(lc $input));
-  } elsif ($input =~ /\A-----BEGIN /) {
+  } elsif ($input =~ /\A-----BEGIN\ /mx) {
     $key = Net::Nostr::Key->new(privkey => \$input);
   } else {
     $key = Net::Nostr::Key->new(privkey => $input);
@@ -45,7 +45,7 @@ sub generate_key {
 sub event_from_wire {
   my ($class, $input) = @_;
   my $event = eval { Net::Nostr::Event->from_wire($input) };
-  return undef unless $event;
+  return unless $event;
   return bless { event => $event }, 'Overnet::Core::Nostr::Event';
 }
 
@@ -119,7 +119,7 @@ sub publish_event {
   die "relay_url is required\n"
     unless defined $relay_url && !ref($relay_url) && length($relay_url);
   die "timeout_ms must be a positive integer\n"
-    unless defined $timeout_ms && !ref($timeout_ms) && $timeout_ms =~ /\A[1-9]\d*\z/;
+    unless defined $timeout_ms && !ref($timeout_ms) && $timeout_ms =~ /\A[1-9]\d*\z/mx;
 
   my $client = Net::Nostr::Client->new;
   my $cv = AnyEvent->condvar;
@@ -170,7 +170,7 @@ sub query_events {
   die "filters must be a non-empty array\n"
     unless ref($filters) eq 'ARRAY' && @{$filters};
   die "timeout_ms must be a positive integer\n"
-    unless defined $timeout_ms && !ref($timeout_ms) && $timeout_ms =~ /\A[1-9]\d*\z/;
+    unless defined $timeout_ms && !ref($timeout_ms) && $timeout_ms =~ /\A[1-9]\d*\z/mx;
 
   my @filters = map {
     ref($_) eq 'Net::Nostr::Filter'
@@ -296,12 +296,12 @@ package Overnet::Core::Nostr::Event;
 
 use strictures 2;
 
-sub id         { $_[0]{event}->id }
-sub kind       { $_[0]{event}->kind }
-sub pubkey     { $_[0]{event}->pubkey }
-sub created_at { $_[0]{event}->created_at }
-sub content    { $_[0]{event}->content }
-sub tags       { $_[0]{event}->tags }
+sub id         { return $_[0]{event}->id; }
+sub kind       { return $_[0]{event}->kind; }
+sub pubkey     { return $_[0]{event}->pubkey; }
+sub created_at { return $_[0]{event}->created_at; }
+sub content    { return $_[0]{event}->content; }
+sub tags       { return $_[0]{event}->tags; }
 
 sub to_hash {
   my ($self) = @_;

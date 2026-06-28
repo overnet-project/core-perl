@@ -16,7 +16,7 @@ sub validate {
   my $event;
   eval { $event = Net::Nostr::Event->from_wire($input) };
   if ($@) {
-    (my $err = $@) =~ s/ at .+ line \d+.*//s;
+    (my $err = $@) =~ s/\ at\ .+\ line\ \d+.*//smx;
     # Can't proceed without a parseable event
     return _result(
       errors => ["Invalid Nostr event: $err"],
@@ -182,12 +182,12 @@ sub validate {
 
         if (!defined $body->{delegate_pubkey}) {
           push @errors, "Core delegation missing required delegate_pubkey field";
-        } elsif ($body->{delegate_pubkey} !~ /\A[0-9a-f]{64}\z/) {
+        } elsif ($body->{delegate_pubkey} !~ /\A[0-9a-f]{64}\z/mx) {
           push @errors, "Core delegation delegate_pubkey must be 64-char lowercase hex";
         }
 
         if (defined $body->{expires_at}) {
-          if (ref $body->{expires_at} || $body->{expires_at} !~ /\A\d+\z/) {
+          if (ref $body->{expires_at} || $body->{expires_at} !~ /\A\d+\z/mx) {
             push @errors, "Core delegation expires_at must be an integer timestamp";
           }
         }
@@ -209,7 +209,7 @@ sub validate {
         my $target_event;
         eval { $target_event = Net::Nostr::Event->from_wire($target_input) };
         if ($@) {
-          (my $err = $@) =~ s/ at .+ line \d+.*//s;
+          (my $err = $@) =~ s/\ at\ .+\ line\ \d+.*//smx;
           push @errors, "Invalid removal target event: $err";
         } elsif ($tag_values{e} ne $target_event->id) {
           push @errors, "Kind 7801 target event context does not match e tag";
@@ -225,7 +225,7 @@ sub validate {
             my $delegation_event;
             eval { $delegation_event = Net::Nostr::Event->from_wire($delegation_input) };
             if ($@) {
-              (my $err = $@) =~ s/ at .+ line \d+.*//s;
+              (my $err = $@) =~ s/\ at\ .+\ line\ \d+.*//smx;
               push @errors, "Invalid delegation event: $err";
             } elsif ($tag_values{overnet_delegate} ne $delegation_event->id) {
               push @errors, "Delegated removal delegation context does not match overnet_delegate tag";
@@ -247,7 +247,7 @@ sub validate {
   # Nostr crypto validation: id hash + signature
   eval { $event->validate() };
   if ($@) {
-    (my $err = $@) =~ s/ at .+ line \d+.*//s;
+    (my $err = $@) =~ s/\ at\ .+\ line\ \d+.*//smx;
     push @errors, "Nostr validation failed: $err";
   }
 
@@ -308,6 +308,7 @@ sub _validate_delegated_removal {
   if (defined $body->{expires_at} && $body->{expires_at} < $event->created_at) {
     push @{$errors}, "Delegation is expired at removal event timestamp";
   }
+  return;
 }
 
 sub _result {

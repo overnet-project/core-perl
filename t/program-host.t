@@ -24,7 +24,7 @@ sub _method_seen {
 }
 
 {
-  package Test::SlowFlushHost;
+  package Test::SlowFlushHost; ## no critic (Modules::RequireFilenameMatchesPackage)
   use parent 'Overnet::Program::Host';
   use Time::HiRes qw(sleep);
 
@@ -113,13 +113,13 @@ subtest 'host supervises a real child program over stdio' => sub {
   ok _method_seen($transcript, 'to_program', 'notification', 'runtime.timer_fired'),
     'transcript includes runtime.timer_fired delivery';
 
-  like $host->stderr_output, qr/fixture config: runtime-config/, 'host captures child stderr';
+  like $host->stderr_output, qr/fixture\ config:\ runtime-config/mx, 'host captures child stderr';
 
   my $shutdown = $host->request_shutdown(reason => 'test complete');
   is $shutdown->{state}, 'shutdown_complete', 'host completes runtime shutdown handshake';
   is $shutdown->{exit_code}, 0, 'child exits cleanly';
   ok $host->has_exited, 'host reaps child process';
-  like $host->stderr_output, qr/fixture done/, 'host captures child shutdown stderr';
+  like $host->stderr_output, qr/fixture\ done/mx, 'host captures child shutdown stderr';
 
   $transcript = $host->transcript;
   ok _method_seen($transcript, 'to_program', 'request', 'runtime.shutdown'),
@@ -138,7 +138,7 @@ subtest 'host surfaces child protocol framing errors' => sub {
     1;
   } or $error = $@;
 
-  like $error, qr/Protocol framing error: non-numeric length prefix/,
+  like $error, qr/Protocol\ framing\ error:\ non-numeric\ length\ prefix/mx,
     'host reports protocol framing errors from child stdout';
 };
 
@@ -154,7 +154,7 @@ subtest 'host treats truncated stdout frames as fatal protocol errors on eof' =>
     1;
   } or $error = $@;
 
-  like $error, qr/Protocol framing error: payload shorter than declared length/,
+  like $error, qr/Protocol\ framing\ error:\ payload\ shorter\ than\ declared\ length/mx,
     'host validates buffered stdout frames at end of stream';
 };
 
@@ -170,7 +170,7 @@ subtest 'host treats early stdout closure as fatal transport loss' => sub {
     1;
   } or $error = $@;
 
-  like $error, qr/Protocol transport error: program stdout closed before orderly shutdown/,
+  like $error, qr/Protocol\ transport\ error:\ program\ stdout\ closed\ before\ orderly\ shutdown/mx,
     'host fails fast when the protocol stdout channel closes unexpectedly';
 };
 
@@ -186,11 +186,11 @@ subtest 'host includes child diagnostics when stdout closes unexpectedly' => sub
     1;
   } or $error = $@;
 
-  like $error, qr/Protocol transport error: program stdout closed before orderly shutdown/,
+  like $error, qr/Protocol\ transport\ error:\ program\ stdout\ closed\ before\ orderly\ shutdown/mx,
     'host reports the transport failure';
-  like $error, qr/child exit_code=42/,
+  like $error, qr/child\ exit_code=42/mx,
     'host includes child exit code';
-  like $error, qr/fixture fatal: child exploded before handshake/,
+  like $error, qr/fixture\ fatal:\ child\ exploded\ before\ handshake/mx,
     'host includes captured child stderr';
 };
 
@@ -207,7 +207,7 @@ subtest 'host sends runtime.fatal on handshake version mismatch before terminati
     1;
   } or $error = $@;
 
-  like $error, qr/protocol\.version_mismatch: No compatible protocol version/,
+  like $error, qr/protocol\.version_mismatch:\ No\ compatible\ protocol\ version/mx,
     'host surfaces the fatal handshake mismatch';
   ok _method_seen($host->transcript, 'to_program', 'notification', 'runtime.fatal'),
     'host transcript records runtime.fatal delivery';

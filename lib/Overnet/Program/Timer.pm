@@ -19,9 +19,9 @@ sub new {
   die "timer_id is required\n"
     unless defined $timer_id && !ref($timer_id) && length($timer_id);
   die "due_at_ms must be an integer\n"
-    unless defined $due_at_ms && !ref($due_at_ms) && $due_at_ms =~ /\A-?\d+\z/;
+    unless defined $due_at_ms && !ref($due_at_ms) && $due_at_ms =~ /\A-?\d+\z/mx;
   die "repeat_ms must be a positive integer\n"
-    if defined $repeat_ms && (ref($repeat_ms) || $repeat_ms !~ /\A[1-9]\d*\z/);
+    if defined $repeat_ms && (ref($repeat_ms) || $repeat_ms !~ /\A[1-9]\d*\z/mx);
   die "payload must be an object\n"
     if defined $payload && ref($payload) ne 'HASH';
 
@@ -34,17 +34,17 @@ sub new {
   }, $class;
 }
 
-sub session_id { $_[0]->{session_id} }
-sub timer_id { $_[0]->{timer_id} }
-sub due_at_ms { $_[0]->{due_at_ms} }
-sub repeat_ms { $_[0]->{repeat_ms} }
-sub payload { exists $_[0]->{payload} ? _clone_json($_[0]->{payload}) : undef }
+sub session_id { return $_[0]->{session_id}; }
+sub timer_id { return $_[0]->{timer_id}; }
+sub due_at_ms { return $_[0]->{due_at_ms}; }
+sub repeat_ms { return $_[0]->{repeat_ms}; }
+sub payload { return exists $_[0]->{payload} ? _clone_json($_[0]->{payload}) : undef; }
 
 sub is_due {
   my ($self, $now_ms) = @_;
 
   die "now_ms must be an integer\n"
-    unless defined $now_ms && !ref($now_ms) && $now_ms =~ /\A-?\d+\z/;
+    unless defined $now_ms && !ref($now_ms) && $now_ms =~ /\A-?\d+\z/mx;
 
   return $self->{due_at_ms} <= $now_ms ? 1 : 0;
 }
@@ -70,7 +70,7 @@ sub advance_after_fire_until_after {
   die "Timer is not repeating\n"
     unless $self->is_repeating;
   die "now_ms must be an integer\n"
-    unless defined $now_ms && !ref($now_ms) && $now_ms =~ /\A-?\d+\z/;
+    unless defined $now_ms && !ref($now_ms) && $now_ms =~ /\A-?\d+\z/mx;
 
   $self->advance_after_fire;
   while ($self->{due_at_ms} <= $now_ms) {
@@ -85,7 +85,7 @@ sub build_notification_params {
   my $fired_at = $args{fired_at};
 
   die "fired_at must be an integer\n"
-    unless defined $fired_at && !ref($fired_at) && $fired_at =~ /\A-?\d+\z/;
+    unless defined $fired_at && !ref($fired_at) && $fired_at =~ /\A-?\d+\z/mx;
 
   my %params = (
     timer_id => $self->{timer_id},

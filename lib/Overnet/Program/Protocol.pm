@@ -320,7 +320,7 @@ sub feed {
       die "Protocol framing error: missing length prefix\n";
     }
 
-    if ($prefix !~ /\A\d+\z/) {
+    if ($prefix !~ /\A\d+\z/mx) {
       die "Protocol framing error: non-numeric length prefix\n";
     }
 
@@ -358,7 +358,7 @@ sub finish {
     die "Protocol framing error: missing length prefix\n";
   }
 
-  if ($prefix !~ /\A\d+\z/) {
+  if ($prefix !~ /\A\d+\z/mx) {
     die "Protocol framing error: non-numeric length prefix\n";
   }
 
@@ -385,7 +385,7 @@ sub _decode_payload {
     1;
   } or do {
     my $err = $@ || 'unknown error';
-    $err =~ s/\s+at \S+ line \d+.*\z//s;
+    $err =~ s/\s+at\ \S+\ line\ \d+.*\z//smx;
     die "Protocol framing error: invalid JSON payload: $err\n";
   };
 
@@ -640,13 +640,14 @@ sub _is_non_empty_string_array {
 
 sub _is_integer {
   my ($value) = @_;
-  return defined $value && !ref($value) && $value =~ /\A-?\d+\z/ ? 1 : 0;
+  return defined $value && !ref($value) && $value =~ /\A-?\d+\z/mx ? 1 : 0;
 }
 
 sub _require_string_field {
   my (%args) = @_;
   my ($name, $value) = each %args;
   die "$name is required\n" unless defined $value && !ref($value) && length($value);
+  return;
 }
 
 sub _require_string_field_optional {
@@ -654,6 +655,7 @@ sub _require_string_field_optional {
   my ($name, $value) = each %args;
   return unless defined $value;
   die "$name must be a non-empty string\n" if ref($value) || !length($value);
+  return;
 }
 
 sub _require_object_field {
@@ -661,6 +663,7 @@ sub _require_object_field {
   my ($name, $value) = each %args;
   die "$name is required\n" unless defined $value;
   die "$name must be an object\n" if ref($value) ne 'HASH';
+  return;
 }
 
 sub _require_object_field_optional {
@@ -668,6 +671,7 @@ sub _require_object_field_optional {
   my ($name, $value) = each %args;
   return unless defined $value;
   die "$name must be an object\n" if ref($value) ne 'HASH';
+  return;
 }
 
 sub _require_array_field {
@@ -675,6 +679,7 @@ sub _require_array_field {
   my ($name, $value) = each %args;
   die "$name is required\n" unless defined $value;
   die "$name must be an array\n" if ref($value) ne 'ARRAY';
+  return;
 }
 
 sub _require_string_array_field {
@@ -685,6 +690,7 @@ sub _require_string_array_field {
   for my $item (@{$value}) {
     die "$name must be an array of strings\n" if !defined($item) || ref($item) || !length($item);
   }
+  return;
 }
 
 1;

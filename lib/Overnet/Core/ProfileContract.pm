@@ -232,6 +232,7 @@ sub _validate_capabilities {
     push @{$errors}, 'profile_contract.duplicate_capability'
       if $seen{$capability}++;
   }
+  return;
 }
 
 sub _validate_fixtures {
@@ -266,12 +267,14 @@ sub _validate_fixtures {
         if $seen{$path}++;
     }
   }
+  return;
 }
 
 sub _validate_extensions {
   my ($extensions, $errors) = @_;
   push @{$errors}, 'profile_contract.invalid_extensions'
     unless ref($extensions) eq 'HASH';
+  return;
 }
 
 sub _validate_object_type {
@@ -293,6 +296,7 @@ sub _validate_object_type {
   _validate_object_id($object_type->{id}, $errors);
   _validate_object_state($object_type->{state}, $errors);
   _validate_extensions($object_type->{extensions}, $errors) if exists $object_type->{extensions};
+  return;
 }
 
 sub _validate_object_id {
@@ -323,6 +327,7 @@ sub _validate_object_id {
     push @{$errors}, 'profile_contract.invalid_object_id_examples'
       unless _is_non_empty_string($example);
   }
+  return;
 }
 
 sub _validate_object_state {
@@ -344,6 +349,7 @@ sub _validate_object_state {
   push @{$errors}, 'profile_contract.invalid_state_event_type'
     unless exists $state->{state_event_type}
     && (!defined $state->{state_event_type} || _is_non_empty_string($state->{state_event_type}));
+  return;
 }
 
 sub _validate_event_type {
@@ -397,6 +403,7 @@ sub _validate_event_type {
     unless _is_non_empty_string($event_type->{privacy}) && $PRIVACY{$event_type->{privacy}};
 
   _validate_extensions($event_type->{extensions}, $errors) if exists $event_type->{extensions};
+  return;
 }
 
 sub _validate_authorization {
@@ -417,6 +424,7 @@ sub _validate_authorization {
 
   push @{$errors}, 'profile_contract.invalid_authorization_description'
     unless _is_non_empty_string($authorization->{description});
+  return;
 }
 
 sub _validate_dependencies {
@@ -454,6 +462,7 @@ sub _validate_dependencies {
     push @{$errors}, 'profile_contract.invalid_dependency_version'
       unless _is_version_requirement($dependency->{version});
   }
+  return;
 }
 
 sub _validate_required_tags {
@@ -476,6 +485,7 @@ sub _validate_required_tags {
     push @{$errors}, 'profile_contract.required_core_tag_missing'
       unless $seen{$tag};
   }
+  return;
 }
 
 sub _validate_references {
@@ -544,6 +554,7 @@ sub _validate_references {
       push @{$errors}, 'profile_contract.reference_target_dependency_missing';
     }
   }
+  return;
 }
 
 sub _validate_contract_dependencies_in_set {
@@ -560,6 +571,7 @@ sub _validate_contract_dependencies_in_set {
     push @{$errors}, 'profile_contract_set.dependency_version_unsatisfied'
       unless _version_satisfies($dependency_contract->{profile_version}, $dependency->{version});
   }
+  return;
 }
 
 sub _validate_external_references_in_set {
@@ -587,6 +599,7 @@ sub _validate_external_references_in_set {
       }
     }
   }
+  return;
 }
 
 sub _validate_external_event_object_types_in_set {
@@ -603,6 +616,7 @@ sub _validate_external_event_object_types_in_set {
     push @{$errors}, 'profile_contract_set.event_object_type_missing'
       unless exists $dependency_contract->{object_types}{$target};
   }
+  return;
 }
 
 sub _event_parts {
@@ -634,7 +648,7 @@ sub _event_tags {
 sub _event_body {
   my ($content) = @_;
   my $decoded = eval { $JSON->decode($content) };
-  return undef if $@ || ref($decoded) ne 'HASH';
+  return if $@ || ref($decoded) ne 'HASH';
   return $decoded->{body};
 }
 
@@ -658,6 +672,7 @@ sub _validate_fields {
     push @{$errors}, $reason
       unless exists $value->{$field};
   }
+  return;
 }
 
 sub _dependency_for_target {
@@ -667,10 +682,10 @@ sub _dependency_for_target {
     next unless ref($dependency) eq 'HASH';
     my $profile = $dependency->{profile};
     next unless defined $profile && defined $target;
-    push @matches, $dependency if $target =~ /\A\Q$profile\E\./;
+    push @matches, $dependency if $target =~ /\A\Q$profile\E\./mx;
   }
 
-  return undef unless @matches;
+  return unless @matches;
   return (sort { length($b->{profile}) <=> length($a->{profile}) } @matches)[0];
 }
 
@@ -702,29 +717,29 @@ sub _is_json_number {
 
 sub _is_local_name {
   my ($profile, $name) = @_;
-  return defined($profile) && defined($name) && $name =~ /\A\Q$profile\E\./ ? 1 : 0;
+  return defined($profile) && defined($name) && $name =~ /\A\Q$profile\E\./mx ? 1 : 0;
 }
 
 sub _is_profile_name {
   my ($value) = @_;
-  return _is_json_string($value) && $value =~ /\A[a-z0-9]+(?:[._-][a-z0-9]+)*\z/;
+  return _is_json_string($value) && $value =~ /\A[a-z0-9]+(?:[._-][a-z0-9]+)*\z/mx;
 }
 
 sub _is_profile_scoped_name {
   my ($value) = @_;
-  return _is_json_string($value) && $value =~ /\A[a-z0-9]+(?:[._-][a-z0-9]+)+\z/;
+  return _is_json_string($value) && $value =~ /\A[a-z0-9]+(?:[._-][a-z0-9]+)+\z/mx;
 }
 
 sub _is_semver {
   my ($value) = @_;
-  return _is_json_string($value) && $value =~ /\A\d+\.\d+\.\d+\z/;
+  return _is_json_string($value) && $value =~ /\A\d+\.\d+\.\d+\z/mx;
 }
 
 sub _is_version_requirement {
   my ($value) = @_;
   return 0 unless _is_json_string($value);
   return 1 if _is_semver($value);
-  return $value =~ /\A(?:=|>=|>|<=|<)\d+\.\d+\.\d+(?: (?:=|>=|>|<=|<)\d+\.\d+\.\d+)?\z/;
+  return $value =~ /\A(?:=|>=|>|<=|<)\d+\.\d+\.\d+(?:\ (?:=|>=|>|<=|<)\d+\.\d+\.\d+)?\z/mx;
 }
 
 sub _is_event_kind {
@@ -734,15 +749,15 @@ sub _is_event_kind {
 
 sub _is_tag_name {
   my ($value) = @_;
-  return _is_json_string($value) && $value =~ /\A[A-Za-z0-9_:-]+\z/;
+  return _is_json_string($value) && $value =~ /\A[A-Za-z0-9_:-]+\z/mx;
 }
 
 sub _is_relative_path {
   my ($value) = @_;
   return _is_json_string($value)
     && length($value) > 0
-    && $value !~ m{\A/}
-    && $value !~ m{(?:\A|/)\.\.(?:/|\z)};
+    && $value !~ m{\A/}mx
+    && $value !~ m{(?:\A|/)\.\.(?:/|\z)}mx;
 }
 
 sub _version_satisfies {
@@ -751,8 +766,8 @@ sub _version_satisfies {
   return _compare_versions($version, $requirement) == 0
     if _is_semver($requirement);
 
-  for my $term (split / /, $requirement) {
-    $term =~ /\A(=|>=|>|<=|<)(\d+\.\d+\.\d+)\z/ or return 0;
+  for my $term (split /\ /mx, $requirement) {
+    $term =~ /\A(=|>=|>|<=|<)(\d+\.\d+\.\d+)\z/mx or return 0;
     my ($op, $required) = ($1, $2);
     my $cmp = _compare_versions($version, $required);
     return 0 if $op eq '='  && $cmp != 0;
@@ -767,8 +782,8 @@ sub _version_satisfies {
 
 sub _compare_versions {
   my ($left, $right) = @_;
-  my @left = split /\./, $left;
-  my @right = split /\./, $right;
+  my @left = split /\./mx, $left;
+  my @right = split /\./mx, $right;
   for my $i (0 .. 2) {
     return -1 if $left[$i] < $right[$i];
     return 1 if $left[$i] > $right[$i];

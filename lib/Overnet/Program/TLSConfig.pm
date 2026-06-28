@@ -9,7 +9,7 @@ our $VERSION = '0.001';
 sub normalize {
   my ($class, %args) = @_;
 
-  return undef unless exists $args{tls};
+  return unless exists $args{tls};
   my $tls = $args{tls};
   my $implicit_mode = $args{implicit_mode};
 
@@ -71,10 +71,10 @@ sub normalize {
 sub server_start_args {
   my ($class, $tls) = @_;
 
-  return undef unless defined $tls;
+  return unless defined $tls;
   die "tls must be an object\n"
     unless ref($tls) eq 'HASH';
-  return undef unless $tls->{enabled};
+  return unless $tls->{enabled};
   die "tls.mode must be server when building server TLS arguments\n"
     unless ($tls->{mode} || '') eq 'server';
 

@@ -8,13 +8,13 @@ use Overnet::Core::Validator;
 
 my $fixtures_dir = File::Spec->catdir(dirname(__FILE__), 'fixtures');
 opendir my $dh, $fixtures_dir or die "Can't open $fixtures_dir: $!";
-my @fixture_files = sort grep { /\.json$/ } readdir $dh;
+my @fixture_files = sort grep { /\.json$/mx } readdir $dh;
 closedir $dh;
 
 for my $file (@fixture_files) {
   my $path = File::Spec->catfile($fixtures_dir, $file);
   open my $fh, '<', $path or die "Can't read $path: $!";
-  my $json = do { local $/; <$fh> };
+  my $json = do { local $/ = undef; <$fh> };
   close $fh;
 
   my $fixture = JSON::decode_json($json);
@@ -30,7 +30,7 @@ for my $file (@fixture_files) {
       "valid = $expected->{overnet_valid}";
 
     if (!$expected->{overnet_valid} && $expected->{reason}) {
-      my $found = grep { /\Q$expected->{reason}\E/i } @{$result->{errors}};
+      my $found = grep { /\Q$expected->{reason}\E/imx } @{$result->{errors}};
       ok $found, "errors contain: $expected->{reason}";
     }
   };

@@ -24,7 +24,7 @@ sub run_core_validator_conformance {
   require Overnet::Core::Validator;
   my $fixtures_dir = File::Spec->catdir(dirname(__FILE__), '..', '..', '..', 't', 'fixtures');
   opendir my $dh, $fixtures_dir or die "Can't open $fixtures_dir: $!";
-  my @files = sort grep { /\.json\z/ } readdir $dh;
+  my @files = sort grep { /\.json\z/mx } readdir $dh;
   closedir $dh;
 
   for my $file (@files) {
@@ -44,11 +44,12 @@ sub run_core_validator_conformance {
       );
 
       if (!$expected->{overnet_valid} && $expected->{reason}) {
-        my $found = grep { /\Q$expected->{reason}\E/i } @{$result->{errors} || []};
+        my $found = grep { /\Q$expected->{reason}\E/imx } @{$result->{errors} || []};
         ok($found, "errors contain: $expected->{reason}");
       }
     };
   }
+  return;
 }
 
 sub run_private_messaging_conformance {
@@ -68,13 +69,14 @@ sub run_private_messaging_conformance {
       );
 
       if (!$expected->{private_transport_valid} && $expected->{reason}) {
-        my $found = grep { /\Q$expected->{reason}\E/i } @{$result->{errors} || []};
+        my $found = grep { /\Q$expected->{reason}\E/imx } @{$result->{errors} || []};
         ok($found, "errors contain: $expected->{reason}");
       }
 
       _assertions($result, $expected->{assertions});
     },
   );
+  return;
 }
 
 sub run_auth_agent_conformance {
@@ -133,6 +135,7 @@ sub run_auth_agent_conformance {
       die "Unsupported auth fixture shape\n";
     },
   );
+  return;
 }
 
 sub run_irc_adapter_map_conformance {
@@ -169,6 +172,7 @@ sub run_irc_adapter_map_conformance {
       }
     },
   );
+  return;
 }
 
 sub run_irc_adapter_derived_presence_conformance {
@@ -205,6 +209,7 @@ sub run_irc_adapter_derived_presence_conformance {
       }
     },
   );
+  return;
 }
 
 sub run_irc_adapter_authoritative_conformance {
@@ -240,6 +245,7 @@ sub run_irc_adapter_authoritative_conformance {
       _assertions($result, $expected->{assertions});
     },
   );
+  return;
 }
 
 sub run_irc_server_conformance {
@@ -255,6 +261,7 @@ sub run_irc_server_conformance {
     family => 'irc-server-recovery',
     runner => \&_run_irc_server_fixture,
   );
+  return;
 }
 
 sub _run_fixture_family {
@@ -271,6 +278,7 @@ sub _run_fixture_family {
       $runner->($fixture, $path);
     };
   }
+  return;
 }
 
 sub _run_irc_server_fixture {
@@ -442,6 +450,7 @@ sub _run_irc_server_fixture {
     },
     $expected->{assertions},
   );
+  return;
 }
 
 sub _run_irc_server_operation {
@@ -857,6 +866,7 @@ sub _ensure_stub_client_for_nick {
     (defined($opts{authority_pubkey}) ? (authority_pubkey => $opts{authority_pubkey}) : ()),
   };
   $server->{nick_to_client_id}{$nick_key} = $id;
+  return;
 }
 
 sub _expanded_authoritative_input {
@@ -1067,11 +1077,14 @@ sub _apply_metadata_tags {
     if exists $spec->{topic};
   push @{$event_hash->{tags}}, [ 'status', 'tombstoned' ]
     if $spec->{tombstoned};
+  return;
 }
 
 sub _coerce_fixture_wire_event {
   my ($event_hash) = @_;
-  return undef unless ref($event_hash) eq 'HASH';
+  my $missing;
+
+  return $missing unless ref($event_hash) eq 'HASH';
 
   my $parsed = Overnet::Core::Nostr->event_from_wire($event_hash);
   return { %{$event_hash} } if $parsed;
@@ -1088,7 +1101,7 @@ sub _fixture_files {
   return () unless -d $dir;
 
   opendir my $dh, $dir or die "Can't open $dir: $!";
-  my @files = sort grep { /\.json\z/ } readdir $dh;
+  my @files = sort grep { /\.json\z/mx } readdir $dh;
   closedir $dh;
   return map { File::Spec->catfile($dir, $_) } @files;
 }
@@ -1115,7 +1128,7 @@ sub _spec_root {
 sub _load_fixture {
   my ($path) = @_;
   open my $fh, '<', $path or die "Can't read $path: $!";
-  my $json = do { local $/; <$fh> };
+  my $json = do { local $/ = undef; <$fh> };
   close $fh;
   return JSON::decode_json($json);
 }
@@ -1140,6 +1153,7 @@ sub _assertions {
 
     fail("Unsupported assertion shape for path $path");
   }
+  return;
 }
 
 sub _subset_match {
@@ -1170,7 +1184,9 @@ sub _subset_match {
 
 sub _plain_data {
   my ($value) = @_;
-  return undef unless defined $value;
+  my $missing;
+
+  return $missing unless defined $value;
   return $value unless ref($value);
 
   my $type = reftype($value) || '';
@@ -1189,24 +1205,26 @@ sub _plain_data {
 
 sub _path_get {
   my ($root, $path) = @_;
+  my $missing;
+
   return $root unless defined $path && length $path;
 
-  my @parts = split /\./, $path;
+  my @parts = split /\./mx, $path;
   my $value = $root;
   for my $part (@parts) {
-    return undef unless defined $value;
+    return $missing unless defined $value;
 
     if (ref($value) eq 'HASH') {
       $value = $value->{$part};
       next;
     }
 
-    if (ref($value) eq 'ARRAY' && $part =~ /\A\d+\z/) {
+    if (ref($value) eq 'ARRAY' && $part =~ /\A\d+\z/mx) {
       $value = $value->[$part];
       next;
     }
 
-    return undef;
+    return $missing;
   }
 
   return $value;
@@ -1236,8 +1254,8 @@ sub _line_matches {
 
   if (index($expected, '<base64_json_transport>') >= 0) {
     my $pattern = quotemeta($expected);
-    $pattern =~ s/\\<base64_json_transport\\>/\\S+/g;
-    return $got =~ /\A$pattern\z/ ? 1 : 0;
+    $pattern =~ s/\\<base64_json_transport\\>/\\S+/gmx;
+    return $got =~ /\A$pattern\z/mx ? 1 : 0;
   }
 
   return 0;
@@ -1278,13 +1296,13 @@ sub _send_client_line {
   return 1;
 }
 
-sub _send_message { return 1 }
-sub _log { return 1 }
-sub _health { return 1 }
-sub _ensure_client_dm_subscription { return 1 }
-sub _ensure_channel_subscription { return 1 }
-sub _close_channel_subscription { return 1 }
-sub _close_client_dm_subscription { return 1 }
+sub _send_message { return 1; }
+sub _log { return 1; }
+sub _health { return 1; }
+sub _ensure_client_dm_subscription { return 1; }
+sub _ensure_channel_subscription { return 1; }
+sub _close_channel_subscription { return 1; }
+sub _close_client_dm_subscription { return 1; }
 sub _refresh_authoritative_discovery_cache {
   my ($self, %args) = @_;
   return 1 unless $self->_authority_relay_enabled;
@@ -1495,7 +1513,7 @@ sub _spec_event_matches_filter {
   }
 
   for my $key (keys %{$filter}) {
-    next unless $key =~ /\A#(.+)\z/;
+    next unless $key =~ /\A\#(.+)\z/mx;
     my $tag_name = $1;
     my %allowed = map { $_ => 1 } @{$filter->{$key} || []};
     my $matched = 0;

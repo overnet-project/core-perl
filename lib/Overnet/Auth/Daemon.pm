@@ -35,7 +35,7 @@ sub new {
   my $socket_mode = exists($args{socket_mode})
     ? $args{socket_mode}
     : $config->socket_mode;
-  $socket_mode = 0600
+  $socket_mode = oct('0600')
     unless defined $socket_mode;
 
   my $state_store = $args{state_store};

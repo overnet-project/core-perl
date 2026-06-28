@@ -30,7 +30,7 @@ my $adapter_key = Net::Nostr::Key->new;
 my $delegate_key = Net::Nostr::Key->new;
 
 opendir my $dh, $spec_dir or die "Can't open $spec_dir: $!";
-my @files = sort grep { /\.json$/ } readdir $dh;
+my @files = sort grep { /\.json$/mx } readdir $dh;
 closedir $dh;
 
 # Precompute the generated native event so removal fixtures can reference it.
@@ -50,14 +50,14 @@ my $delegation_event = _generate_delegation_event(
 for my $file (@files) {
   my $path = File::Spec->catfile($spec_dir, $file);
   open my $fh, '<', $path or die "Can't read $path: $!";
-  my $raw = do { local $/; <$fh> };
+  my $raw = do { local $/ = undef; <$fh> };
   close $fh;
 
   my $fixture = $json->decode($raw);
 
   if ($fixture->{expected}{overnet_valid}) {
     my $input = $fixture->{input};
-    my $is_adapted = $input->{content} =~ /"type"\s*:\s*"adapted"/;
+    my $is_adapted = $input->{content} =~ /"type"\s*:\s*"adapted"/mx;
     my $is_delegated_removal = ref($fixture->{context}) eq 'HASH' && $fixture->{context}{delegation_fixture};
     my $is_delegation_event = _tag_value($input->{tags}, 'overnet_et') && _tag_value($input->{tags}, 'overnet_et') eq 'core.delegation';
     my $key =
@@ -174,7 +174,7 @@ sub _event_hash {
 sub _generate_native_event {
   my ($json, $path, $key) = @_;
   open my $fh, '<', $path or die "Can't read $path: $!";
-  my $raw = do { local $/; <$fh> };
+  my $raw = do { local $/ = undef; <$fh> };
   close $fh;
 
   my $fixture = $json->decode($raw);
@@ -191,7 +191,7 @@ sub _generate_native_event {
 sub _generate_delegation_event {
   my ($json, $path, $key, $delegate_key) = @_;
   open my $fh, '<', $path or die "Can't read $path: $!";
-  my $raw = do { local $/; <$fh> };
+  my $raw = do { local $/ = undef; <$fh> };
   close $fh;
 
   my $fixture = $json->decode($raw);

@@ -8,9 +8,9 @@ use Overnet::Program::Runtime;
 use Overnet::Program::Services;
 
 {
-  package Local::MockAdapter;
+  package Local::MockAdapter; ## no critic (Modules::RequireFilenameMatchesPackage)
 
-  sub new { bless {}, shift }
+  sub new { return bless {}, shift; }
 
   sub map_input {
     my ($self, %args) = @_;
@@ -203,7 +203,7 @@ subtest 'unknown response ids are fatal protocol.unknown_request_id errors' => s
       } or $error = $@;
       $error;
     },
-    qr/protocol\.unknown_request_id/,
+    qr/protocol\.unknown_request_id/mx,
     'unexpected runtime.init response id is a protocol.unknown_request_id error',
   );
 
@@ -234,7 +234,7 @@ subtest 'unknown response ids are fatal protocol.unknown_request_id errors' => s
       } or $error = $@;
       $error;
     },
-    qr/protocol\.unknown_request_id/,
+    qr/protocol\.unknown_request_id/mx,
     'unexpected ready-state response id is a protocol.unknown_request_id error',
   );
 };
@@ -378,7 +378,7 @@ subtest 'ready session rejects runtime-originated notifications from program' =>
       } or $error = $@;
       $error;
     },
-    qr/protocol\.unknown_method/,
+    qr/protocol\.unknown_method/mx,
     'runtime-originated notifications are rejected from the program side',
   );
 };
@@ -476,7 +476,7 @@ subtest 'malformed program.hello is rejected as invalid params' => sub {
       } or $error = $@;
       $error;
     },
-    qr/protocol\.invalid_params/,
+    qr/protocol\.invalid_params/mx,
     'malformed hello is rejected before version negotiation',
   );
 };

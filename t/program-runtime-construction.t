@@ -7,9 +7,9 @@ use Overnet::Program::SecretProvider;
 use Overnet::Program::Store;
 
 {
-  package Local::ConstructorAdapter;
+  package Local::ConstructorAdapter; ## no critic (Modules::RequireFilenameMatchesPackage)
 
-  sub new { bless {}, shift }
+  sub new { return bless {}, shift; }
 }
 
 subtest 'runtime constructor protects reserved internal state' => sub {
@@ -45,7 +45,7 @@ subtest 'runtime constructor protects reserved internal state' => sub {
     session_id => 'session-1',
     name       => 'api-token',
   );
-  like $issued->{secret_handle}{id}, qr/\Ash_[0-9a-f]{64}\z/,
+  like $issued->{secret_handle}{id}, qr/\Ash_[0-9a-f]{64}\z/mx,
     'constructor does not allow secret handle table override';
 
   my $secret_provider = Overnet::Program::SecretProvider->new(
@@ -73,7 +73,7 @@ subtest 'runtime constructor protects reserved internal state' => sub {
       } or $error = $@;
       $error;
     },
-    qr/secrets cannot be supplied when secret_provider is provided/,
+    qr/secrets\ cannot\ be\ supplied\ when\ secret_provider\ is\ provided/mx,
     'runtime rejects mixing explicit secret provider and inline secret args',
   );
 };

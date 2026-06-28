@@ -54,12 +54,12 @@ sub new {
   }, $class;
 }
 
-sub state { $_[0]->{state} }
-sub instance_id { $_[0]->{instance_id} }
-sub is_ready { $_[0]->{state} eq 'ready' ? 1 : 0 }
-sub selected_protocol_version { $_[0]->{selected_protocol_version} }
-sub peer_program_id { $_[0]->{peer_program_id} }
-sub inflight_request_ids { [ sort keys %{$_[0]->{inflight}} ] }
+sub state { return $_[0]->{state}; }
+sub instance_id { return $_[0]->{instance_id}; }
+sub is_ready { return $_[0]->{state} eq 'ready' ? 1 : 0; }
+sub selected_protocol_version { return $_[0]->{selected_protocol_version}; }
+sub peer_program_id { return $_[0]->{peer_program_id}; }
+sub inflight_request_ids { return [ sort keys %{$_[0]->{inflight}} ]; }
 
 sub drain_runtime_notifications {
   my ($self) = @_;
@@ -407,14 +407,14 @@ sub _allocate_request_id {
 
 sub _select_protocol_version {
   my ($self, $peer_versions) = @_;
-  return undef unless ref($peer_versions) eq 'ARRAY' && @{$peer_versions};
+  return unless ref($peer_versions) eq 'ARRAY' && @{$peer_versions};
 
   my %peer = map { $_ => 1 } @{$peer_versions};
   for my $version (@{$self->{supported_protocol_versions}}) {
     return $version if $peer{$version};
   }
 
-  return undef;
+  return;
 }
 
 sub _known_program_id {

@@ -157,7 +157,7 @@ subtest 'load_file rejects non-object JSON configs' => sub {
     1;
   } ? undef : $@;
 
-  like $error, qr/auth config must decode to an object/,
+  like $error, qr/auth\ config\ must\ decode\ to\ an\ object/mx,
     'non-object auth config files are rejected';
 };
 
@@ -178,6 +178,7 @@ done_testing;
 sub _write_json {
   my ($path, $value) = @_;
   _write_raw($path, JSON::encode_json($value));
+  return;
 }
 
 sub _write_raw {
@@ -188,4 +189,5 @@ sub _write_raw {
     or die "write $path failed: $!";
   close $fh
     or die "close $path failed: $!";
+  return;
 }

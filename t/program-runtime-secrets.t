@@ -46,7 +46,7 @@ subtest 'services issue opaque secret handles instead of raw values' => sub {
 
   is $result->{name}, 'api-token', 'secrets.get returns the requested secret name';
   ok !exists $result->{value}, 'secrets.get does not expose the raw secret value';
-  like $result->{secret_handle}{id}, qr/\Ash_[0-9a-f]{64}\z/, 'secret handle id is opaque';
+  like $result->{secret_handle}{id}, qr/\Ash_[0-9a-f]{64}\z/mx, 'secret handle id is opaque';
   is $result->{secret_handle}{expires_at}, 1_700_000_300, 'secret handle expiry is returned';
 };
 
@@ -243,10 +243,10 @@ subtest 'secret-provider-backed secrets enforce per-secret ACLs and keep audit o
   is $error->{message}, 'Secret access denied or unavailable', 'policy denial is redacted';
 
   my $audit_json = JSON::encode_json($secret_provider->audit_events);
-  unlike $audit_json, qr/top-secret/, 'audit log never includes plaintext secret material';
-  unlike $audit_json, qr/\Q$issued->{secret_handle}{id}\E/, 'audit log never includes raw handle ids';
-  like $audit_json, qr/secret_handle\.issue/, 'audit log records issue attempts';
-  like $audit_json, qr/secret_handle\.resolve/, 'audit log records resolve attempts';
+  unlike $audit_json, qr/top-secret/mx, 'audit log never includes plaintext secret material';
+  unlike $audit_json, qr/\Q$issued->{secret_handle}{id}\E/mx, 'audit log never includes raw handle ids';
+  like $audit_json, qr/secret_handle\.issue/mx, 'audit log records issue attempts';
+  like $audit_json, qr/secret_handle\.resolve/mx, 'audit log records resolve attempts';
 };
 
 subtest 'rotation and session revocation invalidate previously issued handles' => sub {
@@ -324,7 +324,7 @@ subtest 'runtime validates secret constructor params' => sub {
       } or $error = $@;
       $error;
     },
-    qr/secret api-token must be a string/,
+    qr/secret\ api-token\ must\ be\ a\ string/mx,
     'runtime rejects non-string secret values',
   );
 
@@ -339,7 +339,7 @@ subtest 'runtime validates secret constructor params' => sub {
       } or $error = $@;
       $error;
     },
-    qr/secret_handle_ttl_ms must be a positive integer/,
+    qr/secret_handle_ttl_ms\ must\ be\ a\ positive\ integer/mx,
     'runtime rejects invalid secret handle ttl',
   );
 
@@ -358,7 +358,7 @@ subtest 'runtime validates secret constructor params' => sub {
       } or $error = $@;
       $error;
     },
-    qr/secret policy api-token\.allowed_program_ids must be an array of non-empty strings/,
+    qr/secret\ policy\ api-token\.allowed_program_ids\ must\ be\ an\ array\ of\ non-empty\ strings/mx,
     'runtime rejects invalid secret policy shapes',
   );
 };
@@ -402,7 +402,7 @@ subtest 'instance issues secret handles through protocol without returning plain
   ok $response->{send}{ok}, 'secrets.get succeeds through protocol';
   is $response->{send}{result}{name}, 'api-token', 'protocol response returns requested secret name';
   ok !exists $response->{send}{result}{value}, 'protocol response does not expose the secret plaintext';
-  like $response->{send}{result}{secret_handle}{id}, qr/\Ash_[0-9a-f]{64}\z/, 'protocol response returns opaque handle';
+  like $response->{send}{result}{secret_handle}{id}, qr/\Ash_[0-9a-f]{64}\z/mx, 'protocol response returns opaque handle';
 
   my $resolved = $runtime->resolve_secret_handle(
     session_id => 'instance-1',

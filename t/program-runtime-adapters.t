@@ -15,9 +15,9 @@ sub _random_bytes_cb {
 }
 
 {
-  package Local::MockAdapter;
+  package Local::MockAdapter; ## no critic (Modules::RequireFilenameMatchesPackage)
 
-  sub new { bless {}, shift }
+  sub new { return bless {}, shift; }
 
   sub map_input {
     my ($self, %args) = @_;
@@ -47,9 +47,9 @@ sub _random_bytes_cb {
 }
 
 {
-  package Local::SessionConfigAdapter;
+  package Local::SessionConfigAdapter; ## no critic (Modules::RequireFilenameMatchesPackage)
 
-  sub new { bless {}, shift }
+  sub new { return bless {}, shift; }
 
   sub map_input {
     my ($self, %args) = @_;
@@ -77,9 +77,9 @@ sub _random_bytes_cb {
 }
 
 {
-  package Local::CapabilityAdapter;
+  package Local::CapabilityAdapter; ## no critic (Modules::RequireFilenameMatchesPackage)
 
-  sub new { bless {}, shift }
+  sub new { return bless {}, shift; }
 
   sub map_input {
     return {
@@ -106,9 +106,9 @@ sub _random_bytes_cb {
 }
 
 {
-  package Local::BadCapabilityAdapter;
+  package Local::BadCapabilityAdapter; ## no critic (Modules::RequireFilenameMatchesPackage)
 
-  sub new { bless {}, shift }
+  sub new { return bless {}, shift; }
 
   sub map_input {
     return {
@@ -133,9 +133,9 @@ sub _random_bytes_cb {
 }
 
 {
-  package Local::SecretAwareAdapter;
+  package Local::SecretAwareAdapter; ## no critic (Modules::RequireFilenameMatchesPackage)
 
-  sub new { bless { opened_sessions => {}, closed_sessions => [] }, shift }
+  sub new { return bless { opened_sessions => {}, closed_sessions => [] }, shift; }
 
   sub supported_secret_slots {
     return [
@@ -176,9 +176,9 @@ sub _random_bytes_cb {
 }
 
 {
-  package Local::UnsupportedSecretAdapter;
+  package Local::UnsupportedSecretAdapter; ## no critic (Modules::RequireFilenameMatchesPackage)
 
-  sub new { bless {}, shift }
+  sub new { return bless {}, shift; }
 }
 
 subtest 'runtime registers adapters and opens sessions' => sub {
@@ -605,8 +605,8 @@ subtest 'adapters.open_session rejects invalid or unsupported secret handle cons
   is ref($error), 'HASH', 'wrong-session secret handle error is structured';
   is $error->{code}, 'protocol.invalid_params', 'wrong-session secret handle is invalid params';
   is $error->{message}, 'Secret access denied or unavailable', 'wrong-session secret handle is redacted';
-  unlike $error->{message}, qr/server-password/, 'secret name is not exposed in consumer error';
-  unlike $error->{message}, qr/\Q$handle->{secret_handle}{id}\E/, 'handle id is not exposed in consumer error';
+  unlike $error->{message}, qr/server-password/mx, 'secret name is not exposed in consumer error';
+  unlike $error->{message}, qr/\Q$handle->{secret_handle}{id}\E/mx, 'handle id is not exposed in consumer error';
 
   $error = undef;
   eval {
@@ -687,7 +687,7 @@ subtest 'services validate adapter capability outputs against baseline capabilit
   } or $error = $@;
   is ref($error), 'HASH', 'invalid adapter map_input capability error is structured';
   is $error->{code}, 'runtime.service_unavailable', 'invalid adapter capability map_input is service_unavailable';
-  like $error->{message}, qr/capabilities\[0\]\.name/, 'invalid capability error identifies missing name';
+  like $error->{message}, qr/capabilities\[0\]\.name/mx, 'invalid capability error identifies missing name';
 
   $error = undef;
   eval {
@@ -704,7 +704,7 @@ subtest 'services validate adapter capability outputs against baseline capabilit
   } or $error = $@;
   is ref($error), 'HASH', 'invalid adapter derive capability error is structured';
   is $error->{code}, 'runtime.service_unavailable', 'invalid adapter capability derive is service_unavailable';
-  like $error->{message}, qr/capabilities\[0\]\.version/, 'invalid capability error identifies bad version';
+  like $error->{message}, qr/capabilities\[0\]\.version/mx, 'invalid capability error identifies bad version';
 };
 
 subtest 'unknown adapters and sessions are rejected' => sub {

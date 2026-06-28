@@ -12,24 +12,24 @@ ok -f $readme, 'README exists'
 
 open my $fh, '<', $readme
   or die "open $readme failed: $!";
-my $content = do { local $/; <$fh> };
+my $content = do { local $/ = undef; <$fh> };
 close $fh
   or die "close $readme failed: $!";
 
-like $content, qr/overnet-auth-agent\.pl --config-file/,
+like $content, qr/overnet-auth-agent\.pl\ --config-file/mx,
   'README documents starting the auth-agent daemon';
-like $content, qr/overnet-auth\.pl identities/,
+like $content, qr/overnet-auth\.pl\ identities/mx,
   'README documents the auth client CLI';
-like $content, qr/overnet-auth\.pl policies/,
+like $content, qr/overnet-auth\.pl\ policies/mx,
   'README documents policy inspection';
-like $content, qr/overnet-auth\.pl policy-grant/,
+like $content, qr/overnet-auth\.pl\ policy-grant/mx,
   'README documents policy management';
-like $content, qr/overnet-auth\.pl service-pins/,
+like $content, qr/overnet-auth\.pl\ service-pins/mx,
   'README documents service pin inspection';
-like $content, qr/overnet-auth\.pl sessions/,
+like $content, qr/overnet-auth\.pl\ sessions/mx,
   'README documents session inspection';
 
-my ($config_json) = $content =~ /```json\n(.*?)\n```/s;
+my ($config_json) = $content =~ /```json\n(.*?)\n```/smx;
 ok defined $config_json, 'README includes a JSON auth-agent config example'
   or BAIL_OUT('README auth-agent config example is required');
 

@@ -119,9 +119,9 @@ sub read_events {
   die "stream is required\n"
     unless defined $stream && !ref($stream) && length($stream);
   die "after_offset must be an integer\n"
-    if defined $after_offset && (ref($after_offset) || $after_offset !~ /\A-?\d+\z/);
+    if defined $after_offset && (ref($after_offset) || $after_offset !~ /\A-?\d+\z/mx);
   die "limit must be a non-negative integer\n"
-    if defined $limit && (ref($limit) || $limit !~ /\A\d+\z/);
+    if defined $limit && (ref($limit) || $limit !~ /\A\d+\z/mx);
 
   my @entries = @{$self->{streams}{$stream} || []};
   @entries = grep { $_->{offset} > $after_offset } @entries

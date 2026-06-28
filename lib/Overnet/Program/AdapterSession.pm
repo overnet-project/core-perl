@@ -37,11 +37,11 @@ sub new {
   }, $class;
 }
 
-sub session_id { $_[0]->{session_id} }
-sub adapter_id { $_[0]->{adapter_id} }
-sub config { $_[0]->{config} }
-sub program_session_id { $_[0]->{program_session_id} }
-sub program_id { $_[0]->{program_id} }
+sub session_id { return $_[0]->{session_id}; }
+sub adapter_id { return $_[0]->{adapter_id}; }
+sub config { return $_[0]->{config}; }
+sub program_session_id { return $_[0]->{program_session_id}; }
+sub program_id { return $_[0]->{program_id}; }
 
 sub open {
   my ($self, %args) = @_;

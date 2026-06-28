@@ -157,7 +157,7 @@ subtest 'runtime validates config description constructor params' => sub {
       } or $error = $@;
       $error;
     },
-    qr/config_description\.schema_ref must be a non-empty string/,
+    qr/config_description\.schema_ref\ must\ be\ a\ non-empty\ string/mx,
     'runtime rejects invalid config description metadata',
   );
 };

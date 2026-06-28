@@ -14,7 +14,7 @@ sub _load_fixture_input {
 
   my $path = File::Spec->catfile(dirname(__FILE__), 'fixtures', $name);
   open my $fh, '<', $path or die "Can't read $path: $!";
-  my $json = do { local $/; <$fh> };
+  my $json = do { local $/ = undef; <$fh> };
   close $fh;
 
   return JSON::decode_json($json)->{input};

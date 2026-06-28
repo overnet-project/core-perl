@@ -14,10 +14,10 @@ subtest 'base backend requires implementation methods' => sub {
   my $backend = Overnet::Auth::Backend->new;
 
   my $error = eval { $backend->backend_type; 1 } ? undef : $@;
-  like $error, qr/backend_type must be implemented/, 'backend_type is abstract';
+  like $error, qr/backend_type\ must\ be\ implemented/mx, 'backend_type is abstract';
 
   $error = eval { $backend->load_signing_key; 1 } ? undef : $@;
-  like $error, qr/load_signing_key must be implemented/, 'load_signing_key is abstract';
+  like $error, qr/load_signing_key\ must\ be\ implemented/mx, 'load_signing_key is abstract';
 };
 
 subtest 'direct secret backend loads one signing key from backend config' => sub {
@@ -162,7 +162,7 @@ subtest 'pass backend reports backend_unavailable when output is malformed' => s
 
   ok !defined $key, 'no signing key is returned';
   is $error->{code}, 'backend_unavailable', 'malformed pass output returns backend_unavailable';
-  like $error->{message}, qr/(unable to read key|privkey|No such file|non-existing file|BEGIN)/, 'malformed pass output reports a key-loading failure';
+  like $error->{message}, qr/(unable\ to\ read\ key|privkey|No\ such\ file|non-existing\ file|BEGIN)/mx, 'malformed pass output reports a key-loading failure';
 };
 
 subtest 'pass backend reports backend_unavailable when the command runner fails' => sub {

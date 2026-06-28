@@ -52,14 +52,14 @@ sub register_definition {
 
 sub get {
   my ($self, $adapter_id) = @_;
-  return undef unless defined $adapter_id;
+  return unless defined $adapter_id;
   return $self->{adapters}{$adapter_id};
 }
 
 sub build {
   my ($self, $adapter_id) = @_;
   my $entry = $self->get($adapter_id);
-  return undef unless defined $entry;
+  return unless defined $entry;
 
   if (ref($entry) eq 'HASH' && exists $entry->{kind}) {
     return $self->{adapter_factory}->build(definition => $entry);

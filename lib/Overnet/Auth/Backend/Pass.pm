@@ -8,8 +8,7 @@ use Overnet::Core::Nostr;
 
 our $VERSION = '0.001';
 
-sub backend_type { 'pass' }
-
+sub backend_type { return 'pass'; }
 sub load_signing_key {
   my ($self, %args) = @_;
   my $config = $args{backend_config} || {};
@@ -29,12 +28,12 @@ sub load_signing_key {
   }) if defined $error;
 
   my $secret = $stdout // '';
-  ($secret) = split /\R/, $secret, 2
-    unless $secret =~ /\A-----BEGIN [^-]+-----\R/s;
+  ($secret) = split /\R/mx, $secret, 2
+    unless $secret =~ /\A-----BEGIN\ [^-]+-----\R/smx;
   return (undef, {
     code    => 'backend_unavailable',
     message => "pass entry $entry did not return a usable secret",
-  }) unless defined $secret && $secret =~ /\S/;
+  }) unless defined $secret && $secret =~ /\S/mx;
 
   my $key = eval { Overnet::Core::Nostr->load_key(privkey => $secret) };
   return (undef, {
@@ -52,7 +51,7 @@ sub _default_command_runner {
   return (undef, "unable to execute @cmd: $!")
     unless defined $pid;
 
-  my $stdout = do { local $/; <$fh> };
+  my $stdout = do { local $/ = undef; <$fh> };
   close $fh;
   return (undef, "@cmd exited with status " . ($? >> 8))
     if $?;

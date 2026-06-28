@@ -22,6 +22,7 @@ sub _send_message {
     die "write failed: $!\n" unless defined $written;
     $offset += $written;
   }
+  return;
 }
 
 sub _next_message {
@@ -42,6 +43,7 @@ sub _expect {
     unless !defined $method || ($message->{method} || '') eq $method;
   die "expected id $id\n"
     unless !defined $id || ($message->{id} || '') eq $id;
+  return;
 }
 
 _send_message(

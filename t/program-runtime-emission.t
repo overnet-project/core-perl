@@ -14,7 +14,7 @@ sub _load_fixture_input {
 
   my $path = File::Spec->catfile(dirname(__FILE__), 'fixtures', $name);
   open my $fh, '<', $path or die "Can't read $path: $!";
-  my $json = do { local $/; <$fh> };
+  my $json = do { local $/ = undef; <$fh> };
   close $fh;
 
   return JSON::decode_json($json)->{input};
@@ -125,7 +125,7 @@ subtest 'services reject invalid emission params and candidate outputs' => sub {
   } or $error = $@;
   is ref($error), 'HASH', 'wrong-kind state error is structured';
   is $error->{code}, 'runtime.validation_failed', 'wrong kind is reported as validation failure';
-  like $error->{details}{errors}[0], qr/overnet\.emit_state requires kind 37800/,
+  like $error->{details}{errors}[0], qr/overnet\.emit_state\ requires\ kind\ 37800/mx,
     'method-specific validation error is included';
 
   $error = undef;
@@ -140,7 +140,7 @@ subtest 'services reject invalid emission params and candidate outputs' => sub {
   is ref($error), 'HASH', 'invalid candidate error is structured';
   is $error->{code}, 'runtime.validation_failed', 'invalid candidate is reported as validation failure';
   ok(
-    grep({ /Missing required provenance field in content/ } @{$error->{details}{errors} || []}),
+    grep({ /Missing\ required\ provenance\ field\ in\ content/mx } @{$error->{details}{errors} || []}),
     'core validation errors are surfaced',
   );
 
@@ -175,11 +175,11 @@ subtest 'services reject invalid emission params and candidate outputs' => sub {
   is ref($error), 'HASH', 'invalid capability candidate error is structured';
   is $error->{code}, 'runtime.validation_failed', 'invalid capability advertisement is reported as validation failure';
   ok(
-    grep({ /capabilities\[0\]\.version must be a non-empty string/ } @{$error->{details}{errors} || []}),
+    grep({ /capabilities\[0\]\.version\ must\ be\ a\ non-empty\ string/mx } @{$error->{details}{errors} || []}),
     'missing capability version is reported',
   );
   ok(
-    grep({ /capabilities\[0\]\.details must be an object/ } @{$error->{details}{errors} || []}),
+    grep({ /capabilities\[0\]\.details\ must\ be\ an\ object/mx } @{$error->{details}{errors} || []}),
     'invalid capability details are reported',
   );
 };
@@ -215,7 +215,7 @@ subtest 'instance dispatches emission requests through protocol' => sub {
   ok !$invalid->{send}{ok}, 'invalid state candidate fails through instance';
   is $invalid->{send}{error}{code}, 'runtime.validation_failed', 'validation failure code preserved';
   ok(
-    grep({ /overnet\.emit_state requires kind 37800/ } @{$invalid->{send}{error}{details}{errors} || []}),
+    grep({ /overnet\.emit_state\ requires\ kind\ 37800/mx } @{$invalid->{send}{error}{details}{errors} || []}),
     'method-specific validation failure is preserved through protocol',
   );
 
