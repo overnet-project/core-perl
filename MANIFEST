@@ -18,6 +18,7 @@ lib/Overnet/Auth/StateStore.pm
 lib/Overnet/Authority/Delegation.pm
 lib/Overnet/Authority/HostedChannel.pm
 lib/Overnet/Core/Nostr.pm
+lib/Overnet/Core/ProfileContract.pm
 lib/Overnet/Core/PrivateMessaging.pm
 lib/Overnet/Core/Validator.pm
 lib/Overnet/Program/AdapterFactory.pm
@@ -105,6 +106,8 @@ t/generate-fixtures.pl
 t/makemaker-metadata.t
 t/manifest-skip-policy.t
 t/private-messaging-fixtures.t
+t/profile-contract-oracle.t
+t/profile-contract.t
 t/program-fixtures/host-happy-program.pl
 t/program-fixtures/host-invalid-program.pl
 t/program-fixtures/host-silent-program.pl

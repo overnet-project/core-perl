@@ -32,10 +32,11 @@ is_deeply(
 is_deeply(
   $args->{PREREQ_PM},
   {
-    'AnyEvent'        => 0,
-    'CryptX'          => 0,
-    'IO::Socket::SSL' => 0,
-    'Net::Nostr'      => 0,
+    'AnyEvent'             => 0,
+    'CryptX'               => 0,
+    'IO::Socket::SSL'      => 0,
+    'JSON::Schema::Modern' => 0,
+    'Net::Nostr'           => 0,
   },
   'runtime prerequisites are limited to top-level non-core distributions',
 );
@@ -78,6 +79,8 @@ is_deeply(
         t/authority-hosted-channel.t
         t/makemaker-metadata.t
         t/manifest-skip-policy.t
+        t/profile-contract-oracle.t
+        t/profile-contract.t
         t/program-host.t
         t/program-instance.t
         t/program-protocol.t

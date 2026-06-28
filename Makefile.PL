@@ -16,10 +16,11 @@ WriteMakefile(
     'bin/overnet-auth-agent.pl',
   ],
   PREREQ_PM        => {
-    'AnyEvent'        => 0,
-    'CryptX'          => 0,
-    'IO::Socket::SSL' => 0,
-    'Net::Nostr'      => 0,
+    'AnyEvent'             => 0,
+    'CryptX'               => 0,
+    'IO::Socket::SSL'      => 0,
+    'JSON::Schema::Modern' => 0,
+    'Net::Nostr'           => 0,
   },
   test => {
     TESTS => join(
@@ -40,6 +41,8 @@ WriteMakefile(
         t/authority-hosted-channel.t
         t/makemaker-metadata.t
         t/manifest-skip-policy.t
+        t/profile-contract-oracle.t
+        t/profile-contract.t
         t/program-host.t
         t/program-instance.t
         t/program-protocol.t

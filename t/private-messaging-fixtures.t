@@ -9,10 +9,7 @@ use Test::More;
 use Overnet::Core::PrivateMessaging;
 
 my $fixtures_dir = File::Spec->catdir(
-  dirname(__FILE__),
-  '..',
-  '..',
-  'spec',
+  _spec_root(),
   'fixtures',
   'private-messaging',
 );
@@ -57,6 +54,20 @@ for my $file (@fixture_files) {
 }
 
 done_testing;
+
+sub _spec_root {
+  for my $dir (
+    File::Spec->catdir(dirname(__FILE__), '..', '..', 'spec'),
+    File::Spec->catdir(dirname(__FILE__), '..', '..', '..', 'spec'),
+  ) {
+    my $abs = File::Spec->rel2abs($dir);
+    return $abs if -d $abs;
+  }
+
+  return File::Spec->rel2abs(
+    File::Spec->catdir(dirname(__FILE__), '..', '..', 'spec'),
+  );
+}
 
 sub _path_get {
   my ($root, $path) = @_;

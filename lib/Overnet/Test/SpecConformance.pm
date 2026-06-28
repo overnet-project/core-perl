@@ -1100,7 +1100,17 @@ sub _fixture_dir {
 }
 
 sub _spec_root {
-  return File::Spec->catdir(dirname(__FILE__), '..', '..', '..', '..', 'spec');
+  for my $dir (
+    File::Spec->catdir(dirname(__FILE__), '..', '..', '..', '..', 'spec'),
+    File::Spec->catdir(dirname(__FILE__), '..', '..', '..', '..', '..', 'spec'),
+  ) {
+    my $abs = File::Spec->rel2abs($dir);
+    return $abs if -d $abs;
+  }
+
+  return File::Spec->rel2abs(
+    File::Spec->catdir(dirname(__FILE__), '..', '..', '..', '..', 'spec'),
+  );
 }
 
 sub _load_fixture {
