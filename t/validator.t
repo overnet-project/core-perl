@@ -8,7 +8,7 @@ use Overnet::Core::Validator;
 
 my $fixtures_dir = File::Spec->catdir(dirname(__FILE__), 'fixtures');
 opendir my $dh, $fixtures_dir or die "Can't open $fixtures_dir: $!";
-my @fixture_files = sort grep { /\.json$/mx } readdir $dh;
+my @fixture_files = sort grep {/\.json$/mx} readdir $dh;
 closedir $dh;
 
 for my $file (@fixture_files) {
@@ -17,20 +17,20 @@ for my $file (@fixture_files) {
   my $json = do { local $/ = undef; <$fh> };
   close $fh;
 
-  my $fixture = JSON::decode_json($json);
-  my $desc = $fixture->{description};
-  my $input = $fixture->{input};
+  my $fixture  = JSON::decode_json($json);
+  my $desc     = $fixture->{description};
+  my $input    = $fixture->{input};
   my $expected = $fixture->{expected};
-  my $context = $fixture->{context};
+  my $context  = $fixture->{context};
 
   subtest "$file - $desc" => sub {
     my $result = Overnet::Core::Validator::validate($input, $context);
 
-    is $result->{valid}, $expected->{overnet_valid},
-      "valid = $expected->{overnet_valid}";
+    is $result->{valid}, $expected->{overnet_valid}, "valid = $expected->{overnet_valid}";
 
     if (!$expected->{overnet_valid} && $expected->{reason}) {
-      my $found = grep { /\Q$expected->{reason}\E/imx } @{$result->{errors}};
+      my $found =
+        grep {/\Q$expected->{reason}\E/imx} @{$result->{errors}};
       ok $found, "errors contain: $expected->{reason}";
     }
   };

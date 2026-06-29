@@ -18,6 +18,8 @@ lib/Overnet/Auth/StateStore.pm
 lib/Overnet/Authority/Delegation.pm
 lib/Overnet/Authority/HostedChannel.pm
 lib/Overnet/Core/Nostr.pm
+lib/Overnet/Core/Nostr/Event.pm
+lib/Overnet/Core/Nostr/Key.pm
 lib/Overnet/Core/ProfileContract.pm
 lib/Overnet/Core/PrivateMessaging.pm
 lib/Overnet/Core/Validator.pm
@@ -36,6 +38,7 @@ lib/Overnet/Program/Subscription.pm
 lib/Overnet/Program/Timer.pm
 lib/Overnet/Program/TLSConfig.pm
 lib/Overnet/Test/SpecConformance.pm
+lib/Overnet/Test/SpecConformance/IRCServerHarness.pm
 LICENSE
 Makefile.PL
 MANIFEST			This list of files

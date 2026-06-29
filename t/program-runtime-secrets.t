@@ -32,13 +32,13 @@ subtest 'services issue opaque secret handles instead of raw values' => sub {
     secrets => {
       'api-token' => 'top-secret',
     },
-    now_cb => sub { 1_700_000_000_000 },
+    now_cb => sub {1_700_000_000_000},
   );
   my $services = Overnet::Program::Services->new(runtime => $runtime);
 
   my $result = $services->dispatch_request(
     'secrets.get',
-    { name => 'api-token' },
+    {name => 'api-token'},
     permissions => ['secrets.read'],
     session_id  => 'session-1',
     program_id  => 'secrets.program',
@@ -51,12 +51,12 @@ subtest 'services issue opaque secret handles instead of raw values' => sub {
 };
 
 subtest 'runtime resolves issued handles only inside the owning audience and before expiry' => sub {
-  my $now = 1_700_000_000_000;
+  my $now     = 1_700_000_000_000;
   my $runtime = Overnet::Program::Runtime->new(
     secrets => {
       'api-token' => 'top-secret',
     },
-    now_cb               => sub { $now },
+    now_cb               => sub {$now},
     secret_handle_ttl_ms => 1_000,
     random_bytes_cb      => _random_bytes_cb(),
   );
@@ -98,8 +98,8 @@ subtest 'runtime resolves issued handles only inside the owning audience and bef
       purpose     => 'adapters.open_session:secure.adapter:server_password',
     );
   };
-  is ref($error), 'HASH', 'wrong-session resolution error is structured';
-  is $error->{code}, 'protocol.invalid_params', 'wrong-session handle use is invalid params';
+  is ref($error),       'HASH',                                'wrong-session resolution error is structured';
+  is $error->{code},    'protocol.invalid_params',             'wrong-session handle use is invalid params';
   is $error->{message}, 'Secret access denied or unavailable', 'wrong-session handle use is redacted';
 
   $error = _structured_error {
@@ -113,8 +113,8 @@ subtest 'runtime resolves issued handles only inside the owning audience and bef
       purpose     => 'adapters.open_session:secure.adapter:sasl_password',
     );
   };
-  is ref($error), 'HASH', 'wrong-purpose resolution error is structured';
-  is $error->{code}, 'protocol.invalid_params', 'wrong-purpose handle use is invalid params';
+  is ref($error),       'HASH',                                'wrong-purpose resolution error is structured';
+  is $error->{code},    'protocol.invalid_params',             'wrong-purpose handle use is invalid params';
   is $error->{message}, 'Secret access denied or unavailable', 'wrong-purpose handle use is redacted';
 
   $now += 1_001;
@@ -129,7 +129,7 @@ subtest 'runtime resolves issued handles only inside the owning audience and bef
       purpose     => 'adapters.open_session:secure.adapter:server_password',
     );
   };
-  is ref($error), 'HASH', 'expired handle error is structured';
+  is ref($error),    'HASH',                    'expired handle error is structured';
   is $error->{code}, 'protocol.invalid_params', 'expired handle is no longer resolvable';
 };
 
@@ -150,21 +150,21 @@ subtest 'services reject invalid or unavailable secrets.get params without name 
       program_id  => 'secrets.program',
     );
   };
-  is ref($error), 'HASH', 'missing name error is structured';
+  is ref($error),    'HASH',                    'missing name error is structured';
   is $error->{code}, 'protocol.invalid_params', 'missing name is invalid params';
 
   $error = _structured_error {
     $services->dispatch_request(
       'secrets.get',
-      { name => 'missing-token' },
+      {name => 'missing-token'},
       permissions => ['secrets.read'],
       session_id  => 'session-1',
       program_id  => 'secrets.program',
     );
   };
-  is ref($error), 'HASH', 'unknown secret name error is structured';
-  is $error->{code}, 'protocol.invalid_params', 'unknown secret name is invalid params';
-  is $error->{message}, 'Secret access denied or unavailable', 'unknown secret name error is redacted';
+  is ref($error),              'HASH',                                'unknown secret name error is structured';
+  is $error->{code},           'protocol.invalid_params',             'unknown secret name is invalid params';
+  is $error->{message},        'Secret access denied or unavailable', 'unknown secret name error is redacted';
   is $error->{details}{param}, 'name', 'unknown secret name only identifies the request field';
 };
 
@@ -179,15 +179,15 @@ subtest 'services enforce secrets.read permission' => sub {
   my $error = _structured_error {
     $services->dispatch_request(
       'secrets.get',
-      { name => 'api-token' },
+      {name => 'api-token'},
       permissions => [],
       session_id  => 'session-1',
       program_id  => 'secrets.program',
     );
   };
-  is ref($error), 'HASH', 'permission error is structured';
-  is $error->{code}, 'runtime.permission_denied', 'secrets.get requires permission';
-  is $error->{details}{required_permission}, 'secrets.read', 'required permission is reported';
+  is ref($error),                            'HASH',                      'permission error is structured';
+  is $error->{code},                         'runtime.permission_denied', 'secrets.get requires permission';
+  is $error->{details}{required_permission}, 'secrets.read',              'required permission is reported';
 };
 
 subtest 'secret-provider-backed secrets enforce per-secret ACLs and keep audit output redacted' => sub {
@@ -204,12 +204,12 @@ subtest 'secret-provider-backed secrets enforce per-secret ACLs and keep audit o
         allowed_purposes     => ['adapters.open_session:secure.adapter:server_password'],
       },
     },
-    now_cb          => sub { 1_700_000_000_000 },
+    now_cb          => sub {1_700_000_000_000},
     random_bytes_cb => _random_bytes_cb(),
   );
   my $runtime = Overnet::Program::Runtime->new(
     secret_provider => $secret_provider,
-    now_cb => sub { 1_700_000_000_000 },
+    now_cb          => sub {1_700_000_000_000},
   );
 
   my $issued = $runtime->issue_secret_handle(
@@ -238,15 +238,15 @@ subtest 'secret-provider-backed secrets enforce per-secret ACLs and keep audit o
       purpose    => 'adapters.open_session:secure.adapter:server_password',
     );
   };
-  is ref($error), 'HASH', 'policy denial is structured';
-  is $error->{code}, 'protocol.invalid_params', 'policy denial uses invalid params';
+  is ref($error),       'HASH',                                'policy denial is structured';
+  is $error->{code},    'protocol.invalid_params',             'policy denial uses invalid params';
   is $error->{message}, 'Secret access denied or unavailable', 'policy denial is redacted';
 
   my $audit_json = JSON::encode_json($secret_provider->audit_events);
-  unlike $audit_json, qr/top-secret/mx, 'audit log never includes plaintext secret material';
+  unlike $audit_json, qr/top-secret/mx,                       'audit log never includes plaintext secret material';
   unlike $audit_json, qr/\Q$issued->{secret_handle}{id}\E/mx, 'audit log never includes raw handle ids';
-  like $audit_json, qr/secret_handle\.issue/mx, 'audit log records issue attempts';
-  like $audit_json, qr/secret_handle\.resolve/mx, 'audit log records resolve attempts';
+  like $audit_json,   qr/secret_handle\.issue/mx,             'audit log records issue attempts';
+  like $audit_json,   qr/secret_handle\.resolve/mx,           'audit log records resolve attempts';
 };
 
 subtest 'rotation and session revocation invalidate previously issued handles' => sub {
@@ -254,12 +254,12 @@ subtest 'rotation and session revocation invalidate previously issued handles' =
     secrets => {
       'api-token' => 'v1-secret',
     },
-    now_cb          => sub { 1_700_000_000_000 },
+    now_cb          => sub {1_700_000_000_000},
     random_bytes_cb => _random_bytes_cb(),
   );
   my $runtime = Overnet::Program::Runtime->new(
     secret_provider => $secret_provider,
-    now_cb => sub { 1_700_000_000_000 },
+    now_cb          => sub {1_700_000_000_000},
   );
 
   my $issued = $runtime->issue_secret_handle(
@@ -282,7 +282,7 @@ subtest 'rotation and session revocation invalidate previously issued handles' =
       handle_id  => $handle_id,
     );
   };
-  is ref($error), 'HASH', 'rotated handle error is structured';
+  is ref($error),    'HASH',                    'rotated handle error is structured';
   is $error->{code}, 'protocol.invalid_params', 'rotated handle can no longer be resolved';
 
   my $reissued = $runtime->issue_secret_handle(
@@ -306,7 +306,7 @@ subtest 'rotation and session revocation invalidate previously issued handles' =
       handle_id  => $reissued->{secret_handle}{id},
     );
   };
-  is ref($error), 'HASH', 'revoked session handle error is structured';
+  is ref($error),    'HASH',                    'revoked session handle error is structured';
   is $error->{code}, 'protocol.invalid_params', 'session-revoked handle is no longer resolvable';
 };
 
@@ -332,9 +332,7 @@ subtest 'runtime validates secret constructor params' => sub {
     do {
       my $error;
       eval {
-        Overnet::Program::Runtime->new(
-          secret_handle_ttl_ms => 0,
-        );
+        Overnet::Program::Runtime->new(secret_handle_ttl_ms => 0,);
         1;
       } or $error = $@;
       $error;
@@ -363,12 +361,13 @@ subtest 'runtime validates secret constructor params' => sub {
   );
 };
 
-subtest 'instance issues secret handles through protocol without returning plaintext and revokes them on shutdown' => sub {
+subtest 'instance issues secret handles through protocol without returning plaintext and revokes them on shutdown' =>
+  sub {
   my $runtime = Overnet::Program::Runtime->new(
     secrets => {
       'api-token' => 'top-secret',
     },
-    now_cb          => sub { 1_700_000_000_000 },
+    now_cb          => sub {1_700_000_000_000},
     random_bytes_cb => _random_bytes_cb(),
   );
   my $services = Overnet::Program::Services->new(runtime => $runtime);
@@ -385,24 +384,26 @@ subtest 'instance issues secret handles through protocol without returning plain
     )
   );
   $instance->process_program_message(
-    Overnet::Program::Protocol::build_response_ok(id => $hello->{send}{id})
+    Overnet::Program::Protocol::build_response_ok(
+      id => $hello->{send}{id}
+    )
   );
-  $instance->process_program_message(
-    Overnet::Program::Protocol::build_program_ready()
-  );
+  $instance->process_program_message(Overnet::Program::Protocol::build_program_ready());
 
   my $response = $instance->process_program_message(
     Overnet::Program::Protocol::build_request(
       id     => 'secret-1',
       method => 'secrets.get',
-      params => { name => 'api-token' },
+      params => {name => 'api-token'},
     )
   );
 
   ok $response->{send}{ok}, 'secrets.get succeeds through protocol';
   is $response->{send}{result}{name}, 'api-token', 'protocol response returns requested secret name';
   ok !exists $response->{send}{result}{value}, 'protocol response does not expose the secret plaintext';
-  like $response->{send}{result}{secret_handle}{id}, qr/\Ash_[0-9a-f]{64}\z/mx, 'protocol response returns opaque handle';
+  like $response->{send}{result}{secret_handle}{id},
+    qr/\Ash_[0-9a-f]{64}\z/mx,
+    'protocol response returns opaque handle';
 
   my $resolved = $runtime->resolve_secret_handle(
     session_id => 'instance-1',
@@ -413,7 +414,9 @@ subtest 'instance issues secret handles through protocol without returning plain
 
   my $shutdown = $instance->request_shutdown(reason => 'done');
   $instance->process_program_message(
-    Overnet::Program::Protocol::build_response_ok(id => $shutdown->{send}{id})
+    Overnet::Program::Protocol::build_response_ok(
+      id => $shutdown->{send}{id}
+    )
   );
 
   my $error = _structured_error {
@@ -423,8 +426,8 @@ subtest 'instance issues secret handles through protocol without returning plain
       handle_id  => $response->{send}{result}{secret_handle}{id},
     );
   };
-  is ref($error), 'HASH', 'shutdown-revoked handle error is structured';
+  is ref($error),    'HASH',                    'shutdown-revoked handle error is structured';
   is $error->{code}, 'protocol.invalid_params', 'instance shutdown revokes outstanding secret handles';
-};
+  };
 
 done_testing;

@@ -4,7 +4,7 @@ use IO::Handle;
 use lib "$FindBin::Bin/../../lib";
 use Overnet::Program::Protocol;
 
-binmode(STDIN, ':raw');
+binmode(STDIN,  ':raw');
 binmode(STDOUT, ':raw');
 binmode(STDERR, ':raw');
 STDOUT->autoflush(1);
@@ -15,8 +15,8 @@ my @pending_messages;
 
 sub _send_message {
   my ($message) = @_;
-  my $frame = $protocol->encode_message($message);
-  my $offset = 0;
+  my $frame     = $protocol->encode_message($message);
+  my $offset    = 0;
   while ($offset < length $frame) {
     my $written = syswrite(STDOUT, $frame, length($frame) - $offset, $offset);
     die "write failed: $!\n" unless defined $written;
@@ -51,7 +51,7 @@ _send_message(
     program_id                  => 'fixture.host.program',
     supported_protocol_versions => ['0.1'],
     program_version             => '0.0.1',
-    metadata                    => { fixture => 'host-happy-program' },
+    metadata                    => {fixture => 'host-happy-program'},
   )
 );
 
@@ -69,7 +69,7 @@ _send_message(
     params => {
       level   => 'info',
       message => 'fixture entering ready state',
-      context => { phase => 'awaiting_ready' },
+      context => {phase => 'awaiting_ready'},
     },
   )
 );
@@ -93,7 +93,7 @@ _send_message(
     params => {
       timer_id => 'fixture-timer',
       delay_ms => 0,
-      payload  => { source => 'host-happy-program' },
+      payload  => {source => 'host-happy-program'},
     },
   )
 );
@@ -104,7 +104,8 @@ die "timers.schedule failed\n" unless $timer_response->{ok};
 while (1) {
   $message = _next_message();
 
-  if (($message->{type} || '') eq 'notification' && ($message->{method} || '') eq 'runtime.timer_fired') {
+  if ( ($message->{type} || '') eq 'notification'
+    && ($message->{method} || '') eq 'runtime.timer_fired') {
     _send_message(
       Overnet::Program::Protocol::build_notification(
         method => 'program.health',
@@ -120,7 +121,8 @@ while (1) {
     next;
   }
 
-  if (($message->{type} || '') eq 'request' && ($message->{method} || '') eq 'runtime.shutdown') {
+  if ( ($message->{type} || '') eq 'request'
+    && ($message->{method} || '') eq 'runtime.shutdown') {
     _send_message(
       Overnet::Program::Protocol::build_response_ok(
         id => $message->{id},

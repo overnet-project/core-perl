@@ -3,22 +3,19 @@ use strictures 2;
 use ExtUtils::MakeMaker;
 
 WriteMakefile(
-  NAME             => 'Overnet',
-  DISTNAME         => 'Overnet-Core',
-  AUTHOR           => 'Nicholas B. Hubbard <nicholashubbard@posteo.net>',
-  ABSTRACT         => 'Perl reference implementation of the Overnet core and program runtime',
-  VERSION_FROM     => 'lib/Overnet.pm',
-  LICENSE          => 'gpl_3',
-  MIN_PERL_VERSION => '5.024',
-  EXE_FILES        => [
-    'bin/overnet-auth.pl',
-    'bin/overnet-auth-agent.pl',
-  ],
+  NAME               => 'Overnet',
+  DISTNAME           => 'Overnet-Core',
+  AUTHOR             => 'Nicholas B. Hubbard <nicholashubbard@posteo.net>',
+  ABSTRACT           => 'Perl reference implementation of the Overnet core and program runtime',
+  VERSION_FROM       => 'lib/Overnet.pm',
+  LICENSE            => 'gpl_3',
+  MIN_PERL_VERSION   => '5.040',
+  EXE_FILES          => ['bin/overnet-auth.pl', 'bin/overnet-auth-agent.pl',],
   CONFIGURE_REQUIRES => {
     'ExtUtils::MakeMaker' => 0,
-    'strictures'         => 2,
+    'strictures'          => 2,
   },
-  PREREQ_PM        => {
+  PREREQ_PM => {
     'AnyEvent'             => 0,
     'CryptX'               => 0,
     'IO::Socket::SSL'      => 0,

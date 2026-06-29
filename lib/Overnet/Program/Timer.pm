@@ -1,50 +1,79 @@
 package Overnet::Program::Timer;
 
 use strictures 2;
+use Carp qw(croak);
 use JSON ();
 
 our $VERSION = '0.001';
+
+my $JSON = JSON->new->utf8->canonical;
 
 sub new {
   my ($class, %args) = @_;
 
   my $session_id = $args{session_id};
-  my $timer_id = $args{timer_id};
-  my $due_at_ms = $args{due_at_ms};
-  my $repeat_ms = $args{repeat_ms};
-  my $payload = $args{payload};
+  my $timer_id   = $args{timer_id};
+  my $due_at_ms  = $args{due_at_ms};
+  my $repeat_ms  = $args{repeat_ms};
+  my $payload    = $args{payload};
 
-  die "session_id is required\n"
-    unless defined $session_id && !ref($session_id) && length($session_id);
-  die "timer_id is required\n"
-    unless defined $timer_id && !ref($timer_id) && length($timer_id);
-  die "due_at_ms must be an integer\n"
-    unless defined $due_at_ms && !ref($due_at_ms) && $due_at_ms =~ /\A-?\d+\z/mx;
-  die "repeat_ms must be a positive integer\n"
-    if defined $repeat_ms && (ref($repeat_ms) || $repeat_ms !~ /\A[1-9]\d*\z/mx);
-  die "payload must be an object\n"
-    if defined $payload && ref($payload) ne 'HASH';
+  if (!(defined $session_id && !ref($session_id) && length($session_id))) {
+    croak "session_id is required\n";
+  }
+  if (!(defined $timer_id && !ref($timer_id) && length($timer_id))) {
+    croak "timer_id is required\n";
+  }
+  if (!(defined $due_at_ms && !ref($due_at_ms) && $due_at_ms =~ /\A-?\d+\z/mxs)) {
+    croak "due_at_ms must be an integer\n";
+  }
+  if (defined $repeat_ms
+    && (ref($repeat_ms) || $repeat_ms !~ /\A[1-9]\d*\z/mxs)) {
+    croak "repeat_ms must be a positive integer\n";
+  }
+  if (defined $payload && ref($payload) ne 'HASH') {
+    croak "payload must be an object\n";
+  }
 
   return bless {
     session_id => $session_id,
     timer_id   => $timer_id,
     due_at_ms  => 0 + $due_at_ms,
-    (defined $repeat_ms ? (repeat_ms => 0 + $repeat_ms) : ()),
-    (defined $payload ? (payload => _clone_json($payload)) : ()),
+    (defined $repeat_ms ? (repeat_ms => 0 + $repeat_ms)        : ()),
+    (defined $payload   ? (payload   => _clone_json($payload)) : ()),
   }, $class;
 }
 
-sub session_id { return $_[0]->{session_id}; }
-sub timer_id { return $_[0]->{timer_id}; }
-sub due_at_ms { return $_[0]->{due_at_ms}; }
-sub repeat_ms { return $_[0]->{repeat_ms}; }
-sub payload { return exists $_[0]->{payload} ? _clone_json($_[0]->{payload}) : undef; }
+sub session_id {
+  my ($self) = @_;
+  return $self->{session_id};
+}
+
+sub timer_id {
+  my ($self) = @_;
+  return $self->{timer_id};
+}
+
+sub due_at_ms {
+  my ($self) = @_;
+  return $self->{due_at_ms};
+}
+
+sub repeat_ms {
+  my ($self) = @_;
+  return $self->{repeat_ms};
+}
+
+sub payload {
+  my ($self) = @_;
+  return exists $self->{payload} ? _clone_json($self->{payload}) : undef;
+}
 
 sub is_due {
   my ($self, $now_ms) = @_;
 
-  die "now_ms must be an integer\n"
-    unless defined $now_ms && !ref($now_ms) && $now_ms =~ /\A-?\d+\z/mx;
+  if (!(defined $now_ms && !ref($now_ms) && $now_ms =~ /\A-?\d+\z/mxs)) {
+    croak "now_ms must be an integer\n";
+  }
 
   return $self->{due_at_ms} <= $now_ms ? 1 : 0;
 }
@@ -57,8 +86,9 @@ sub is_repeating {
 sub advance_after_fire {
   my ($self) = @_;
 
-  die "Timer is not repeating\n"
-    unless $self->is_repeating;
+  if (!($self->is_repeating)) {
+    croak "Timer is not repeating\n";
+  }
 
   $self->{due_at_ms} += $self->{repeat_ms};
   return $self->{due_at_ms};
@@ -67,10 +97,12 @@ sub advance_after_fire {
 sub advance_after_fire_until_after {
   my ($self, $now_ms) = @_;
 
-  die "Timer is not repeating\n"
-    unless $self->is_repeating;
-  die "now_ms must be an integer\n"
-    unless defined $now_ms && !ref($now_ms) && $now_ms =~ /\A-?\d+\z/mx;
+  if (!($self->is_repeating)) {
+    croak "Timer is not repeating\n";
+  }
+  if (!(defined $now_ms && !ref($now_ms) && $now_ms =~ /\A-?\d+\z/mxs)) {
+    croak "now_ms must be an integer\n";
+  }
 
   $self->advance_after_fire;
   while ($self->{due_at_ms} <= $now_ms) {
@@ -84,34 +116,116 @@ sub build_notification_params {
   my ($self, %args) = @_;
   my $fired_at = $args{fired_at};
 
-  die "fired_at must be an integer\n"
-    unless defined $fired_at && !ref($fired_at) && $fired_at =~ /\A-?\d+\z/mx;
+  if (!(defined $fired_at && !ref($fired_at) && $fired_at =~ /\A-?\d+\z/mxs)) {
+    croak "fired_at must be an integer\n";
+  }
 
   my %params = (
     timer_id => $self->{timer_id},
     fired_at => 0 + $fired_at,
   );
-  $params{payload} = _clone_json($self->{payload})
-    if exists $self->{payload};
+  if (exists $self->{payload}) {
+    $params{payload} = _clone_json($self->{payload});
+  }
 
   return \%params;
 }
 
 sub _clone_json {
   my ($value) = @_;
-  return JSON->new->utf8->canonical->decode(
-    JSON->new->utf8->canonical->encode($value)
-  );
+  return $JSON->decode($JSON->encode($value));
 }
 
 1;
 
 =head1 NAME
 
-Overnet::Program::Timer - Overnet program timer scaffold
+Overnet::Program::Timer - Overnet Perl module
+
+=head1 VERSION
+
+Version 0.001.
+
+=head1 SYNOPSIS
+
+  use Overnet::Program::Timer;
 
 =head1 DESCRIPTION
 
-Runtime-managed timer object for scheduled notifications.
+This module is part of the Overnet Perl implementation.
+
+=head1 SUBROUTINES/METHODS
+
+=head2 new
+
+Public API entry point.
+
+=head2 session_id
+
+Public API entry point.
+
+=head2 timer_id
+
+Public API entry point.
+
+=head2 due_at_ms
+
+Public API entry point.
+
+=head2 repeat_ms
+
+Public API entry point.
+
+=head2 payload
+
+Public API entry point.
+
+=head2 is_due
+
+Public API entry point.
+
+=head2 is_repeating
+
+Public API entry point.
+
+=head2 advance_after_fire
+
+Public API entry point.
+
+=head2 advance_after_fire_until_after
+
+Public API entry point.
+
+=head2 build_notification_params
+
+Public API entry point.
+
+=head1 DIAGNOSTICS
+
+This module reports errors through normal Perl exceptions or structured return values.
+
+=head1 CONFIGURATION AND ENVIRONMENT
+
+No module-specific environment configuration is required.
+
+=head1 DEPENDENCIES
+
+See the distribution metadata for runtime dependencies.
+
+=head1 INCOMPATIBILITIES
+
+No known incompatibilities are documented.
+
+=head1 BUGS AND LIMITATIONS
+
+No known bugs are documented.
+
+=head1 AUTHOR
+
+Overnet Project.
+
+=head1 LICENSE AND COPYRIGHT
+
+See the project license.
 
 =cut

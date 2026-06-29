@@ -1,9 +1,11 @@
 package Overnet::Auth::Daemon;
 
 use strictures 2;
+use Carp    qw(croak);
+use English qw(-no_match_vars);
 
 use File::Basename qw(dirname);
-use File::Path qw(make_path);
+use File::Path     qw(make_path);
 use IO::Socket::UNIX;
 use Socket qw(SOCK_STREAM);
 
@@ -17,53 +19,12 @@ our $VERSION = '0.001';
 sub new {
   my ($class, %args) = @_;
 
-  my $config = $args{config};
-  $config = Overnet::Auth::Config->load_file(path => $args{config_file})
-    if !defined($config) && defined($args{config_file});
-  $config = Overnet::Auth::Config->new(config => {})
-    unless defined $config;
-
-  die "config must be an Overnet::Auth::Config\n"
-    unless ref($config) && $config->isa('Overnet::Auth::Config');
-
-  my $endpoint = defined($args{endpoint}) && !ref($args{endpoint}) && length($args{endpoint})
-    ? $args{endpoint}
-    : $config->endpoint;
-  die "auth-agent endpoint is required\n"
-    unless defined $endpoint && !ref($endpoint) && length($endpoint);
-
-  my $socket_mode = exists($args{socket_mode})
-    ? $args{socket_mode}
-    : $config->socket_mode;
-  $socket_mode = oct('0600')
-    unless defined $socket_mode;
-
-  my $state_store = $args{state_store};
-  my $state_file = defined($args{state_file}) && !ref($args{state_file}) && length($args{state_file})
-    ? $args{state_file}
-    : $config->state_file;
-  $state_store = Overnet::Auth::StateStore->new(path => $state_file)
-    if !defined($state_store) && defined($state_file) && !ref($state_file) && length($state_file);
-
-  my $mutable_state = $config->mutable_state;
-  if ($state_store) {
-    my $loaded_state = $state_store->load_state;
-    $mutable_state = $loaded_state if defined $loaded_state;
-  }
-
-  my $agent = $args{agent} || Overnet::Auth::Agent->new(
-    %{$config->agent_args(state => $mutable_state)},
-    (ref($state_store) ? (
-      state_writer => sub {
-        my ($state) = @_;
-        return $state_store->save_state(state => $state);
-      },
-    ) : ()),
-  );
-  die "agent must support dispatch\n"
-    unless ref($agent) && $agent->can('dispatch');
-
-  my $server = $args{server} || Overnet::Auth::Server->new(agent => $agent);
+  my $config      = _daemon_config(%args);
+  my $endpoint    = _daemon_endpoint($config, %args);
+  my $socket_mode = _daemon_socket_mode($config, %args);
+  my $state_store = _daemon_state_store($config, %args);
+  my $agent       = _daemon_agent($config, $state_store, %args);
+  my $server      = $args{server} || Overnet::Auth::Server->new(agent => $agent);
 
   return bless {
     config          => $config,
@@ -77,6 +38,101 @@ sub new {
   }, $class;
 }
 
+sub _daemon_config {
+  my (%args) = @_;
+  my $config = $args{config};
+  if (!defined($config) && defined($args{config_file})) {
+    $config = Overnet::Auth::Config->load_file(path => $args{config_file});
+  }
+  if (!(defined $config)) {
+    $config = Overnet::Auth::Config->new(config => {});
+  }
+  if (!(ref($config) && $config->isa('Overnet::Auth::Config'))) {
+    croak "config must be an Overnet::Auth::Config\n";
+  }
+  return $config;
+}
+
+sub _daemon_endpoint {
+  my ($config, %args) = @_;
+  my $endpoint =
+       defined($args{endpoint})
+    && !ref($args{endpoint})
+    && length($args{endpoint})
+    ? $args{endpoint}
+    : $config->endpoint;
+  if (!(defined $endpoint && !ref($endpoint) && length($endpoint))) {
+    croak "auth-agent endpoint is required\n";
+  }
+  return $endpoint;
+}
+
+sub _daemon_socket_mode {
+  my ($config, %args) = @_;
+  my $socket_mode =
+    exists($args{socket_mode})
+    ? $args{socket_mode}
+    : $config->socket_mode;
+  return defined $socket_mode ? $socket_mode : oct('0600');
+}
+
+sub _daemon_state_store {
+  my ($config, %args) = @_;
+  if (defined $args{state_store}) {
+    return $args{state_store};
+  }
+  my $state_file =
+       defined($args{state_file})
+    && !ref($args{state_file})
+    && length($args{state_file})
+    ? $args{state_file}
+    : $config->state_file;
+  if (defined($state_file) && !ref($state_file) && length($state_file)) {
+    return Overnet::Auth::StateStore->new(path => $state_file);
+  }
+  return;
+}
+
+sub _daemon_agent {
+  my ($config, $state_store, %args) = @_;
+  my $agent = $args{agent} || _build_daemon_agent($config, $state_store);
+  if (!(ref($agent) && $agent->can('dispatch'))) {
+    croak "agent must support dispatch\n";
+  }
+  return $agent;
+}
+
+sub _build_daemon_agent {
+  my ($config, $state_store) = @_;
+  my $mutable_state = _daemon_mutable_state($config, $state_store);
+  return Overnet::Auth::Agent->new(%{$config->agent_args(state => $mutable_state)}, _state_writer_arg($state_store),);
+}
+
+sub _daemon_mutable_state {
+  my ($config, $state_store) = @_;
+  my $mutable_state = $config->mutable_state;
+  if ($state_store) {
+    my $loaded_state = $state_store->load_state;
+    if (defined $loaded_state) {
+      $mutable_state = $loaded_state;
+    }
+  }
+  return $mutable_state;
+}
+
+sub _state_writer_arg {
+  my ($state_store) = @_;
+  if (!(ref($state_store))) {
+    return;
+  }
+  return (
+    state_writer => sub {
+      my ($state) = @_;
+      return $state_store->save_state(state => $state);
+    },
+  );
+}
+
 sub endpoint {
   my ($self) = @_;
   return $self->{endpoint};
@@ -88,24 +144,29 @@ sub run {
   my $served = 0;
 
   while (1) {
-    last if defined($self->{max_connections}) && $served >= $self->{max_connections};
+    if (defined($self->{max_connections})
+      && $served >= $self->{max_connections}) {
+      last;
+    }
 
     my $client = $socket->accept;
-    die "accept on auth-agent endpoint failed: $!"
-      unless $client;
+    if (!($client)) {
+      croak "accept on auth-agent endpoint failed: $OS_ERROR";
+    }
 
     eval {
       $self->{server}->serve_socket($client);
       1;
     } or do {
-      my $error = $@ || 'unknown auth-agent socket failure';
-      close $client;
+      my $error = $EVAL_ERROR || 'unknown auth-agent socket failure';
+      close $client
+        or croak "close auth-agent client socket failed: $OS_ERROR";
       $self->_teardown_socket;
-      die $error;
+      croak $error;
     };
 
     close $client
-      or die "close auth-agent client socket failed: $!";
+      or croak "close auth-agent client socket failed: $OS_ERROR";
     $served++;
   }
 
@@ -115,38 +176,41 @@ sub run {
 
 sub _listen_socket {
   my ($self) = @_;
-  return $self->{listen_socket}
-    if $self->{listen_socket};
+  if ($self->{listen_socket}) {
+    return $self->{listen_socket};
+  }
 
   my $endpoint = $self->{endpoint};
-  my $parent = dirname($endpoint);
-  make_path($parent)
-    unless -d $parent;
+  my $parent   = dirname($endpoint);
+  if (!(-d $parent)) {
+    make_path($parent);
+  }
 
   if (-e $endpoint) {
-    die "auth-agent endpoint path already exists and is not a socket\n"
-      unless -S $endpoint;
+    if (!(-S $endpoint)) {
+      croak "auth-agent endpoint path already exists and is not a socket\n";
+    }
     unlink $endpoint
-      or die "unlink stale auth-agent socket $endpoint failed: $!";
+      or croak "unlink stale auth-agent socket $endpoint failed: $OS_ERROR";
   }
 
   my $socket;
   if (ref($self->{listen_factory}) eq 'CODE') {
     $socket = $self->{listen_factory}->($endpoint);
-  }
-  else {
+  } else {
     $socket = IO::Socket::UNIX->new(
       Type   => SOCK_STREAM,
       Local  => $endpoint,
       Listen => 5,
     );
   }
-  die "listen on auth-agent endpoint $endpoint failed: $!"
-    unless $socket;
+  if (!($socket)) {
+    croak "listen on auth-agent endpoint $endpoint failed: $OS_ERROR";
+  }
 
   if (-S $endpoint) {
     chmod $self->{socket_mode}, $endpoint
-      or die "chmod auth-agent endpoint $endpoint failed: $!";
+      or croak "chmod auth-agent endpoint $endpoint failed: $OS_ERROR";
   }
 
   $self->{listen_socket} = $socket;
@@ -159,20 +223,80 @@ sub _teardown_socket {
   if ($socket) {
     if (ref($socket) && $socket->can('close')) {
       $socket->close
-        or die "close auth-agent listener socket failed\n";
-    }
-    else {
+        or croak "close auth-agent listener socket failed\n";
+    } else {
       close $socket
-        or die "close auth-agent listener socket failed: $!";
+        or croak "close auth-agent listener socket failed: $OS_ERROR";
     }
   }
 
   my $endpoint = $self->{endpoint};
-  unlink $endpoint
-    or die "unlink auth-agent endpoint $endpoint failed: $!"
-    if defined($endpoint) && -S $endpoint;
+  if (defined($endpoint) && -S $endpoint) {
+    unlink $endpoint
+      or croak "unlink auth-agent endpoint $endpoint failed: $OS_ERROR";
+  }
 
   return 1;
 }
 
 1;
+
+=head1 NAME
+
+Overnet::Auth::Daemon - Overnet Perl module
+
+=head1 VERSION
+
+Version 0.001.
+
+=head1 SYNOPSIS
+
+  use Overnet::Auth::Daemon;
+
+=head1 DESCRIPTION
+
+This module is part of the Overnet Perl implementation.
+
+=head1 SUBROUTINES/METHODS
+
+=head2 new
+
+Public API entry point.
+
+=head2 endpoint
+
+Public API entry point.
+
+=head2 run
+
+Public API entry point.
+
+=head1 DIAGNOSTICS
+
+This module reports errors through normal Perl exceptions or structured return values.
+
+=head1 CONFIGURATION AND ENVIRONMENT
+
+No module-specific environment configuration is required.
+
+=head1 DEPENDENCIES
+
+See the distribution metadata for runtime dependencies.
+
+=head1 INCOMPATIBILITIES
+
+No known incompatibilities are documented.
+
+=head1 BUGS AND LIMITATIONS
+
+No known bugs are documented.
+
+=head1 AUTHOR
+
+Overnet Project.
+
+=head1 LICENSE AND COPYRIGHT
+
+See the project license.
+
+=cut

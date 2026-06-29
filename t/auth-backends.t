@@ -52,10 +52,12 @@ subtest 'direct secret backend reports backend_unavailable when no secret is con
   );
 
   ok !defined $key, 'no signing key is returned';
-  is_deeply $error, {
+  is_deeply $error,
+    {
     code    => 'backend_unavailable',
     message => 'no direct secret is configured for the selected identity',
-  }, 'direct_secret backend returns a structured backend_unavailable error';
+    },
+    'direct_secret backend returns a structured backend_unavailable error';
 };
 
 subtest 'pass backend uses the first line returned by the command runner' => sub {
@@ -74,12 +76,13 @@ subtest 'pass backend uses the first line returned by the command runner' => sub
   );
 
   ok !$error, 'no backend error';
-  is_deeply \@seen, [ 'pass', 'show', 'overnet-priv-key' ], 'pass backend invokes the pass command with the configured entry';
+  is_deeply \@seen, ['pass', 'show', 'overnet-priv-key'],
+    'pass backend invokes the pass command with the configured entry';
   is $key->pubkey_hex, $fixture_pubkey, 'expected pubkey loaded from pass backend output';
 };
 
 subtest 'pass backend accepts nsec secrets' => sub {
-  my $key = Net::Nostr::Key->new;
+  my $key     = Net::Nostr::Key->new;
   my $backend = Overnet::Auth::Backend::Pass->new(
     command_runner => sub {
       return ($key->privkey_nsec . "\n", undef);
@@ -97,7 +100,7 @@ subtest 'pass backend accepts nsec secrets' => sub {
 };
 
 subtest 'pass backend accepts PEM secrets' => sub {
-  my $key = Net::Nostr::Key->new;
+  my $key     = Net::Nostr::Key->new;
   my $backend = Overnet::Auth::Backend::Pass->new(
     command_runner => sub {
       return ($key->privkey_pem, undef);
@@ -116,15 +119,15 @@ subtest 'pass backend accepts PEM secrets' => sub {
 
 subtest 'pass backend reports backend_unavailable when no entry is configured' => sub {
   my $backend = Overnet::Auth::Backend::Pass->new;
-  my ($key, $error) = $backend->load_signing_key(
-    backend_config => {},
-  );
+  my ($key, $error) = $backend->load_signing_key(backend_config => {},);
 
   ok !defined $key, 'no signing key is returned';
-  is_deeply $error, {
+  is_deeply $error,
+    {
     code    => 'backend_unavailable',
     message => 'no pass entry is configured for the selected identity',
-  }, 'missing pass entry returns backend_unavailable';
+    },
+    'missing pass entry returns backend_unavailable';
 };
 
 subtest 'pass backend reports backend_unavailable when output is empty' => sub {
@@ -141,10 +144,12 @@ subtest 'pass backend reports backend_unavailable when output is empty' => sub {
   );
 
   ok !defined $key, 'no signing key is returned';
-  is_deeply $error, {
+  is_deeply $error,
+    {
     code    => 'backend_unavailable',
     message => 'pass entry overnet-priv-key did not return a usable secret',
-  }, 'empty pass output returns backend_unavailable';
+    },
+    'empty pass output returns backend_unavailable';
 };
 
 subtest 'pass backend reports backend_unavailable when output is malformed' => sub {
@@ -162,7 +167,9 @@ subtest 'pass backend reports backend_unavailable when output is malformed' => s
 
   ok !defined $key, 'no signing key is returned';
   is $error->{code}, 'backend_unavailable', 'malformed pass output returns backend_unavailable';
-  like $error->{message}, qr/(unable\ to\ read\ key|privkey|No\ such\ file|non-existing\ file|BEGIN)/mx, 'malformed pass output reports a key-loading failure';
+  like $error->{message},
+    qr/(unable\ to\ read\ key|privkey|No\ such\ file|non-existing\ file|BEGIN)/mx,
+    'malformed pass output reports a key-loading failure';
 };
 
 subtest 'pass backend reports backend_unavailable when the command runner fails' => sub {
@@ -179,10 +186,12 @@ subtest 'pass backend reports backend_unavailable when the command runner fails'
   );
 
   ok !defined $key, 'no signing key is returned';
-  is_deeply $error, {
+  is_deeply $error,
+    {
     code    => 'backend_unavailable',
     message => 'pass show failed',
-  }, 'pass backend returns a structured backend_unavailable error';
+    },
+    'pass backend returns a structured backend_unavailable error';
 };
 
 done_testing;

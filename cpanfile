@@ -1,3 +1,4 @@
+requires 'perl', '5.040';
 requires 'strictures', '2';
 requires 'Net::Nostr';
 requires 'Class::Tiny';

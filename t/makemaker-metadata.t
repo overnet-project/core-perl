@@ -12,29 +12,22 @@ ok -f $makefile_pl, 'Makefile.PL exists'
 
 my $args = _capture_makefile_args($makefile_pl);
 
-is $args->{NAME}, 'Overnet', 'distribution name';
-is $args->{DISTNAME}, 'Overnet-Core', 'CPAN dist name';
-is $args->{AUTHOR}, 'Nicholas B. Hubbard <nicholashubbard@posteo.net>', 'author';
+is $args->{NAME},     'Overnet',                                                               'distribution name';
+is $args->{DISTNAME}, 'Overnet-Core',                                                          'CPAN dist name';
+is $args->{AUTHOR},   'Nicholas B. Hubbard <nicholashubbard@posteo.net>',                      'author';
 is $args->{ABSTRACT}, 'Perl reference implementation of the Overnet core and program runtime', 'abstract';
-is $args->{VERSION_FROM}, 'lib/Overnet.pm', 'version comes from root module';
-is $args->{LICENSE}, 'gpl_3', 'license';
-is $args->{MIN_PERL_VERSION}, '5.024', 'minimum Perl version';
+is $args->{VERSION_FROM},     'lib/Overnet.pm', 'version comes from root module';
+is $args->{LICENSE},          'gpl_3',          'license';
+is $args->{MIN_PERL_VERSION}, '5.040',          'minimum Perl version';
 is_deeply(
   $args->{CONFIGURE_REQUIRES},
   {
     'ExtUtils::MakeMaker' => 0,
-    'strictures'         => 2,
+    'strictures'          => 2,
   },
   'configure prerequisites include modules required to load Makefile.PL',
 );
-is_deeply(
-  $args->{EXE_FILES},
-  [
-    'bin/overnet-auth.pl',
-    'bin/overnet-auth-agent.pl',
-  ],
-  'auth scripts are installed',
-);
+is_deeply($args->{EXE_FILES}, ['bin/overnet-auth.pl', 'bin/overnet-auth-agent.pl',], 'auth scripts are installed',);
 
 is_deeply(
   $args->{PREREQ_PM},
@@ -50,11 +43,7 @@ is_deeply(
   'runtime prerequisites are limited to top-level non-core distributions',
 );
 
-is_deeply(
-  $args->{TEST_REQUIRES} || {},
-  {},
-  'no extra non-core test-only prerequisites',
-);
+is_deeply($args->{TEST_REQUIRES} || {}, {}, 'no extra non-core test-only prerequisites',);
 
 is_deeply(
   $args->{META_MERGE},
@@ -131,7 +120,7 @@ sub _capture_makefile_args {
     local *main::WriteMakefile = \&ExtUtils::MakeMaker::WriteMakefile;
 
     chdir $repo_root or die "unable to chdir to $repo_root: $!";
-    my $rv = do $makefile_pl;
+    my $rv    = do $makefile_pl;
     my $error = $@;
     chdir $cwd or die "unable to restore cwd to $cwd: $!";
 

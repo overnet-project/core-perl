@@ -1,31 +1,32 @@
 use strictures 2;
 use Test::More;
-use JSON ();
+use JSON           ();
 use File::Basename qw(dirname);
 use File::Spec;
 use FindBin;
 
 use Overnet::Core::ProfileContract;
 
-my $spec_dir = File::Spec->rel2abs(File::Spec->catdir($FindBin::Bin, '..', '..', '..', 'spec'));
+my $spec_dir     = File::Spec->rel2abs(File::Spec->catdir($FindBin::Bin, '..', '..', '..', 'spec'));
 my $fixtures_dir = File::Spec->catdir($spec_dir, 'fixtures', 'profile-contracts');
 
 plan skip_all => "profile contract fixtures not found at $fixtures_dir"
   unless -d $fixtures_dir;
 
 opendir my $dh, $fixtures_dir or die "Can't open $fixtures_dir: $!";
-my @fixture_files = sort grep { /\.json$/mx } readdir $dh;
+my @fixture_files = sort grep {/\.json$/mx} readdir $dh;
 closedir $dh;
 
 for my $file (@fixture_files) {
-  my $fixture = _load_fixture(File::Spec->catfile($fixtures_dir, $file));
-  my $input = $fixture->{input};
+  my $fixture  = _load_fixture(File::Spec->catfile($fixtures_dir, $file));
+  my $input    = $fixture->{input};
   my $expected = $fixture->{expected};
 
   subtest "$file - $fixture->{description}" => sub {
     my @contracts = _contracts_from_input($input);
 
-    if (exists $expected->{profile_contract_valid} && exists $input->{contract}) {
+    if ( exists $expected->{profile_contract_valid}
+      && exists $input->{contract}) {
       my $result = Overnet::Core::ProfileContract::validate_contract($input->{contract});
       _check_result($result, $expected->{profile_contract_valid}, $expected->{reason});
     }
@@ -106,11 +107,7 @@ subtest 'contract document enforces schema-level structure' => sub {
       sub { $_[0]->{contract_version} = '1' },
       'profile_contract.invalid_contract_version',
     ],
-    [
-      'description must be non-empty',
-      sub { $_[0]->{description} = '' },
-      'profile_contract.invalid_description',
-    ],
+    ['description must be non-empty', sub { $_[0]->{description} = '' }, 'profile_contract.invalid_description',],
     [
       'capabilities must be an array',
       sub { $_[0]->{capabilities} = 'schema.test.events' },
@@ -133,7 +130,9 @@ subtest 'contract document enforces schema-level structure' => sub {
     ],
     [
       'dependency entries reject extra fields',
-      sub { $_[0]->{depends_on} = [{ profile => 'schema.dep', version => '1.0.0', extra => 1 }] },
+      sub {
+        $_[0]->{depends_on} = [{profile => 'schema.dep', version => '1.0.0', extra => 1}];
+      },
       'profile_contract.invalid_dependency',
     ],
     [
@@ -148,7 +147,9 @@ subtest 'contract document enforces schema-level structure' => sub {
     ],
     [
       'object type descriptions must be non-empty',
-      sub { $_[0]->{object_types}{'schema.test.object'}{description} = '' },
+      sub {
+        $_[0]->{object_types}{'schema.test.object'}{description} = '';
+      },
       'profile_contract.invalid_object_type_description',
     ],
     [
@@ -158,27 +159,38 @@ subtest 'contract document enforces schema-level structure' => sub {
     ],
     [
       'object id scheme must be known',
-      sub { $_[0]->{object_types}{'schema.test.object'}{id}{scheme} = 'slug' },
+      sub {
+        $_[0]->{object_types}{'schema.test.object'}{id}{scheme} = 'slug';
+      },
       'profile_contract.invalid_object_id_scheme',
     ],
     [
       'object id pattern must be null or non-empty',
-      sub { $_[0]->{object_types}{'schema.test.object'}{id}{pattern} = '' },
+      sub {
+        $_[0]->{object_types}{'schema.test.object'}{id}{pattern} = '';
+      },
       'profile_contract.invalid_object_id_pattern',
     ],
     [
       'object id examples must be an array',
-      sub { $_[0]->{object_types}{'schema.test.object'}{id}{examples} = 'example' },
+      sub {
+        $_[0]->{object_types}{'schema.test.object'}{id}{examples} =
+          'example';
+      },
       'profile_contract.invalid_object_id_examples',
     ],
     [
       'object state derivation must be known',
-      sub { $_[0]->{object_types}{'schema.test.object'}{state}{derivation} = 'latest' },
+      sub {
+        $_[0]->{object_types}{'schema.test.object'}{state}{derivation} = 'latest';
+      },
       'profile_contract.invalid_state_derivation',
     ],
     [
       'object state_event_type must be null or non-empty',
-      sub { $_[0]->{object_types}{'schema.test.object'}{state}{state_event_type} = '' },
+      sub {
+        $_[0]->{object_types}{'schema.test.object'}{state}{state_event_type} = '';
+      },
       'profile_contract.invalid_state_event_type',
     ],
     [
@@ -203,72 +215,111 @@ subtest 'contract document enforces schema-level structure' => sub {
     ],
     [
       'event object_type must be a profile-scoped name',
-      sub { $_[0]->{event_types}{'schema.test.event'}{object_type} = 'object' },
+      sub {
+        $_[0]->{event_types}{'schema.test.event'}{object_type} =
+          'object';
+      },
       'profile_contract.invalid_event_object_type',
     ],
     [
       'required_tags must use valid tag names',
-      sub { push @{$_[0]->{event_types}{'schema.test.event'}{required_tags}}, 'bad tag' },
+      sub {
+        push
+          @{$_[0]->{event_types}{'schema.test.event'}{required_tags}},
+          'bad tag';
+      },
       'profile_contract.invalid_required_tag',
     ],
     [
       'references must be an array',
-      sub { $_[0]->{event_types}{'schema.test.event'}{references} = 'none' },
+      sub {
+        $_[0]->{event_types}{'schema.test.event'}{references} = 'none';
+      },
       'profile_contract.invalid_references',
     ],
     [
       'reference entries must be objects',
-      sub { $_[0]->{event_types}{'schema.test.event'}{references} = ['schema.test.object'] },
+      sub {
+        $_[0]->{event_types}{'schema.test.event'}{references} =
+          ['schema.test.object'];
+      },
       'profile_contract.invalid_reference',
     ],
     [
       'reference entries reject extra fields',
-      sub { $_[0]->{event_types}{'schema.test.event'}{references} = [_reference(extra => 1)] },
+      sub {
+        $_[0]->{event_types}{'schema.test.event'}{references} =
+          [_reference(extra => 1)];
+      },
       'profile_contract.invalid_reference',
     ],
     [
       'reference names must be non-empty',
-      sub { $_[0]->{event_types}{'schema.test.event'}{references} = [_reference(name => '')] },
+      sub {
+        $_[0]->{event_types}{'schema.test.event'}{references} =
+          [_reference(name => '')];
+      },
       'profile_contract.invalid_reference_name',
     ],
     [
       'reference required must be a JSON boolean',
-      sub { $_[0]->{event_types}{'schema.test.event'}{references} = [_reference(required => 1)] },
+      sub {
+        $_[0]->{event_types}{'schema.test.event'}{references} =
+          [_reference(required => 1)];
+      },
       'profile_contract.invalid_reference_required',
     ],
     [
       'reference tags must use valid tag names',
-      sub { $_[0]->{event_types}{'schema.test.event'}{references} = [_reference(tag => 'bad tag')] },
+      sub {
+        $_[0]->{event_types}{'schema.test.event'}{references} =
+          [_reference(tag => 'bad tag')];
+      },
       'profile_contract.invalid_reference_tag',
     ],
     [
       'reference target object type must be profile-scoped',
-      sub { $_[0]->{event_types}{'schema.test.event'}{references} = [_reference(target_object_type => 'object')] },
+      sub {
+        $_[0]->{event_types}{'schema.test.event'}{references} =
+          [_reference(target_object_type => 'object')];
+      },
       'profile_contract.invalid_reference_target_object_type',
     ],
     [
       'state_effect must be known',
-      sub { $_[0]->{event_types}{'schema.test.event'}{state_effect} = 'changes' },
+      sub {
+        $_[0]->{event_types}{'schema.test.event'}{state_effect} =
+          'changes';
+      },
       'profile_contract.invalid_state_effect',
     ],
     [
       'authorization must be an object',
-      sub { $_[0]->{event_types}{'schema.test.event'}{authorization} = 'open' },
+      sub {
+        $_[0]->{event_types}{'schema.test.event'}{authorization} =
+          'open';
+      },
       'profile_contract.invalid_authorization',
     ],
     [
       'authorization model must be known',
-      sub { $_[0]->{event_types}{'schema.test.event'}{authorization}{model} = 'owner' },
+      sub {
+        $_[0]->{event_types}{'schema.test.event'}{authorization}{model} = 'owner';
+      },
       'profile_contract.invalid_authorization_model',
     ],
     [
       'authorization description must be non-empty',
-      sub { $_[0]->{event_types}{'schema.test.event'}{authorization}{description} = '' },
+      sub {
+        $_[0]->{event_types}{'schema.test.event'}{authorization}{description} = '';
+      },
       'profile_contract.invalid_authorization_description',
     ],
     [
       'privacy must be known',
-      sub { $_[0]->{event_types}{'schema.test.event'}{privacy} = 'private' },
+      sub {
+        $_[0]->{event_types}{'schema.test.event'}{privacy} = 'private';
+      },
       'profile_contract.invalid_privacy',
     ],
     [
@@ -283,7 +334,10 @@ subtest 'contract document enforces schema-level structure' => sub {
     ],
     [
       'fixture paths must be unique',
-      sub { $_[0]->{fixtures}{valid} = ['fixtures/a.json', 'fixtures/a.json'] },
+      sub {
+        $_[0]->{fixtures}{valid} =
+          ['fixtures/a.json', 'fixtures/a.json'];
+      },
       'profile_contract.duplicate_fixture_path',
     ],
     [
@@ -379,10 +433,7 @@ subtest 'profile event body schema uses JSON Schema draft semantics' => sub {
         required   => ['value'],
         properties => {
           value => {
-            anyOf => [
-              { type => 'integer' },
-              { const => 'ok' },
-            ],
+            anyOf => [{type => 'integer'}, {const => 'ok'},],
           },
         },
       },
@@ -397,10 +448,7 @@ subtest 'profile event body schema uses JSON Schema draft semantics' => sub {
         required   => ['value'],
         properties => {
           value => {
-            oneOf => [
-              { type => 'integer' },
-              { type => 'number' },
-            ],
+            oneOf => [{type => 'integer'}, {type => 'number'},],
           },
         },
       },
@@ -431,7 +479,8 @@ subtest 'profile event body schema uses JSON Schema draft semantics' => sub {
     my ($name, $body_schema, $body) = @{$case};
     subtest $name => sub {
       my $contract = _schema_contract();
-      $contract->{event_types}{'schema.test.event'}{body_schema} = $body_schema;
+      $contract->{event_types}{'schema.test.event'}{body_schema} =
+        $body_schema;
 
       my $result = Overnet::Core::ProfileContract::validate_profile_event(
         event    => _event_for_body($body),
@@ -505,7 +554,11 @@ sub _contract {
       invalid => [],
     },
     extensions => {},
-    (exists $extra{depends_on} ? (depends_on => $extra{depends_on}) : ()),
+    (
+      exists $extra{depends_on}
+      ? (depends_on => $extra{depends_on})
+      : ()
+    ),
   };
 }
 
@@ -542,11 +595,13 @@ sub _object_type {
 sub _reference {
   my (%extra) = @_;
   return {
-    name               => exists $extra{name} ? $extra{name} : 'related',
-    required           => exists $extra{required} ? $extra{required} : JSON::false,
-    tag                => exists $extra{tag} ? $extra{tag} : 'e',
-    target_object_type => exists $extra{target_object_type} ? $extra{target_object_type} : 'schema.test.object',
-    target_event_type  => exists $extra{target_event_type} ? $extra{target_event_type} : undef,
+    name               => exists $extra{name}               ? $extra{name} : 'related',
+    required           => exists $extra{required}           ? $extra{required} : JSON::false,
+    tag                => exists $extra{tag}                ? $extra{tag} : 'e',
+    target_object_type => exists $extra{target_object_type} ? $extra{target_object_type}
+    : 'schema.test.object',
+    target_event_type => exists $extra{target_event_type} ? $extra{target_event_type}
+    : undef,
     (exists $extra{extra} ? (extra => $extra{extra}) : ()),
   };
 }
@@ -556,21 +611,23 @@ sub _event_for_body {
   return {
     kind => 7800,
     tags => [
-      [ overnet_v   => '1' ],
-      [ overnet_et  => 'schema.test.event' ],
-      [ overnet_ot  => 'schema.test.object' ],
-      [ overnet_oid => 'object-1' ],
-      [ v           => '1' ],
-      [ t           => 'schema.test.event' ],
-      [ o           => 'schema.test.object' ],
-      [ d           => 'object-1' ],
+      [overnet_v   => '1'],
+      [overnet_et  => 'schema.test.event'],
+      [overnet_ot  => 'schema.test.object'],
+      [overnet_oid => 'object-1'],
+      [v           => '1'],
+      [t           => 'schema.test.event'],
+      [o           => 'schema.test.object'],
+      [d           => 'object-1'],
     ],
-    content => JSON::encode_json({
-      provenance => {
-        type => 'native',
-      },
-      body => $body,
-    }),
+    content => JSON::encode_json(
+      {
+        provenance => {
+          type => 'native',
+        },
+        body => $body,
+      }
+    ),
   };
 }
 
@@ -580,10 +637,8 @@ sub _event_type {
     description   => 'Event.',
     kind          => $extra{kind} || 7800,
     object_type   => $extra{object_type},
-    required_tags => [
-      qw(overnet_v overnet_et overnet_ot overnet_oid v t o d),
-    ],
-    body_schema => {
+    required_tags => [qw(overnet_v overnet_et overnet_ot overnet_oid v t o d),],
+    body_schema   => {
       type => 'object',
     },
     references    => $extra{references} || [],

@@ -10,13 +10,13 @@ subtest 'services expose effective config and description' => sub {
   my $runtime = Overnet::Program::Runtime->new(
     config => {
       mode   => 'test',
-      nested => { enabled => 1 },
+      nested => {enabled => 1},
     },
     config_description => {
       schema => {
         type       => 'object',
         properties => {
-          mode => { type => 'string' },
+          mode => {type => 'string'},
         },
       },
       schema_ref => 'overnet://schema/program-config',
@@ -25,34 +25,26 @@ subtest 'services expose effective config and description' => sub {
   );
   my $services = Overnet::Program::Services->new(runtime => $runtime);
 
-  my $get = $services->dispatch_request(
-    'config.get',
-    {},
-    permissions => ['config.read'],
-  );
+  my $get = $services->dispatch_request('config.get', {}, permissions => ['config.read'],);
   is_deeply(
     $get,
     {
       config => {
         mode   => 'test',
-        nested => { enabled => 1 },
+        nested => {enabled => 1},
       },
     },
     'config.get returns effective config',
   );
 
-  my $describe = $services->dispatch_request(
-    'config.describe',
-    {},
-    permissions => ['config.read'],
-  );
+  my $describe = $services->dispatch_request('config.describe', {}, permissions => ['config.read'],);
   is_deeply(
     $describe,
     {
       schema => {
         type       => 'object',
         properties => {
-          mode => { type => 'string' },
+          mode => {type => 'string'},
         },
       },
       schema_ref => 'overnet://schema/program-config',
@@ -66,7 +58,7 @@ subtest 'config service results are isolated from caller mutation' => sub {
   my $runtime = Overnet::Program::Runtime->new(
     config => {
       mode   => 'stable',
-      nested => { enabled => 1 },
+      nested => {enabled => 1},
     },
     config_description => {
       schema => {
@@ -77,69 +69,43 @@ subtest 'config service results are isolated from caller mutation' => sub {
   );
   my $services = Overnet::Program::Services->new(runtime => $runtime);
 
-  my $config = $services->dispatch_request(
-    'config.get',
-    {},
-    permissions => ['config.read'],
-  );
+  my $config = $services->dispatch_request('config.get', {}, permissions => ['config.read'],);
   $config->{config}{mode} = 'mutated';
   $config->{config}{nested}{enabled} = 0;
 
-  my $config_again = $services->dispatch_request(
-    'config.get',
-    {},
-    permissions => ['config.read'],
-  );
-  is $config_again->{config}{mode}, 'stable', 'config.get returns a cloned config object';
-  is $config_again->{config}{nested}{enabled}, 1, 'nested config data is isolated from mutation';
+  my $config_again = $services->dispatch_request('config.get', {}, permissions => ['config.read'],);
+  is $config_again->{config}{mode},            'stable', 'config.get returns a cloned config object';
+  is $config_again->{config}{nested}{enabled}, 1,        'nested config data is isolated from mutation';
 
-  my $describe = $services->dispatch_request(
-    'config.describe',
-    {},
-    permissions => ['config.read'],
-  );
+  my $describe = $services->dispatch_request('config.describe', {}, permissions => ['config.read'],);
   $describe->{schema}{type} = 'array';
   $describe->{version} = 'mutated';
 
-  my $describe_again = $services->dispatch_request(
-    'config.describe',
-    {},
-    permissions => ['config.read'],
-  );
+  my $describe_again = $services->dispatch_request('config.describe', {}, permissions => ['config.read'],);
   is $describe_again->{schema}{type}, 'object', 'config.describe returns cloned schema metadata';
-  is $describe_again->{version}, '1.0', 'config.describe result is isolated from mutation';
+  is $describe_again->{version},      '1.0',    'config.describe result is isolated from mutation';
 };
 
 subtest 'services enforce config.read permission' => sub {
-  my $runtime = Overnet::Program::Runtime->new(
-    config => { mode => 'test' },
-  );
+  my $runtime  = Overnet::Program::Runtime->new(config => {mode => 'test'},);
   my $services = Overnet::Program::Services->new(runtime => $runtime);
 
   my $error;
   eval {
-    $services->dispatch_request(
-      'config.get',
-      {},
-      permissions => [],
-    );
+    $services->dispatch_request('config.get', {}, permissions => [],);
     1;
   } or $error = $@;
-  is ref($error), 'HASH', 'config.get permission error is structured';
-  is $error->{code}, 'runtime.permission_denied', 'config.get requires config.read';
-  is $error->{details}{required_permission}, 'config.read', 'config.get reports required permission';
+  is ref($error),                            'HASH',                      'config.get permission error is structured';
+  is $error->{code},                         'runtime.permission_denied', 'config.get requires config.read';
+  is $error->{details}{required_permission}, 'config.read',               'config.get reports required permission';
 
   $error = undef;
   eval {
-    $services->dispatch_request(
-      'config.describe',
-      {},
-      permissions => [],
-    );
+    $services->dispatch_request('config.describe', {}, permissions => [],);
     1;
   } or $error = $@;
-  is ref($error), 'HASH', 'config.describe permission error is structured';
-  is $error->{code}, 'runtime.permission_denied', 'config.describe requires config.read';
+  is ref($error),    'HASH',                                'config.describe permission error is structured';
+  is $error->{code}, 'runtime.permission_denied',           'config.describe requires config.read';
   is $error->{details}{required_permission}, 'config.read', 'config.describe reports required permission';
 };
 
@@ -192,11 +158,11 @@ subtest 'instance defaults runtime.init config from runtime and serves config.ge
   );
 
   $instance->process_program_message(
-    Overnet::Program::Protocol::build_response_ok(id => $hello->{send}{id})
+    Overnet::Program::Protocol::build_response_ok(
+      id => $hello->{send}{id}
+    )
   );
-  $instance->process_program_message(
-    Overnet::Program::Protocol::build_program_ready()
-  );
+  $instance->process_program_message(Overnet::Program::Protocol::build_program_ready());
 
   my $response = $instance->process_program_message(
     Overnet::Program::Protocol::build_request(

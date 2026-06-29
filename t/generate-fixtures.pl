@@ -25,27 +25,20 @@ die "Spec fixtures not found at $spec_dir\n" unless -d $spec_dir;
 make_path($out_dir);
 
 # Three keys: one for native events, one for the adapter identity, and one delegate
-my $native_key  = Net::Nostr::Key->new;
-my $adapter_key = Net::Nostr::Key->new;
+my $native_key   = Net::Nostr::Key->new;
+my $adapter_key  = Net::Nostr::Key->new;
 my $delegate_key = Net::Nostr::Key->new;
 
 opendir my $dh, $spec_dir or die "Can't open $spec_dir: $!";
-my @files = sort grep { /\.json$/mx } readdir $dh;
+my @files = sort grep {/\.json$/mx} readdir $dh;
 closedir $dh;
 
 # Precompute the generated native event so removal fixtures can reference it.
-my $native_event = _generate_native_event(
-  $json,
-  File::Spec->catfile($spec_dir, 'valid-native-event.json'),
-  $native_key,
-);
+my $native_event =
+  _generate_native_event($json, File::Spec->catfile($spec_dir, 'valid-native-event.json'), $native_key,);
 
-my $delegation_event = _generate_delegation_event(
-  $json,
-  File::Spec->catfile($spec_dir, 'valid-delegation-event.json'),
-  $native_key,
-  $delegate_key,
-);
+my $delegation_event = _generate_delegation_event($json, File::Spec->catfile($spec_dir, 'valid-delegation-event.json'),
+  $native_key, $delegate_key,);
 
 for my $file (@files) {
   my $path = File::Spec->catfile($spec_dir, $file);
@@ -56,37 +49,32 @@ for my $file (@files) {
   my $fixture = $json->decode($raw);
 
   if ($fixture->{expected}{overnet_valid}) {
-    my $input = $fixture->{input};
-    my $is_adapted = $input->{content} =~ /"type"\s*:\s*"adapted"/mx;
-    my $is_delegated_removal = ref($fixture->{context}) eq 'HASH' && $fixture->{context}{delegation_fixture};
-    my $is_delegation_event = _tag_value($input->{tags}, 'overnet_et') && _tag_value($input->{tags}, 'overnet_et') eq 'core.delegation';
+    my $input                = $fixture->{input};
+    my $is_adapted           = $input->{content} =~ /"type"\s*:\s*"adapted"/mx;
+    my $is_delegated_removal = ref($fixture->{context}) eq 'HASH'
+      && $fixture->{context}{delegation_fixture};
+    my $is_delegation_event = _tag_value($input->{tags}, 'overnet_et')
+      && _tag_value($input->{tags}, 'overnet_et') eq 'core.delegation';
     my $key =
-      $is_delegated_removal ? $delegate_key
-      : $is_adapted         ? $adapter_key
-      :                      $native_key;
+        $is_delegated_removal ? $delegate_key
+      : $is_adapted           ? $adapter_key
+      :                         $native_key;
     my $pubkey = $key->pubkey_hex;
 
     # For kind 37800, update d tag and overnet_oid to match the new pubkey
     my @tags = @{$input->{tags}};
     if ($input->{kind} == 37800) {
-      @tags = map {
-        $_->[0] eq 'd'           ? ['d', $pubkey]
-        : $_->[0] eq 'overnet_oid' ? ['overnet_oid', $pubkey]
-        : $_
-      } @tags;
+      @tags = map { $_->[0] eq 'd' ? ['d', $pubkey] : $_->[0] eq 'overnet_oid' ? ['overnet_oid', $pubkey] : $_ } @tags;
     }
 
     # For removal events, reference the native event we generated
     if ($input->{kind} == 7801 && defined $native_event) {
-      @tags = map {
-        $_->[0] eq 'e' ? ['e', $native_event->id] : $_
-      } @tags;
+      @tags =
+        map { $_->[0] eq 'e' ? ['e', $native_event->id] : $_ } @tags;
     }
 
     if ($is_delegated_removal && defined $delegation_event) {
-      @tags = map {
-        $_->[0] eq 'overnet_delegate' ? ['overnet_delegate', $delegation_event->id] : $_
-      } @tags;
+      @tags = map { $_->[0] eq 'overnet_delegate' ? ['overnet_delegate', $delegation_event->id] : $_ } @tags;
     }
 
     my $content = $input->{content};
@@ -106,15 +94,14 @@ for my $file (@files) {
     $fixture->{input} = _event_hash($event);
   }
 
-  if (ref $fixture->{context} eq 'HASH' && $fixture->{context}{target_fixture}) {
+  if (ref $fixture->{context} eq 'HASH'
+    && $fixture->{context}{target_fixture}) {
     if ($fixture->{context}{target_fixture} eq 'valid-native-event') {
       $fixture->{context}{target_event} = _event_hash($native_event);
 
       if ($fixture->{context}{match_target_e}) {
         my @tags = @{$fixture->{input}{tags}};
-        @tags = map {
-          $_->[0] eq 'e' ? ['e', $native_event->id] : $_
-        } @tags;
+        @tags = map { $_->[0] eq 'e' ? ['e', $native_event->id] : $_ } @tags;
         $fixture->{input}{tags} = \@tags;
         delete $fixture->{context}{match_target_e};
       }
@@ -125,15 +112,15 @@ for my $file (@files) {
     }
   }
 
-  if (ref $fixture->{context} eq 'HASH' && $fixture->{context}{delegation_fixture}) {
+  if (ref $fixture->{context} eq 'HASH'
+    && $fixture->{context}{delegation_fixture}) {
     if ($fixture->{context}{delegation_fixture} eq 'valid-delegation-event') {
-      $fixture->{context}{delegation_event} = _event_hash($delegation_event);
+      $fixture->{context}{delegation_event} =
+        _event_hash($delegation_event);
 
       if ($fixture->{context}{match_delegation_ref}) {
         my @tags = @{$fixture->{input}{tags}};
-        @tags = map {
-          $_->[0] eq 'overnet_delegate' ? ['overnet_delegate', $delegation_event->id] : $_
-        } @tags;
+        @tags = map { $_->[0] eq 'overnet_delegate' ? ['overnet_delegate', $delegation_event->id] : $_ } @tags;
         $fixture->{input}{tags} = \@tags;
         delete $fixture->{context}{match_delegation_ref};
       }
@@ -144,7 +131,8 @@ for my $file (@files) {
     }
   }
 
-  if (ref $fixture->{context} eq 'HASH' && $fixture->{context}{use_delegate_pubkey}) {
+  if (ref $fixture->{context} eq 'HASH'
+    && $fixture->{context}{use_delegate_pubkey}) {
     $fixture->{input}{pubkey} = $delegate_key->pubkey_hex;
     delete $fixture->{context}{use_delegate_pubkey};
   }
@@ -178,7 +166,7 @@ sub _generate_native_event {
   close $fh;
 
   my $fixture = $json->decode($raw);
-  my $input = $fixture->{input};
+  my $input   = $fixture->{input};
 
   return $key->create_event(
     kind       => $input->{kind},
@@ -195,7 +183,7 @@ sub _generate_delegation_event {
   close $fh;
 
   my $fixture = $json->decode($raw);
-  my $input = $fixture->{input};
+  my $input   = $fixture->{input};
   my $content = $json->decode($input->{content});
   $content->{body}{delegate_pubkey} = $delegate_key->pubkey_hex;
 

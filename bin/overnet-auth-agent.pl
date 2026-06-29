@@ -23,7 +23,9 @@ if ($help) {
 }
 
 die _usage()
-  unless defined($args{config_file}) && !ref($args{config_file}) && length($args{config_file});
+  unless defined($args{config_file})
+  && !ref($args{config_file})
+  && length($args{config_file});
 
 if (defined $socket_mode) {
   die "--socket-mode must be an octal mode like 0600\n"

@@ -8,7 +8,8 @@ use Overnet::Program::Runtime;
 use Overnet::Program::Services;
 
 {
-  package Local::MockAdapter; ## no critic (Modules::RequireFilenameMatchesPackage)
+
+  package Local::MockAdapter;
 
   sub new { return bless {}, shift; }
 
@@ -44,9 +45,9 @@ subtest 'program.hello negotiates version and emits runtime.init' => sub {
     instance_id                 => 'instance-42',
     runtime_program_id          => 'overnet.runtime',
     supported_protocol_versions => ['0.2', '0.1'],
-    config                      => { mode => 'test' },
+    config                      => {mode => 'test'},
     permissions                 => ['config.read'],
-    services                    => { config => { available => JSON::true } },
+    services                    => {config => {available => JSON::true}},
   );
 
   my $result = $instance->process_program_message(
@@ -57,12 +58,12 @@ subtest 'program.hello negotiates version and emits runtime.init' => sub {
     )
   );
 
-  is $instance->state, 'awaiting_init_response', 'state advanced after hello';
-  is $instance->selected_protocol_version, '0.1', 'compatible version selected';
-  is $instance->peer_program_id, 'irc.example', 'peer program id recorded';
-  is $result->{send}{method}, 'runtime.init', 'runtime.init request emitted';
-  is $result->{send}{params}{instance_id}, 'instance-42', 'instance id included';
-  is $result->{send}{params}{program_id}, 'irc.example', 'runtime.init identifies the supervised program';
+  is $instance->current_state,             'awaiting_init_response', 'state advanced after hello';
+  is $instance->selected_protocol_version, '0.1',                    'compatible version selected';
+  is $instance->peer_program_id,           'irc.example',            'peer program id recorded';
+  is $result->{send}{method},              'runtime.init',           'runtime.init request emitted';
+  is $result->{send}{params}{instance_id}, 'instance-42',            'instance id included';
+  is $result->{send}{params}{program_id},  'irc.example',            'runtime.init identifies the supervised program';
 };
 
 subtest 'runtime.init uses configured canonical program id when provided' => sub {
@@ -82,9 +83,7 @@ subtest 'runtime.init uses configured canonical program id when provided' => sub
 };
 
 subtest 'successful init response moves session to awaiting_ready' => sub {
-  my $instance = Overnet::Program::Instance->new(
-    supported_protocol_versions => ['0.1'],
-  );
+  my $instance = Overnet::Program::Instance->new(supported_protocol_versions => ['0.1'],);
 
   my $hello_result = $instance->process_program_message(
     Overnet::Program::Protocol::build_program_hello(
@@ -94,20 +93,18 @@ subtest 'successful init response moves session to awaiting_ready' => sub {
   );
 
   my $init_id = $hello_result->{send}{id};
-  my $result = $instance->process_program_message(
+  my $result  = $instance->process_program_message(
     Overnet::Program::Protocol::build_response_ok(
       id => $init_id,
     )
   );
 
   ok $result->{accepted}, 'init accepted';
-  is $instance->state, 'awaiting_ready', 'state advanced to awaiting_ready';
+  is $instance->current_state, 'awaiting_ready', 'state advanced to awaiting_ready';
 };
 
 subtest 'program.ready moves session to ready' => sub {
-  my $instance = Overnet::Program::Instance->new(
-    supported_protocol_versions => ['0.1'],
-  );
+  my $instance = Overnet::Program::Instance->new(supported_protocol_versions => ['0.1'],);
 
   my $hello_result = $instance->process_program_message(
     Overnet::Program::Protocol::build_program_hello(
@@ -116,23 +113,23 @@ subtest 'program.ready moves session to ready' => sub {
     )
   );
   $instance->process_program_message(
-    Overnet::Program::Protocol::build_response_ok(id => $hello_result->{send}{id})
+    Overnet::Program::Protocol::build_response_ok(
+      id => $hello_result->{send}{id}
+    )
   );
 
   my $result = $instance->process_program_message(
     Overnet::Program::Protocol::build_program_ready(
-      params => { phase => 'done' },
+      params => {phase => 'done'},
     )
   );
 
-  ok $result->{ready}, 'ready acknowledged';
+  ok $result->{ready},    'ready acknowledged';
   ok $instance->is_ready, 'instance is ready';
 };
 
 subtest 'request_shutdown emits runtime.shutdown and tracks state' => sub {
-  my $instance = Overnet::Program::Instance->new(
-    supported_protocol_versions => ['0.1'],
-  );
+  my $instance = Overnet::Program::Instance->new(supported_protocol_versions => ['0.1'],);
 
   my $hello_result = $instance->process_program_message(
     Overnet::Program::Protocol::build_program_hello(
@@ -141,29 +138,26 @@ subtest 'request_shutdown emits runtime.shutdown and tracks state' => sub {
     )
   );
   $instance->process_program_message(
-    Overnet::Program::Protocol::build_response_ok(id => $hello_result->{send}{id})
+    Overnet::Program::Protocol::build_response_ok(
+      id => $hello_result->{send}{id}
+    )
   );
-  $instance->process_program_message(
-    Overnet::Program::Protocol::build_program_ready()
-  );
+  $instance->process_program_message(Overnet::Program::Protocol::build_program_ready());
 
   my $result = $instance->request_shutdown(reason => 'operator-requested');
-  is $instance->state, 'shutdown_requested', 'shutdown state recorded';
-  is $result->{send}{method}, 'runtime.shutdown', 'runtime.shutdown emitted';
+  is $instance->current_state, 'shutdown_requested', 'shutdown state recorded';
+  is $result->{send}{method},  'runtime.shutdown',   'runtime.shutdown emitted';
 
   my $shutdown_id = $result->{send}{id};
-  my $shutdown_result = $instance->process_program_message(
-    Overnet::Program::Protocol::build_response_ok(id => $shutdown_id)
-  );
+  my $shutdown_result =
+    $instance->process_program_message(Overnet::Program::Protocol::build_response_ok(id => $shutdown_id));
 
   ok $shutdown_result->{shutdown_complete}, 'shutdown completed';
-  is $instance->state, 'shutdown_complete', 'session reached shutdown_complete';
+  is $instance->current_state, 'shutdown_complete', 'session reached shutdown_complete';
 };
 
 subtest 'no compatible protocol version emits runtime.fatal and fails the session' => sub {
-  my $instance = Overnet::Program::Instance->new(
-    supported_protocol_versions => ['0.2'],
-  );
+  my $instance = Overnet::Program::Instance->new(supported_protocol_versions => ['0.2'],);
 
   my $result = $instance->process_program_message(
     Overnet::Program::Protocol::build_program_hello(
@@ -173,17 +167,15 @@ subtest 'no compatible protocol version emits runtime.fatal and fails the sessio
   );
 
   ok $result->{fatal}, 'hello mismatch produces a fatal runtime result';
-  is $result->{send}{type}, 'notification', 'fatal result sends a notification';
-  is $result->{send}{method}, 'runtime.fatal', 'fatal result uses runtime.fatal';
-  is $result->{send}{params}{code}, 'protocol.version_mismatch', 'fatal code identifies version mismatch';
-  is $result->{send}{params}{phase}, 'handshake', 'fatal notification identifies handshake phase';
-  is $instance->state, 'failed', 'session enters failed state after version mismatch';
+  is $result->{send}{type},          'notification',              'fatal result sends a notification';
+  is $result->{send}{method},        'runtime.fatal',             'fatal result uses runtime.fatal';
+  is $result->{send}{params}{code},  'protocol.version_mismatch', 'fatal code identifies version mismatch';
+  is $result->{send}{params}{phase}, 'handshake',                 'fatal notification identifies handshake phase';
+  is $instance->current_state,       'failed',                    'session enters failed state after version mismatch';
 };
 
 subtest 'unknown response ids are fatal protocol.unknown_request_id errors' => sub {
-  my $instance = Overnet::Program::Instance->new(
-    supported_protocol_versions => ['0.1'],
-  );
+  my $instance = Overnet::Program::Instance->new(supported_protocol_versions => ['0.1'],);
 
   my $hello = $instance->process_program_message(
     Overnet::Program::Protocol::build_program_hello(
@@ -197,7 +189,9 @@ subtest 'unknown response ids are fatal protocol.unknown_request_id errors' => s
       my $error;
       eval {
         $instance->process_program_message(
-          Overnet::Program::Protocol::build_response_ok(id => 'unknown-init-id')
+          Overnet::Program::Protocol::build_response_ok(
+            id => 'unknown-init-id'
+          )
         );
         1;
       } or $error = $@;
@@ -207,28 +201,28 @@ subtest 'unknown response ids are fatal protocol.unknown_request_id errors' => s
     'unexpected runtime.init response id is a protocol.unknown_request_id error',
   );
 
-  $instance = Overnet::Program::Instance->new(
-    supported_protocol_versions => ['0.1'],
-  );
-  $hello = $instance->process_program_message(
+  $instance = Overnet::Program::Instance->new(supported_protocol_versions => ['0.1'],);
+  $hello    = $instance->process_program_message(
     Overnet::Program::Protocol::build_program_hello(
       program_id                  => 'irc.example',
       supported_protocol_versions => ['0.1'],
     )
   );
   $instance->process_program_message(
-    Overnet::Program::Protocol::build_response_ok(id => $hello->{send}{id})
+    Overnet::Program::Protocol::build_response_ok(
+      id => $hello->{send}{id}
+    )
   );
-  $instance->process_program_message(
-    Overnet::Program::Protocol::build_program_ready()
-  );
+  $instance->process_program_message(Overnet::Program::Protocol::build_program_ready());
 
   like(
     do {
       my $error;
       eval {
         $instance->process_program_message(
-          Overnet::Program::Protocol::build_response_ok(id => 'unknown-ready-id')
+          Overnet::Program::Protocol::build_response_ok(
+            id => 'unknown-ready-id'
+          )
         );
         1;
       } or $error = $@;
@@ -260,17 +254,17 @@ subtest 'ready session dispatches adapter service requests through protocol' => 
     )
   );
   $instance->process_program_message(
-    Overnet::Program::Protocol::build_response_ok(id => $hello_result->{send}{id})
+    Overnet::Program::Protocol::build_response_ok(
+      id => $hello_result->{send}{id}
+    )
   );
-  $instance->process_program_message(
-    Overnet::Program::Protocol::build_program_ready()
-  );
+  $instance->process_program_message(Overnet::Program::Protocol::build_program_ready());
 
   my $open = $instance->process_program_message(
     Overnet::Program::Protocol::build_request(
       id     => 'req-1',
       method => 'adapters.open_session',
-      params => { adapter_id => 'mock.adapter', config => {} },
+      params => {adapter_id => 'mock.adapter', config => {}},
     )
   );
   is $open->{send}{type}, 'response', 'open_session yields response';
@@ -284,7 +278,7 @@ subtest 'ready session dispatches adapter service requests through protocol' => 
       method => 'adapters.map_input',
       params => {
         adapter_session_id => $adapter_session_id,
-        input              => { command => 'NOTICE' },
+        input              => {command => 'NOTICE'},
       },
     )
   );
@@ -324,30 +318,28 @@ subtest 'ready session rejects adapter service requests without adapters.use' =>
     )
   );
   $instance->process_program_message(
-    Overnet::Program::Protocol::build_response_ok(id => $hello_result->{send}{id})
+    Overnet::Program::Protocol::build_response_ok(
+      id => $hello_result->{send}{id}
+    )
   );
-  $instance->process_program_message(
-    Overnet::Program::Protocol::build_program_ready()
-  );
+  $instance->process_program_message(Overnet::Program::Protocol::build_program_ready());
 
   my $open = $instance->process_program_message(
     Overnet::Program::Protocol::build_request(
       id     => 'req-denied',
       method => 'adapters.open_session',
-      params => { adapter_id => 'mock.adapter', config => {} },
+      params => {adapter_id => 'mock.adapter', config => {}},
     )
   );
 
   ok !$open->{send}{ok}, 'open_session is denied';
-  is $open->{send}{error}{code}, 'runtime.permission_denied', 'permission error code returned';
-  is $open->{send}{error}{details}{required_permission}, 'adapters.use', 'required permission is reported';
+  is $open->{send}{error}{code},                         'runtime.permission_denied', 'permission error code returned';
+  is $open->{send}{error}{details}{required_permission}, 'adapters.use',              'required permission is reported';
   is_deeply $runtime->adapter_session_ids, [], 'no adapter session is created';
 };
 
 subtest 'ready session rejects runtime-originated notifications from program' => sub {
-  my $instance = Overnet::Program::Instance->new(
-    supported_protocol_versions => ['0.1'],
-  );
+  my $instance = Overnet::Program::Instance->new(supported_protocol_versions => ['0.1'],);
 
   my $hello_result = $instance->process_program_message(
     Overnet::Program::Protocol::build_program_hello(
@@ -356,24 +348,26 @@ subtest 'ready session rejects runtime-originated notifications from program' =>
     )
   );
   $instance->process_program_message(
-    Overnet::Program::Protocol::build_response_ok(id => $hello_result->{send}{id})
+    Overnet::Program::Protocol::build_response_ok(
+      id => $hello_result->{send}{id}
+    )
   );
-  $instance->process_program_message(
-    Overnet::Program::Protocol::build_program_ready()
-  );
+  $instance->process_program_message(Overnet::Program::Protocol::build_program_ready());
 
   like(
     do {
       my $error;
       eval {
-        $instance->process_program_message({
-          type   => 'notification',
-          method => 'runtime.timer_fired',
-          params => {
-            timer_id => 'timer-1',
-            fired_at => 1744301000,
-          },
-        });
+        $instance->process_program_message(
+          {
+            type   => 'notification',
+            method => 'runtime.timer_fired',
+            params => {
+              timer_id => 'timer-1',
+              fired_at => 1744301000,
+            },
+          }
+        );
         1;
       } or $error = $@;
       $error;
@@ -384,7 +378,7 @@ subtest 'ready session rejects runtime-originated notifications from program' =>
 };
 
 subtest 'ready session returns protocol.unknown_method for runtime-only requests from program' => sub {
-  my $runtime = Overnet::Program::Runtime->new;
+  my $runtime  = Overnet::Program::Runtime->new;
   my $services = Overnet::Program::Services->new(runtime => $runtime);
 
   my $instance = Overnet::Program::Instance->new(
@@ -399,11 +393,11 @@ subtest 'ready session returns protocol.unknown_method for runtime-only requests
     )
   );
   $instance->process_program_message(
-    Overnet::Program::Protocol::build_response_ok(id => $hello_result->{send}{id})
+    Overnet::Program::Protocol::build_response_ok(
+      id => $hello_result->{send}{id}
+    )
   );
-  $instance->process_program_message(
-    Overnet::Program::Protocol::build_program_ready()
-  );
+  $instance->process_program_message(Overnet::Program::Protocol::build_program_ready());
 
   my $result = $instance->process_program_message(
     Overnet::Program::Protocol::build_request(
@@ -438,17 +432,17 @@ subtest 'ready session reports unknown secret as invalid params' => sub {
     )
   );
   $instance->process_program_message(
-    Overnet::Program::Protocol::build_response_ok(id => $hello_result->{send}{id})
+    Overnet::Program::Protocol::build_response_ok(
+      id => $hello_result->{send}{id}
+    )
   );
-  $instance->process_program_message(
-    Overnet::Program::Protocol::build_program_ready()
-  );
+  $instance->process_program_message(Overnet::Program::Protocol::build_program_ready());
 
   my $result = $instance->process_program_message(
     Overnet::Program::Protocol::build_request(
       id     => 'cfg-1',
       method => 'secrets.get',
-      params => { name => 'missing-token' },
+      params => {name => 'missing-token'},
     )
   );
 
@@ -457,21 +451,21 @@ subtest 'ready session reports unknown secret as invalid params' => sub {
 };
 
 subtest 'malformed program.hello is rejected as invalid params' => sub {
-  my $instance = Overnet::Program::Instance->new(
-    supported_protocol_versions => ['0.1'],
-  );
+  my $instance = Overnet::Program::Instance->new(supported_protocol_versions => ['0.1'],);
 
   like(
     do {
       my $error;
       eval {
-        $instance->process_program_message({
-          type   => 'notification',
-          method => 'program.hello',
-          params => {
-            program_id => 'irc.example',
-          },
-        });
+        $instance->process_program_message(
+          {
+            type   => 'notification',
+            method => 'program.hello',
+            params => {
+              program_id => 'irc.example',
+            },
+          }
+        );
         1;
       } or $error = $@;
       $error;

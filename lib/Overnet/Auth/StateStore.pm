@@ -1,23 +1,29 @@
 package Overnet::Auth::StateStore;
 
 use strictures 2;
+use Carp    qw(croak);
+use English qw(-no_match_vars);
 
 use File::Basename qw(dirname);
-use File::Path qw(make_path);
-use JSON ();
+use File::Path     qw(make_path);
+use JSON           ();
 
 our $VERSION = '0.001';
+
+my $STATE_JSON = JSON->new;
+$STATE_JSON->utf8;
+$STATE_JSON->canonical;
+$STATE_JSON->pretty;
 
 sub new {
   my ($class, %args) = @_;
   my $path = $args{path};
 
-  die "path is required\n"
-    unless defined $path && !ref($path) && length($path);
+  if (!(defined $path && !ref($path) && length($path))) {
+    croak "path is required\n";
+  }
 
-  return bless {
-    path => $path,
-  }, $class;
+  return bless {path => $path,}, $class;
 }
 
 sub path {
@@ -29,42 +35,46 @@ sub load_state {
   my ($self) = @_;
   my $path = $self->{path};
 
-  return unless -e $path;
+  if (!(-e $path)) {
+    return;
+  }
 
   open my $fh, '<', $path
-    or die "open $path failed: $!";
-  my $json = do { local $/ = undef; <$fh> };
+    or croak "open $path failed: $OS_ERROR";
+  my $json = do { local $INPUT_RECORD_SEPARATOR = undef; <$fh> };
   close $fh
-    or die "close $path failed: $!";
+    or croak "close $path failed: $OS_ERROR";
 
   my $decoded = eval { JSON->new->utf8->decode($json) };
-  die "auth state file $path is not valid JSON: $@"
-    unless defined $decoded;
+  if (!(defined $decoded)) {
+    croak "auth state file $path is not valid JSON: $EVAL_ERROR";
+  }
 
   return _normalize_state($decoded);
 }
 
 sub save_state {
   my ($self, %args) = @_;
-  my $state = _normalize_state($args{state});
-  my $path = $self->{path};
+  my $state  = _normalize_state($args{state});
+  my $path   = $self->{path};
   my $parent = dirname($path);
-  my $tmp = $path . '.tmp.' . $$;
+  my $tmp    = $path . '.tmp.' . $PROCESS_ID;
 
-  make_path($parent)
-    unless -d $parent;
+  if (!(-d $parent)) {
+    make_path($parent);
+  }
 
-  my $json = JSON->new->utf8->canonical->pretty->encode($state);
+  my $json = $STATE_JSON->encode($state);
 
   open my $fh, '>', $tmp
-    or die "open $tmp failed: $!";
+    or croak "open $tmp failed: $OS_ERROR";
   print {$fh} $json
-    or die "write $tmp failed: $!";
+    or croak "write $tmp failed: $OS_ERROR";
   close $fh
-    or die "close $tmp failed: $!";
+    or croak "close $tmp failed: $OS_ERROR";
 
   rename $tmp, $path
-    or die "rename $tmp to $path failed: $!";
+    or croak "rename $tmp to $path failed: $OS_ERROR";
 
   return 1;
 }
@@ -72,39 +82,112 @@ sub save_state {
 sub _normalize_state {
   my ($state) = @_;
 
-  die "auth state must decode to an object\n"
-    unless ref($state) eq 'HASH';
-  die "auth state policies must be an array\n"
-    if exists($state->{policies}) && ref($state->{policies}) ne 'ARRAY';
-  die "auth state service_pins must be an object\n"
-    if exists($state->{service_pins}) && ref($state->{service_pins}) ne 'HASH';
-  die "auth state sessions must be an array\n"
-    if exists($state->{sessions}) && ref($state->{sessions}) ne 'ARRAY';
+  if (!(ref($state) eq 'HASH')) {
+    croak "auth state must decode to an object\n";
+  }
+  if (exists($state->{policies}) && ref($state->{policies}) ne 'ARRAY') {
+    croak "auth state policies must be an array\n";
+  }
+  if (exists($state->{service_pins})
+    && ref($state->{service_pins}) ne 'HASH') {
+    croak "auth state service_pins must be an object\n";
+  }
+  if (exists($state->{sessions}) && ref($state->{sessions}) ne 'ARRAY') {
+    croak "auth state sessions must be an array\n";
+  }
 
   return {
-    policies     => _clone($state->{policies} || []),
+    policies     => _clone($state->{policies}     || []),
     service_pins => _clone($state->{service_pins} || {}),
-    sessions     => _clone($state->{sessions} || []),
+    sessions     => _clone($state->{sessions}     || []),
   };
 }
 
 sub _clone {
   my ($value) = @_;
-  return unless defined $value;
-  return $value unless ref($value);
+  if (!(defined $value)) {
+    return;
+  }
+  if (!(ref($value))) {
+    return $value;
+  }
 
   if (ref($value) eq 'HASH') {
     return {
       map { $_ => _clone($value->{$_}) }
-      keys %{$value}
+        keys %{$value}
     };
   }
 
   if (ref($value) eq 'ARRAY') {
-    return [ map { _clone($_) } @{$value} ];
+    return [map { _clone($_) } @{$value}];
   }
 
   return "$value";
 }
 
 1;
+
+=head1 NAME
+
+Overnet::Auth::StateStore - Overnet Perl module
+
+=head1 VERSION
+
+Version 0.001.
+
+=head1 SYNOPSIS
+
+  use Overnet::Auth::StateStore;
+
+=head1 DESCRIPTION
+
+This module is part of the Overnet Perl implementation.
+
+=head1 SUBROUTINES/METHODS
+
+=head2 new
+
+Public API entry point.
+
+=head2 path
+
+Public API entry point.
+
+=head2 load_state
+
+Public API entry point.
+
+=head2 save_state
+
+Public API entry point.
+
+=head1 DIAGNOSTICS
+
+This module reports errors through normal Perl exceptions or structured return values.
+
+=head1 CONFIGURATION AND ENVIRONMENT
+
+No module-specific environment configuration is required.
+
+=head1 DEPENDENCIES
+
+See the distribution metadata for runtime dependencies.
+
+=head1 INCOMPATIBILITIES
+
+No known incompatibilities are documented.
+
+=head1 BUGS AND LIMITATIONS
+
+No known bugs are documented.
+
+=head1 AUTHOR
+
+Overnet Project.
+
+=head1 LICENSE AND COPYRIGHT
+
+See the project license.
+
+=cut

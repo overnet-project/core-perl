@@ -4,7 +4,7 @@ use FindBin;
 use lib "$FindBin::Bin/../../lib";
 use Overnet::Program::Protocol;
 
-binmode(STDIN, ':raw');
+binmode(STDIN,  ':raw');
 binmode(STDOUT, ':raw');
 binmode(STDERR, ':raw');
 STDOUT->autoflush(1);
@@ -14,8 +14,8 @@ my $protocol = Overnet::Program::Protocol->new;
 
 sub _send_message {
   my ($message) = @_;
-  my $frame = $protocol->encode_message($message);
-  my $offset = 0;
+  my $frame     = $protocol->encode_message($message);
+  my $offset    = 0;
   while ($offset < length $frame) {
     my $written = syswrite(STDOUT, $frame, length($frame) - $offset, $offset);
     die "write failed: $!\n" unless defined $written;

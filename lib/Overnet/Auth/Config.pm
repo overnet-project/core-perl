@@ -1,6 +1,8 @@
 package Overnet::Auth::Config;
 
 use strictures 2;
+use Carp    qw(croak);
+use English qw(-no_match_vars);
 
 use JSON ();
 
@@ -10,46 +12,58 @@ sub new {
   my ($class, %args) = @_;
   my $config = exists $args{config} ? $args{config} : {};
 
-  die "auth config must be an object\n"
-    unless ref($config) eq 'HASH';
-  die "auth config daemon section must be an object\n"
-    if exists($config->{daemon}) && ref($config->{daemon}) ne 'HASH';
+  if (!(ref($config) eq 'HASH')) {
+    croak "auth config must be an object\n";
+  }
+  if (exists($config->{daemon}) && ref($config->{daemon}) ne 'HASH') {
+    croak "auth config daemon section must be an object\n";
+  }
   my $daemon = ref($config->{daemon}) eq 'HASH' ? $config->{daemon} : {};
-  die "auth config daemon.state_file must be a string\n"
-    if exists($daemon->{state_file})
-       && (ref($daemon->{state_file}) || !length($daemon->{state_file}));
-  die "auth config identities must be an array\n"
-    if exists($config->{identities}) && ref($config->{identities}) ne 'ARRAY';
-  die "auth config policies must be an array\n"
-    if exists($config->{policies}) && ref($config->{policies}) ne 'ARRAY';
-  die "auth config service_pins must be an object\n"
-    if exists($config->{service_pins}) && ref($config->{service_pins}) ne 'HASH';
-  die "auth config sessions must be an array\n"
-    if exists($config->{sessions}) && ref($config->{sessions}) ne 'ARRAY';
+  if (exists($daemon->{state_file})
+    && (ref($daemon->{state_file}) || !length($daemon->{state_file}))) {
+    croak "auth config daemon.state_file must be a string\n";
+  }
+  if (exists($config->{identities})
+    && ref($config->{identities}) ne 'ARRAY') {
+    croak "auth config identities must be an array\n";
+  }
+  if (exists($config->{policies})
+    && ref($config->{policies}) ne 'ARRAY') {
+    croak "auth config policies must be an array\n";
+  }
+  if (exists($config->{service_pins})
+    && ref($config->{service_pins}) ne 'HASH') {
+    croak "auth config service_pins must be an object\n";
+  }
+  if (exists($config->{sessions})
+    && ref($config->{sessions}) ne 'ARRAY') {
+    croak "auth config sessions must be an array\n";
+  }
 
-  return bless {
-    config => _clone($config),
-  }, $class;
+  return bless {config => _clone($config),}, $class;
 }
 
 sub load_file {
   my ($class, %args) = @_;
   my $path = $args{path};
 
-  die "path is required\n"
-    unless defined $path && !ref($path) && length($path);
+  if (!(defined $path && !ref($path) && length($path))) {
+    croak "path is required\n";
+  }
 
   open my $fh, '<', $path
-    or die "open $path failed: $!";
-  my $json = do { local $/ = undef; <$fh> };
+    or croak "open $path failed: $OS_ERROR";
+  my $json = do { local $INPUT_RECORD_SEPARATOR = undef; <$fh> };
   close $fh
-    or die "close $path failed: $!";
+    or croak "close $path failed: $OS_ERROR";
 
   my $decoded = eval { JSON->new->utf8->decode($json) };
-  die "auth config file $path is not valid JSON: $@"
-    unless defined $decoded;
-  die "auth config must decode to an object\n"
-    unless ref($decoded) eq 'HASH';
+  if (!(defined $decoded)) {
+    croak "auth config file $path is not valid JSON: $EVAL_ERROR";
+  }
+  if (!(ref($decoded) eq 'HASH')) {
+    croak "auth config must decode to an object\n";
+  }
 
   return $class->new(config => $decoded);
 }
@@ -76,20 +90,25 @@ sub agent_args {
   my ($self, %args) = @_;
   my $state = exists($args{state}) ? $args{state} : $self->mutable_state;
 
-  die "auth mutable state must be an object\n"
-    unless ref($state) eq 'HASH';
-  die "auth mutable state policies must be an array\n"
-    if exists($state->{policies}) && ref($state->{policies}) ne 'ARRAY';
-  die "auth mutable state service_pins must be an object\n"
-    if exists($state->{service_pins}) && ref($state->{service_pins}) ne 'HASH';
-  die "auth mutable state sessions must be an array\n"
-    if exists($state->{sessions}) && ref($state->{sessions}) ne 'ARRAY';
+  if (!(ref($state) eq 'HASH')) {
+    croak "auth mutable state must be an object\n";
+  }
+  if (exists($state->{policies}) && ref($state->{policies}) ne 'ARRAY') {
+    croak "auth mutable state policies must be an array\n";
+  }
+  if (exists($state->{service_pins})
+    && ref($state->{service_pins}) ne 'HASH') {
+    croak "auth mutable state service_pins must be an object\n";
+  }
+  if (exists($state->{sessions}) && ref($state->{sessions}) ne 'ARRAY') {
+    croak "auth mutable state sessions must be an array\n";
+  }
 
   return {
     identities   => $self->identities,
-    policies     => _clone($state->{policies} || []),
+    policies     => _clone($state->{policies}     || []),
     service_pins => _clone($state->{service_pins} || {}),
-    sessions     => _clone($state->{sessions} || []),
+    sessions     => _clone($state->{sessions}     || []),
   };
 }
 
@@ -104,29 +123,113 @@ sub mutable_state {
   my $config = $self->{config};
 
   return {
-    policies     => _clone($config->{policies} || []),
+    policies     => _clone($config->{policies}     || []),
     service_pins => _clone($config->{service_pins} || {}),
-    sessions     => _clone($config->{sessions} || []),
+    sessions     => _clone($config->{sessions}     || []),
   };
 }
 
 sub _clone {
   my ($value) = @_;
-  return unless defined $value;
-  return $value unless ref($value);
+  if (!(defined $value)) {
+    return;
+  }
+  if (!(ref($value))) {
+    return $value;
+  }
 
   if (ref($value) eq 'HASH') {
     return {
       map { $_ => _clone($value->{$_}) }
-      keys %{$value}
+        keys %{$value}
     };
   }
 
   if (ref($value) eq 'ARRAY') {
-    return [ map { _clone($_) } @{$value} ];
+    return [map { _clone($_) } @{$value}];
   }
 
   return "$value";
 }
 
 1;
+
+=head1 NAME
+
+Overnet::Auth::Config - Overnet Perl module
+
+=head1 VERSION
+
+Version 0.001.
+
+=head1 SYNOPSIS
+
+  use Overnet::Auth::Config;
+
+=head1 DESCRIPTION
+
+This module is part of the Overnet Perl implementation.
+
+=head1 SUBROUTINES/METHODS
+
+=head2 new
+
+Public API entry point.
+
+=head2 load_file
+
+Public API entry point.
+
+=head2 endpoint
+
+Public API entry point.
+
+=head2 socket_mode
+
+Public API entry point.
+
+=head2 state_file
+
+Public API entry point.
+
+=head2 agent_args
+
+Public API entry point.
+
+=head2 identities
+
+Public API entry point.
+
+=head2 mutable_state
+
+Public API entry point.
+
+=head1 DIAGNOSTICS
+
+This module reports errors through normal Perl exceptions or structured return values.
+
+=head1 CONFIGURATION AND ENVIRONMENT
+
+No module-specific environment configuration is required.
+
+=head1 DEPENDENCIES
+
+See the distribution metadata for runtime dependencies.
+
+=head1 INCOMPATIBILITIES
+
+No known incompatibilities are documented.
+
+=head1 BUGS AND LIMITATIONS
+
+No known bugs are documented.
+
+=head1 AUTHOR
+
+Overnet Project.
+
+=head1 LICENSE AND COPYRIGHT
+
+See the project license.
+
+=cut

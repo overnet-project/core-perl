@@ -7,7 +7,8 @@ use Overnet::Program::SecretProvider;
 use Overnet::Program::Store;
 
 {
-  package Local::ConstructorAdapter; ## no critic (Modules::RequireFilenameMatchesPackage)
+
+  package Local::ConstructorAdapter;
 
   sub new { return bless {}, shift; }
 }
@@ -21,23 +22,22 @@ subtest 'runtime constructor protects reserved internal state' => sub {
     subscriptions         => 'bad',
     secret_handles        => 'bad',
     runtime_notifications => 'bad',
-    secrets               => { 'api-token' => 'top-secret' },
+    secrets               => {'api-token' => 'top-secret'},
   );
 
   $runtime->register_adapter(
     adapter_id => 'constructor.adapter',
     adapter    => Local::ConstructorAdapter->new,
   );
-  my $session = $runtime->open_adapter_session(
-    adapter_id => 'constructor.adapter',
-  );
+  my $session = $runtime->open_adapter_session(adapter_id => 'constructor.adapter',);
   is $session->session_id, 'adapter-1', 'constructor does not allow next_session_id override';
 
   ok $runtime->schedule_timer(
     session_id => 'session-1',
     timer_id   => 'timer-1',
     delay_ms   => 0,
-  ), 'constructor does not allow timers override';
+    ),
+    'constructor does not allow timers override';
   is scalar @{$runtime->drain_runtime_notifications('session-1')}, 1,
     'runtime notifications remain usable after constructor override attempt';
 
@@ -49,15 +49,13 @@ subtest 'runtime constructor protects reserved internal state' => sub {
     'constructor does not allow secret handle table override';
 
   my $secret_provider = Overnet::Program::SecretProvider->new(
-    secrets => { 'host-token' => 'top-secret' },
+    secrets         => {'host-token' => 'top-secret'},
     random_bytes_cb => sub {
       my ($length) = @_;
       return 'Z' x $length;
     },
   );
-  my $host_runtime = Overnet::Program::Runtime->new(
-    secret_provider => $secret_provider,
-  );
+  my $host_runtime = Overnet::Program::Runtime->new(secret_provider => $secret_provider,);
   isa_ok $host_runtime->secret_provider, 'Overnet::Program::SecretProvider',
     'runtime accepts an explicit secret provider';
 
@@ -67,7 +65,7 @@ subtest 'runtime constructor protects reserved internal state' => sub {
       eval {
         Overnet::Program::Runtime->new(
           secret_provider => $secret_provider,
-          secrets => { 'mixed' => 'nope' },
+          secrets         => {'mixed' => 'nope'},
         );
         1;
       } or $error = $@;
@@ -86,26 +84,25 @@ subtest 'store constructor protects reserved storage internals' => sub {
 
   my $appended = $store->append_event(
     stream => 'constructor.test',
-    event  => { ok => 1 },
+    event  => {ok => 1},
   );
   is $appended->{offset}, 0, 'append works with protected store internals';
   is $store->read_events(stream => 'constructor.test')->{entries}[0]{event}{ok}, 1,
     'read works with protected store internals';
-  is $store->put_document(key => 'constructor.doc', value => { ok => 1 })->{key}, 'constructor.doc',
+  is $store->put_document(key => 'constructor.doc', value => {ok => 1})->{key}, 'constructor.doc',
     'document put works with protected store internals';
   is $store->get_document(key => 'constructor.doc')->{value}{ok}, 1,
     'document get works with protected store internals';
 };
 
 subtest 'adapter registry constructor protects adapter table' => sub {
-  my $registry = Overnet::Program::AdapterRegistry->new(
-    adapters => 'bad',
-  );
+  my $registry = Overnet::Program::AdapterRegistry->new(adapters => 'bad',);
 
   ok $registry->register(
     adapter_id => 'constructor.registry',
     adapter    => Local::ConstructorAdapter->new,
-  ), 'register works with protected registry internals';
+    ),
+    'register works with protected registry internals';
   ok $registry->has('constructor.registry'), 'registry remains usable after constructor override attempt';
 };
 

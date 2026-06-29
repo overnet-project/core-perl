@@ -18,13 +18,15 @@ subtest 'normalize accepts enabled server TLS config with implicit mode' => sub 
     implicit_mode => 'server',
   );
 
-  is_deeply $tls, {
+  is_deeply $tls,
+    {
     enabled          => 1,
     mode             => 'server',
     cert_chain_file  => '/tmp/server-cert.pem',
     private_key_file => '/tmp/server-key.pem',
     min_version      => 'TLSv1.2',
-  }, 'server TLS config normalizes to baseline shape';
+    },
+    'server TLS config normalizes to baseline shape';
 };
 
 subtest 'normalize rejects invalid baseline TLS shapes' => sub {
@@ -86,12 +88,13 @@ subtest 'server_start_args maps baseline TLS config to IO::Socket::SSL arguments
 
   my $args = Overnet::Program::TLSConfig->server_start_args($tls);
 
-  is $args->{SSL_server}, 1, 'SSL_server is enabled';
-  is $args->{SSL_startHandshake}, 1, 'server TLS does an immediate handshake';
-  is $args->{SSL_cert_file}, '/tmp/server-cert.pem', 'cert chain file is mapped';
-  is $args->{SSL_key_file}, '/tmp/server-key.pem', 'key file is mapped';
-  is $args->{SSL_verify_mode}, SSL_VERIFY_NONE, 'verify mode defaults to none when verify_peer is false';
-  is $args->{SSL_version}, 'SSLv23:!SSLv3:!SSLv2:!TLSv1:!TLSv1_1', 'TLSv1.2 minimum maps to the expected SSL version string';
+  is $args->{SSL_server},         1,                      'SSL_server is enabled';
+  is $args->{SSL_startHandshake}, 1,                      'server TLS does an immediate handshake';
+  is $args->{SSL_cert_file},      '/tmp/server-cert.pem', 'cert chain file is mapped';
+  is $args->{SSL_key_file},       '/tmp/server-key.pem',  'key file is mapped';
+  is $args->{SSL_verify_mode},    SSL_VERIFY_NONE,        'verify mode defaults to none when verify_peer is false';
+  is $args->{SSL_version}, 'SSLv23:!SSLv3:!SSLv2:!TLSv1:!TLSv1_1',
+    'TLSv1.2 minimum maps to the expected SSL version string';
 };
 
 sub exception (&) {

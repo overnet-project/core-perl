@@ -19,20 +19,22 @@ subtest 'agent_info discovers the endpoint from OVERNET_AUTH_SOCK' => sub {
       my (%args) = @_;
       local $ENV{OVERNET_AUTH_SOCK} = $args{endpoint};
 
-      my $client = Overnet::Auth::Client->new(
-        socket_factory => $args{socket_factory},
-      );
+      my $client   = Overnet::Auth::Client->new(socket_factory => $args{socket_factory},);
       my $response = $client->agent_info;
 
-      is $response->{ok}, 1, 'agent.info succeeds';
+      is $response->{ok},                       1,       'agent.info succeeds';
       is $response->{result}{protocol_version}, '0.1.0', 'protocol version is returned';
-      ok scalar grep { $_ eq 'sessions.authorize' } @{$response->{result}{capabilities} || []},
+      ok scalar grep { $_ eq 'sessions.authorize' }
+        @{$response->{result}{capabilities} || []},
         'capabilities include sessions.authorize';
-      ok scalar grep { $_ eq 'policies.grant' } @{$response->{result}{capabilities} || []},
+      ok scalar grep { $_ eq 'policies.grant' }
+        @{$response->{result}{capabilities} || []},
         'capabilities include policies.grant';
-      ok scalar grep { $_ eq 'service_pins.set' } @{$response->{result}{capabilities} || []},
+      ok scalar grep { $_ eq 'service_pins.set' }
+        @{$response->{result}{capabilities} || []},
         'capabilities include service_pins.set';
-      ok scalar grep { $_ eq 'sessions.list' } @{$response->{result}{capabilities} || []},
+      ok scalar grep { $_ eq 'sessions.list' }
+        @{$response->{result}{capabilities} || []},
         'capabilities include sessions.list';
     },
   );
@@ -43,67 +45,8 @@ subtest 'sessions_authorize returns a signed auth artifact through the socket cl
     agent => Overnet::Auth::Agent->new(
       identities => [
         {
-          identity_id  => 'default',
-          backend_type => 'direct_secret',
-          backend_config => {
-            secret => $fixture_secret,
-          },
-          public_identity => {
-            scheme => 'nostr.pubkey',
-            value  => $fixture_pubkey,
-          },
-        },
-      ],
-    ),
-    connections => 1,
-    run         => sub {
-      my (%args) = @_;
-
-      my $client = Overnet::Auth::Client->new(
-        endpoint        => $args{endpoint},
-        socket_factory  => $args{socket_factory},
-      );
-      my $response = $client->sessions_authorize(
-        program_id  => 'irc.bridge',
-        identity_id => 'default',
-        service     => {
-          locators => [ 'irc://irc.example.test/overnet' ],
-        },
-        scope     => 'irc://irc.example.test/overnet',
-        action    => 'session.authenticate',
-        challenge => {
-          type  => 'opaque',
-          value => '6cf8a952df516a8e691c6138496516abe84ccfefa9678f518bb52f70b1ca966f',
-        },
-        artifacts => [
-          {
-            type => 'nostr.event',
-            params => {
-              kind => 22242,
-              tags => [
-                [ relay => 'irc://irc.example.test/overnet' ],
-                [ challenge => '6cf8a952df516a8e691c6138496516abe84ccfefa9678f518bb52f70b1ca966f' ],
-              ],
-            },
-          },
-        ],
-      );
-
-      is $response->{ok}, 1, 'sessions.authorize succeeds';
-      is $response->{result}{identity_id}, 'default', 'response identifies the selected identity';
-      is $response->{result}{artifacts}[0]{value}{pubkey}, $fixture_pubkey,
-        'the returned auth artifact is signed by the configured identity';
-    },
-  );
-};
-
-subtest 'sessions_authorize preserves structured error responses' => sub {
-  _with_auth_server(
-    agent => Overnet::Auth::Agent->new(
-      identities => [
-        {
-          identity_id  => 'default',
-          backend_type => 'direct_secret',
+          identity_id    => 'default',
+          backend_type   => 'direct_secret',
           backend_config => {
             secret => $fixture_secret,
           },
@@ -123,11 +66,10 @@ subtest 'sessions_authorize preserves structured error responses' => sub {
         socket_factory => $args{socket_factory},
       );
       my $response = $client->sessions_authorize(
-        program_id   => 'irc.bridge',
-        identity_id  => 'default',
-        interactive  => 0,
-        service      => {
-          locators => [ 'irc://irc.example.test/overnet' ],
+        program_id  => 'irc.bridge',
+        identity_id => 'default',
+        service     => {
+          locators => ['irc://irc.example.test/overnet'],
         },
         scope     => 'irc://irc.example.test/overnet',
         action    => 'session.authenticate',
@@ -137,19 +79,84 @@ subtest 'sessions_authorize preserves structured error responses' => sub {
         },
         artifacts => [
           {
-            type => 'nostr.event',
+            type   => 'nostr.event',
             params => {
               kind => 22242,
               tags => [
-                [ relay => 'irc://irc.example.test/overnet' ],
-                [ challenge => '6cf8a952df516a8e691c6138496516abe84ccfefa9678f518bb52f70b1ca966f' ],
+                [relay => 'irc://irc.example.test/overnet'],
+                [
+                  challenge => '6cf8a952df516a8e691c6138496516abe84ccfefa9678f518bb52f70b1ca966f'
+                ],
               ],
             },
           },
         ],
       );
 
-      is $response->{ok}, 0, 'sessions.authorize fails';
+      is $response->{ok},                  1,         'sessions.authorize succeeds';
+      is $response->{result}{identity_id}, 'default', 'response identifies the selected identity';
+      is $response->{result}{artifacts}[0]{value}{pubkey},
+        $fixture_pubkey,
+        'the returned auth artifact is signed by the configured identity';
+    },
+  );
+};
+
+subtest 'sessions_authorize preserves structured error responses' => sub {
+  _with_auth_server(
+    agent => Overnet::Auth::Agent->new(
+      identities => [
+        {
+          identity_id    => 'default',
+          backend_type   => 'direct_secret',
+          backend_config => {
+            secret => $fixture_secret,
+          },
+          public_identity => {
+            scheme => 'nostr.pubkey',
+            value  => $fixture_pubkey,
+          },
+        },
+      ],
+    ),
+    connections => 1,
+    run         => sub {
+      my (%args) = @_;
+
+      my $client = Overnet::Auth::Client->new(
+        endpoint       => $args{endpoint},
+        socket_factory => $args{socket_factory},
+      );
+      my $response = $client->sessions_authorize(
+        program_id  => 'irc.bridge',
+        identity_id => 'default',
+        interactive => 0,
+        service     => {
+          locators => ['irc://irc.example.test/overnet'],
+        },
+        scope     => 'irc://irc.example.test/overnet',
+        action    => 'session.authenticate',
+        challenge => {
+          type  => 'opaque',
+          value => '6cf8a952df516a8e691c6138496516abe84ccfefa9678f518bb52f70b1ca966f',
+        },
+        artifacts => [
+          {
+            type   => 'nostr.event',
+            params => {
+              kind => 22242,
+              tags => [
+                [relay => 'irc://irc.example.test/overnet'],
+                [
+                  challenge => '6cf8a952df516a8e691c6138496516abe84ccfefa9678f518bb52f70b1ca966f'
+                ],
+              ],
+            },
+          },
+        ],
+      );
+
+      is $response->{ok},          0,                      'sessions.authorize fails';
       is $response->{error}{code}, 'headless_unavailable', 'the auth-agent error response is preserved';
     },
   );
@@ -166,11 +173,11 @@ subtest 'policies.list, service_pins.set, and sessions.list work through the soc
       },
       sessions => [
         {
-          session_handle => { id => 'sess-1' },
+          session_handle => {id => 'sess-1'},
           identity_id    => 'default',
           program_id     => 'irc.bridge',
           service        => {
-            locators => [ 'wss://relay.example.test/auth' ],
+            locators => ['wss://relay.example.test/auth'],
           },
           scope     => 'irc://irc.example.test/overnet',
           action    => 'session.authenticate',
@@ -182,7 +189,7 @@ subtest 'policies.list, service_pins.set, and sessions.list work through the soc
         {
           identity_id => 'default',
           program_id  => 'irc.bridge',
-          locators    => [ 'wss://relay.example.test/auth' ],
+          locators    => ['wss://relay.example.test/auth'],
           scope       => 'irc://irc.example.test/overnet',
           action      => 'session.authenticate',
         },
@@ -198,8 +205,8 @@ subtest 'policies.list, service_pins.set, and sessions.list work through the soc
       );
 
       my $policies = $client->policies_list;
-      my $set_pin = $client->service_pins_set(
-        locator => 'wss://relay2.example.test/auth',
+      my $set_pin  = $client->service_pins_set(
+        locator          => 'wss://relay2.example.test/auth',
         service_identity => {
           scheme => 'nostr.pubkey',
           value  => ('2' x 64),
@@ -207,17 +214,18 @@ subtest 'policies.list, service_pins.set, and sessions.list work through the soc
       );
       my $sessions = $client->sessions_list;
 
-      is $policies->{ok}, 1, 'policies.list succeeds';
-      is $policies->{result}{policies}[0]{policy_id}, 'policy-1', 'policy ids are returned over the client';
-      is $set_pin->{ok}, 1, 'service_pins.set succeeds';
-      is $set_pin->{result}{locator}, 'wss://relay2.example.test/auth', 'service_pins.set returns the locator';
-      is $sessions->{ok}, 1, 'sessions.list succeeds';
+      is $policies->{ok},                             1,                 'policies.list succeeds';
+      is $policies->{result}{policies}[0]{policy_id}, 'policy-1',        'policy ids are returned over the client';
+      is $set_pin->{ok},                              1,                 'service_pins.set succeeds';
+      is $set_pin->{result}{locator}, 'wss://relay2.example.test/auth',  'service_pins.set returns the locator';
+      is $sessions->{ok},             1,                                 'sessions.list succeeds';
       is $sessions->{result}{sessions}[0]{session_handle}{id}, 'sess-1', 'sessions.list returns stored sessions';
     },
   );
 };
 
-subtest 'policies.grant, policies.revoke, service_pins.list, and service_pins.forget work through the socket client' => sub {
+subtest 'policies.grant, policies.revoke, service_pins.list, and service_pins.forget work through the socket client' =>
+  sub {
   _with_auth_server(
     agent => Overnet::Auth::Agent->new(
       service_pins => {
@@ -241,7 +249,7 @@ subtest 'policies.grant, policies.revoke, service_pins.list, and service_pins.fo
           identity_id => 'default',
           program_id  => 'irc.bridge',
           service     => {
-            locators => [ 'wss://relay.example.test/auth' ],
+            locators         => ['wss://relay.example.test/auth'],
             service_identity => {
               scheme => 'nostr.pubkey',
               value  => ('1' x 64),
@@ -251,29 +259,26 @@ subtest 'policies.grant, policies.revoke, service_pins.list, and service_pins.fo
           action => 'session.delegate',
         },
       );
-      my $pins = $client->service_pins_list;
-      my $forget = $client->service_pins_forget(
-        locator => 'wss://relay.example.test/auth',
-      );
-      my $revoke = $client->policies_revoke(
-        policy_id => 'policy-1',
-      );
+      my $pins   = $client->service_pins_list;
+      my $forget = $client->service_pins_forget(locator => 'wss://relay.example.test/auth',);
+      my $revoke = $client->policies_revoke(policy_id => 'policy-1',);
 
-      is $grant->{ok}, 1, 'policies.grant succeeds';
+      is $grant->{ok},                        1,          'policies.grant succeeds';
       is $grant->{result}{policy}{policy_id}, 'policy-1', 'policies.grant returns a stable policy id';
-      is $pins->{ok}, 1, 'service_pins.list succeeds';
-      is $pins->{result}{service_pins}[0]{locator}, 'wss://relay.example.test/auth',
+      is $pins->{ok},                         1,          'service_pins.list succeeds';
+      is $pins->{result}{service_pins}[0]{locator},
+        'wss://relay.example.test/auth',
         'service_pins.list returns the stored locator';
-      is $forget->{ok}, 1, 'service_pins.forget succeeds';
-      is $forget->{result}{locator}, 'wss://relay.example.test/auth', 'service_pins.forget echoes the locator';
-      is $revoke->{ok}, 1, 'policies.revoke succeeds';
-      is $revoke->{result}{policy_id}, 'policy-1', 'policies.revoke echoes the policy id';
+      is $forget->{ok},                1,                               'service_pins.forget succeeds';
+      is $forget->{result}{locator},   'wss://relay.example.test/auth', 'service_pins.forget echoes the locator';
+      is $revoke->{ok},                1,                               'policies.revoke succeeds';
+      is $revoke->{result}{policy_id}, 'policy-1',                      'policies.revoke echoes the policy id';
     },
   );
-};
+  };
 
 subtest 'client reports a missing auth-agent endpoint clearly' => sub {
-  local $ENV{OVERNET_AUTH_SOCK} = undef;
+  local $ENV{OVERNET_AUTH_SOCK}     = undef;
   local $ENV{OVERNET_AUTH_ENDPOINT} = undef;
 
   my $error = eval {
@@ -282,17 +287,15 @@ subtest 'client reports a missing auth-agent endpoint clearly' => sub {
     1;
   } ? undef : $@;
 
-  like $error, qr/auth-agent\ endpoint\ is\ not\ configured/mx,
-    'client refuses to run without a configured endpoint';
+  like $error, qr/auth-agent\ endpoint\ is\ not\ configured/mx, 'client refuses to run without a configured endpoint';
 };
 
 subtest 'endpoint falls back to OVERNET_AUTH_ENDPOINT when OVERNET_AUTH_SOCK is unset' => sub {
-  local $ENV{OVERNET_AUTH_SOCK} = undef;
+  local $ENV{OVERNET_AUTH_SOCK}     = undef;
   local $ENV{OVERNET_AUTH_ENDPOINT} = '/tmp/overnet-auth.endpoint';
 
   my $client = Overnet::Auth::Client->new;
-  is $client->endpoint, '/tmp/overnet-auth.endpoint',
-    'endpoint discovery falls back to OVERNET_AUTH_ENDPOINT';
+  is $client->endpoint, '/tmp/overnet-auth.endpoint', 'endpoint discovery falls back to OVERNET_AUTH_ENDPOINT';
 };
 
 done_testing;
@@ -304,21 +307,21 @@ sub _with_auth_server {
 
   my $result = eval {
     $args{run}->(
-      endpoint => $endpoint,
+      endpoint       => $endpoint,
       socket_factory => sub {
         my ($requested_endpoint) = @_;
         is $requested_endpoint, $endpoint, 'client requested the expected endpoint';
         socketpair(my $server_socket, my $client_socket, AF_UNIX, SOCK_STREAM, PF_UNSPEC)
           or die "socketpair failed: $!";
-        my $server = Overnet::Auth::Server->new(
-          agent => $args{agent},
-        );
-        my $child = fork();
+        my $server = Overnet::Auth::Server->new(agent => $args{agent},);
+        my $child  = fork();
         die "fork failed: $!" unless defined $child;
         if (!$child) {
-          close $client_socket or die "close client socket failed: $!";
+          close $client_socket
+            or die "close client socket failed: $!";
           $server->serve_socket($server_socket);
-          close $server_socket or die "close server socket failed: $!";
+          close $server_socket
+            or die "close server socket failed: $!";
           exit 0;
         }
         close $server_socket or die "close server socket failed: $!";

@@ -1,255 +1,34 @@
 package Overnet::Core::Validator;
 
 use strictures 2;
-use JSON ();
+use English qw(-no_match_vars);
+use JSON    ();
 use Net::Nostr::Event;
 
-my %VALID_KINDS = (7800 => 1, 37800 => 1, 7801 => 1);
+our $VERSION = '0.001';
+
+my %VALID_KINDS   = (7_800 => 1, 37_800 => 1, 7_801 => 1);
 my %SINGULAR_TAGS = map { $_ => 1 } qw(overnet_v overnet_et overnet_ot overnet_oid overnet_delegate);
-my $JSON = JSON->new->utf8;
+my $JSON          = JSON->new->utf8;
 
 sub validate {
   my ($input, $context) = @_;
   my @errors;
 
-  # Parse and validate basic Nostr event structure
-  my $event;
-  eval { $event = Net::Nostr::Event->from_wire($input) };
-  if ($@) {
-    (my $err = $@) =~ s/\ at\ .+\ line\ \d+.*//smx;
-    # Can't proceed without a parseable event
-    return _result(
-      errors => ["Invalid Nostr event: $err"],
-    );
+  my ($event, $event_error) = _parse_event($input, 'Invalid Nostr event');
+  if (!($event)) {
+    return _result(errors => [$event_error],);
   }
 
-  # Overnet kind check
   my $kind = $event->kind;
-  push @errors, "Kind $kind is not a recognized Overnet kind (must be 7800, 37800, or 7801)"
-    unless $VALID_KINDS{$kind};
+  my ($tag_values, $tag_counts) = _tag_info($event->tags);
 
-  # Required tags
-  my $tags = $event->tags;
-  my %tag_values;
-  my %tag_counts;
-  for my $tag (@$tags) {
-    next unless @$tag >= 2;
-    $tag_counts{$tag->[0]}++;
-    $tag_values{$tag->[0]} = $tag->[1];
-  }
-
-  for my $tag_name (sort keys %SINGULAR_TAGS) {
-    if (($tag_counts{$tag_name} // 0) > 1) {
-      push @errors, "Duplicate $tag_name tag";
-    }
-  }
-
-  push @errors, "Missing required overnet_v tag"
-    unless defined $tag_values{overnet_v};
-
-  push @errors, "Missing required overnet_et tag"
-    unless defined $tag_values{overnet_et};
-
-  push @errors, "Missing required overnet_ot tag"
-    unless defined $tag_values{overnet_ot};
-
-  push @errors, "Missing required overnet_oid tag"
-    unless defined $tag_values{overnet_oid};
-
-  # Kind 37800 requires d tag matching overnet_oid
-  if ($kind == 37800) {
-    my $d_tag = $event->d_tag;
-
-    if (($tag_counts{d} // 0) > 1) {
-      push @errors, "Duplicate d tag";
-    }
-
-    if ($d_tag eq '') {
-      push @errors, "Kind 37800 requires a d tag set to the object identifier";
-    } elsif (defined $tag_values{overnet_oid} && $d_tag ne $tag_values{overnet_oid}) {
-      push @errors, "Kind 37800 d tag must match overnet_oid";
-    }
-  }
-
-  if ($kind == 7801) {
-    my $can_check_removal_authorization = 1;
-
-    if (defined $tag_values{overnet_et} && $tag_values{overnet_et} ne 'core.removal') {
-      push @errors, "Kind 7801 must use overnet_et value core.removal";
-      $can_check_removal_authorization = 0;
-    }
-
-    if (($tag_counts{e} // 0) > 1) {
-      push @errors, "Duplicate e tag";
-      $can_check_removal_authorization = 0;
-    }
-
-    if (!defined $tag_values{e}) {
-      push @errors, "Kind 7801 requires an e tag identifying the event being tombstoned";
-      $can_check_removal_authorization = 0;
-    }
-
-    if (($tag_counts{overnet_delegate} // 0) > 1) {
-      push @errors, "Duplicate overnet_delegate tag";
-      $can_check_removal_authorization = 0;
-    }
-
-    $context->{_can_check_removal_authorization} = $can_check_removal_authorization
-      if ref $context eq 'HASH';
-  }
-
-  # Parse content — further content checks depend on successful parse
-  my $content;
-  eval { $content = $JSON->decode($event->content) };
-  if ($@ || ref $content ne 'HASH') {
-    push @errors, "Content must be a JSON object";
-  } else {
-    # Provenance
-    my $provenance = $content->{provenance};
-    if (!defined $provenance || ref $provenance ne 'HASH') {
-      push @errors, "Missing required provenance field in content";
-    } else {
-      my $ptype = $provenance->{type};
-      if (!defined $ptype || ($ptype ne 'native' && $ptype ne 'adapted')) {
-        push @errors, "Provenance type must be 'native' or 'adapted'";
-      } elsif ($ptype eq 'adapted') {
-        if (!defined $provenance->{protocol}) {
-          push @errors, "Adapted provenance missing required protocol field";
-        } elsif (!_is_non_empty_string($provenance->{protocol})) {
-          push @errors, "Adapted provenance protocol must be a non-empty string";
-        }
-
-        if (!defined $provenance->{origin}) {
-          push @errors, "Adapted provenance missing required origin field";
-        } elsif (!_is_non_empty_string($provenance->{origin})) {
-          push @errors, "Adapted provenance origin must be a non-empty string";
-        }
-
-        if (!defined $provenance->{limitations}) {
-          push @errors, "Adapted provenance missing required limitations field";
-        } elsif (!_is_string_array($provenance->{limitations})) {
-          push @errors, "Adapted provenance limitations must be an array of strings";
-        }
-
-        my $has_identity = 0;
-        if (exists $provenance->{external_identity}) {
-          if (_is_non_empty_string($provenance->{external_identity})) {
-            $has_identity = 1;
-          } else {
-            push @errors, "Adapted provenance external_identity must be a non-empty string";
-          }
-        }
-
-        my $has_scope = 0;
-        if (exists $provenance->{external_scope}) {
-          if (_is_non_empty_string($provenance->{external_scope})) {
-            $has_scope = 1;
-          } else {
-            push @errors, "Adapted provenance external_scope must be a non-empty string";
-          }
-        }
-
-        push @errors, "Adapted provenance must include external_identity or external_scope"
-          unless $has_identity || $has_scope;
-      }
-    }
-
-    my $body = $content->{body};
-    if (!defined $body) {
-      push @errors, "Missing required body field in content";
-    } elsif (ref $body ne 'HASH') {
-      push @errors, "Body field must be a JSON object";
-    } elsif ($kind == 7801 && keys %{$body}) {
-      push @errors, "Kind 7801 body must be an empty JSON object";
-      $context->{_can_check_removal_authorization} = 0
-        if ref $context eq 'HASH';
-    }
-
-    if (defined $tag_values{overnet_et} && $tag_values{overnet_et} eq 'core.delegation') {
-      push @errors, "Core delegation events must use kind 7800"
-        unless $kind == 7800;
-
-      if (!defined $provenance || ref $provenance ne 'HASH' || ($provenance->{type} // '') ne 'native') {
-        push @errors, "Core delegation events must use native provenance";
-      }
-
-      if (!defined $body || ref $body ne 'HASH') {
-        # body shape errors already reported above
-      } else {
-        if (!defined $body->{action} || $body->{action} ne 'remove') {
-          push @errors, "Core delegation action must be remove";
-        }
-
-        if (!defined $body->{delegate_pubkey}) {
-          push @errors, "Core delegation missing required delegate_pubkey field";
-        } elsif ($body->{delegate_pubkey} !~ /\A[0-9a-f]{64}\z/mx) {
-          push @errors, "Core delegation delegate_pubkey must be 64-char lowercase hex";
-        }
-
-        if (defined $body->{expires_at}) {
-          if (ref $body->{expires_at} || $body->{expires_at} !~ /\A\d+\z/mx) {
-            push @errors, "Core delegation expires_at must be an integer timestamp";
-          }
-        }
-      }
-    }
-  }
-
-  if ($kind == 7801) {
-    my $can_check_removal_authorization =
-      !ref($context) || ref($context) ne 'HASH'
-        ? 1
-        : ($context->{_can_check_removal_authorization} // 1);
-
-    if ($can_check_removal_authorization) {
-      my $target_input = ref($context) eq 'HASH' ? $context->{target_event} : undef;
-      if (!defined $target_input) {
-        push @errors, "Kind 7801 requires target event context for authorization";
-      } else {
-        my $target_event;
-        eval { $target_event = Net::Nostr::Event->from_wire($target_input) };
-        if ($@) {
-          (my $err = $@) =~ s/\ at\ .+\ line\ \d+.*//smx;
-          push @errors, "Invalid removal target event: $err";
-        } elsif ($tag_values{e} ne $target_event->id) {
-          push @errors, "Kind 7801 target event context does not match e tag";
-        } elsif (!defined $tag_values{overnet_delegate}) {
-          if ($event->pubkey ne $target_event->pubkey) {
-            push @errors, "Kind 7801 removal must be authored by the same pubkey as the target event";
-          }
-        } else {
-          my $delegation_input = ref($context) eq 'HASH' ? $context->{delegation_event} : undef;
-          if (!defined $delegation_input) {
-            push @errors, "Delegated removal requires delegation event context";
-          } else {
-            my $delegation_event;
-            eval { $delegation_event = Net::Nostr::Event->from_wire($delegation_input) };
-            if ($@) {
-              (my $err = $@) =~ s/\ at\ .+\ line\ \d+.*//smx;
-              push @errors, "Invalid delegation event: $err";
-            } elsif ($tag_values{overnet_delegate} ne $delegation_event->id) {
-              push @errors, "Delegated removal delegation context does not match overnet_delegate tag";
-            } else {
-              _validate_delegated_removal(
-                event            => $event,
-                tag_values       => \%tag_values,
-                target_event     => $target_event,
-                delegation_event => $delegation_event,
-                errors           => \@errors,
-              );
-            }
-          }
-        }
-      }
-    }
-  }
-
-  # Nostr crypto validation: id hash + signature
-  eval { $event->validate() };
-  if ($@) {
-    (my $err = $@) =~ s/\ at\ .+\ line\ \d+.*//smx;
-    push @errors, "Nostr validation failed: $err";
-  }
+  push @errors, _validate_kind($kind);
+  push @errors, _validate_common_tags($tag_values, $tag_counts);
+  push @errors, _validate_kind_tags($event, $kind, $tag_values, $tag_counts, $context);
+  push @errors, _validate_event_content($event, $kind, $tag_values, $context);
+  push @errors, _validate_removal_authorization($event, $tag_values, $context);
+  push @errors, _validate_nostr_crypto($event);
 
   return _result(
     event  => $event,
@@ -257,27 +36,363 @@ sub validate {
   );
 }
 
+sub _parse_event {
+  my ($input, $prefix) = @_;
+  my $event;
+  my $ok    = eval { $event = Net::Nostr::Event->from_wire($input); 1 };
+  my $error = $EVAL_ERROR;
+  if (!$ok) {
+    (my $err = $error) =~ s/\ at\ .+\ line\ \d+.*//smx;
+    return (undef, "$prefix: $err");
+  }
+  return ($event, undef);
+}
+
+sub _tag_info {
+  my ($tags) = @_;
+  my %tag_values;
+  my %tag_counts;
+  for my $tag (@{$tags}) {
+    if (!(@{$tag} >= 2)) {
+      next;
+    }
+    $tag_counts{$tag->[0]}++;
+    $tag_values{$tag->[0]} = $tag->[1];
+  }
+  return (\%tag_values, \%tag_counts);
+}
+
+sub _validate_kind {
+  my ($kind) = @_;
+  return $VALID_KINDS{$kind} ? () : ("Kind $kind is not a recognized Overnet kind (must be 7800, 37800, or 7801)");
+}
+
+sub _validate_common_tags {
+  my ($tag_values, $tag_counts) = @_;
+  my @errors;
+  for my $tag_name (sort keys %SINGULAR_TAGS) {
+    if (($tag_counts->{$tag_name} // 0) > 1) {
+      push @errors, "Duplicate $tag_name tag";
+    }
+  }
+  for my $tag_name (qw(overnet_v overnet_et overnet_ot overnet_oid)) {
+    if (!(defined $tag_values->{$tag_name})) {
+      push @errors, "Missing required $tag_name tag";
+    }
+  }
+  return @errors;
+}
+
+sub _validate_kind_tags {
+  my ($event, $kind, $tag_values, $tag_counts, $context) = @_;
+  if ($kind == 37_800) {
+    return _validate_state_tags($event, $tag_values, $tag_counts);
+  }
+  if ($kind == 7_801) {
+    return _validate_removal_tags($tag_values, $tag_counts, $context);
+  }
+  return;
+}
+
+sub _validate_state_tags {
+  my ($event, $tag_values, $tag_counts) = @_;
+  my @errors;
+  my $d_tag = $event->d_tag;
+  if (($tag_counts->{d} // 0) > 1) {
+    push @errors, "Duplicate d tag";
+  }
+  if ($d_tag eq q{}) {
+    push @errors, "Kind 37800 requires a d tag set to the object identifier";
+  } elsif (defined $tag_values->{overnet_oid} && $d_tag ne $tag_values->{overnet_oid}) {
+    push @errors, "Kind 37800 d tag must match overnet_oid";
+  }
+  return @errors;
+}
+
+sub _validate_removal_tags {
+  my ($tag_values, $tag_counts, $context) = @_;
+  my @errors;
+  my $can_check = 1;
+  if (defined $tag_values->{overnet_et} && $tag_values->{overnet_et} ne 'core.removal') {
+    push @errors, "Kind 7801 must use overnet_et value core.removal";
+    $can_check = 0;
+  }
+  for my $check (
+    [e                => "Duplicate e tag", "Kind 7801 requires an e tag identifying the event being tombstoned"],
+    [overnet_delegate => "Duplicate overnet_delegate tag", undef],
+  ) {
+    my ($tag, $duplicate_error, $missing_error) = @{$check};
+    ($can_check) = _validate_removal_tag_count($tag_values, $tag_counts, \@errors, $can_check, $tag, $duplicate_error,
+      $missing_error);
+  }
+  _set_removal_authorization_flag($context, $can_check);
+  return @errors;
+}
+
+sub _validate_removal_tag_count {
+  my ($tag_values, $tag_counts, $errors, $can_check, $tag, $duplicate_error, $missing_error) = @_;
+  if (($tag_counts->{$tag} // 0) > 1) {
+    push @{$errors}, $duplicate_error;
+    $can_check = 0;
+  }
+  if (defined($missing_error) && !defined $tag_values->{$tag}) {
+    push @{$errors}, $missing_error;
+    $can_check = 0;
+  }
+  return $can_check;
+}
+
+sub _set_removal_authorization_flag {
+  my ($context, $can_check) = @_;
+  if (ref $context eq 'HASH') {
+    $context->{_can_check_removal_authorization} = $can_check;
+  }
+  return;
+}
+
+sub _validate_event_content {
+  my ($event, $kind, $tag_values, $context) = @_;
+  my ($content, $error) = _decode_content($event);
+  if (defined $error) {
+    return ($error);
+  }
+  my @errors;
+  push @errors, _validate_provenance($content->{provenance});
+  push @errors, _validate_body($content->{body}, $kind, $context);
+  push @errors, _validate_core_delegation($content, $kind, $tag_values);
+  return @errors;
+}
+
+sub _decode_content {
+  my ($event) = @_;
+  my $content;
+  my $ok = eval { $content = $JSON->decode($event->content); 1 };
+  if (!$ok || ref $content ne 'HASH') {
+    return (undef, "Content must be a JSON object");
+  }
+  return ($content, undef);
+}
+
+sub _validate_provenance {
+  my ($provenance) = @_;
+  if (!defined $provenance || ref $provenance ne 'HASH') {
+    return ("Missing required provenance field in content");
+  }
+  my $ptype = $provenance->{type};
+  if (!defined $ptype || ($ptype ne 'native' && $ptype ne 'adapted')) {
+    return ("Provenance type must be 'native' or 'adapted'");
+  }
+  return $ptype eq 'adapted' ? _validate_adapted_provenance($provenance) : ();
+}
+
+sub _validate_adapted_provenance {
+  my ($provenance) = @_;
+  my @errors;
+  push @errors, _validate_required_non_empty($provenance, protocol => "Adapted provenance");
+  push @errors, _validate_required_non_empty($provenance, origin   => "Adapted provenance");
+  if (!defined $provenance->{limitations}) {
+    push @errors, "Adapted provenance missing required limitations field";
+  } elsif (!_is_string_array($provenance->{limitations})) {
+    push @errors, "Adapted provenance limitations must be an array of strings";
+  }
+  push @errors, _validate_adapted_identity_scope($provenance);
+  return @errors;
+}
+
+sub _validate_required_non_empty {
+  my ($hash, $field, $label) = @_;
+  if (!defined $hash->{$field}) {
+    return ("$label missing required $field field");
+  }
+  return _is_non_empty_string($hash->{$field}) ? () : ("$label $field must be a non-empty string");
+}
+
+sub _validate_adapted_identity_scope {
+  my ($provenance) = @_;
+  my @errors;
+  my $has_identity = _validate_optional_non_empty($provenance, 'external_identity', \@errors);
+  my $has_scope    = _validate_optional_non_empty($provenance, 'external_scope',    \@errors);
+  if (!($has_identity || $has_scope)) {
+    push @errors, "Adapted provenance must include external_identity or external_scope";
+  }
+  return @errors;
+}
+
+sub _validate_optional_non_empty {
+  my ($hash, $field, $errors) = @_;
+  if (!(exists $hash->{$field})) {
+    return 0;
+  }
+  if (_is_non_empty_string($hash->{$field})) {
+    return 1;
+  }
+  push @{$errors}, "Adapted provenance $field must be a non-empty string";
+  return 0;
+}
+
+sub _validate_body {
+  my ($body, $kind, $context) = @_;
+  if (!defined $body) {
+    return ("Missing required body field in content");
+  }
+  if (ref $body ne 'HASH') {
+    return ("Body field must be a JSON object");
+  }
+  if ($kind == 7_801 && keys %{$body}) {
+    _set_removal_authorization_flag($context, 0);
+    return ("Kind 7801 body must be an empty JSON object");
+  }
+  return;
+}
+
+sub _validate_core_delegation {
+  my ($content, $kind, $tag_values) = @_;
+  if (!(defined $tag_values->{overnet_et} && $tag_values->{overnet_et} eq 'core.delegation')) {
+    return;
+  }
+  my @errors;
+  push @errors, _validate_core_delegation_kind($kind);
+  push @errors, _validate_core_delegation_provenance($content->{provenance});
+  push @errors, _validate_core_delegation_body($content->{body});
+  return @errors;
+}
+
+sub _validate_core_delegation_kind {
+  my ($kind) = @_;
+  return $kind == 7_800 ? () : ("Core delegation events must use kind 7800");
+}
+
+sub _validate_core_delegation_provenance {
+  my ($provenance) = @_;
+  return defined $provenance && ref $provenance eq 'HASH' && ($provenance->{type} // q{}) eq 'native'
+    ? ()
+    : ("Core delegation events must use native provenance");
+}
+
+sub _validate_core_delegation_body {
+  my ($body) = @_;
+  if (!defined $body || ref $body ne 'HASH') {
+    return;
+  }
+  my @errors;
+  if (!defined $body->{action} || $body->{action} ne 'remove') {
+    push @errors, "Core delegation action must be remove";
+  }
+  if (!defined $body->{delegate_pubkey}) {
+    push @errors, "Core delegation missing required delegate_pubkey field";
+  } elsif ($body->{delegate_pubkey} !~ /\A[0-9a-f]{64}\z/mxs) {
+    push @errors, "Core delegation delegate_pubkey must be 64-char lowercase hex";
+  }
+  if (defined $body->{expires_at} && (ref $body->{expires_at} || $body->{expires_at} !~ /\A\d+\z/mxs)) {
+    push @errors, "Core delegation expires_at must be an integer timestamp";
+  }
+  return @errors;
+}
+
+sub _validate_removal_authorization {
+  my ($event, $tag_values, $context) = @_;
+  if (!($event->kind == 7_801 && _can_check_removal_authorization($context))) {
+    return;
+  }
+  my ($target_event, $target_error) = _removal_target_event($context);
+  if (!($target_event)) {
+    return ($target_error);
+  }
+  return _validate_removal_against_target($event, $tag_values, $context, $target_event);
+}
+
+sub _can_check_removal_authorization {
+  my ($context) = @_;
+  return !ref($context) || ref($context) ne 'HASH'
+    ? 1
+    : ($context->{_can_check_removal_authorization} // 1);
+}
+
+sub _removal_target_event {
+  my ($context) = @_;
+  my $target_input = ref($context) eq 'HASH' ? $context->{target_event} : undef;
+  if (!defined $target_input) {
+    return (undef, "Kind 7801 requires target event context for authorization");
+  }
+  return _parse_event($target_input, 'Invalid removal target event');
+}
+
+sub _validate_removal_against_target {
+  my ($event, $tag_values, $context, $target_event) = @_;
+  if ($tag_values->{e} ne $target_event->id) {
+    return ("Kind 7801 target event context does not match e tag");
+  }
+  if (!defined $tag_values->{overnet_delegate}) {
+    return _validate_direct_removal_author($event, $target_event);
+  }
+  return _validate_delegated_removal_context($event, $tag_values, $context, $target_event);
+}
+
+sub _validate_direct_removal_author {
+  my ($event, $target_event) = @_;
+  return $event->pubkey eq $target_event->pubkey
+    ? ()
+    : ("Kind 7801 removal must be authored by the same pubkey as the target event");
+}
+
+sub _validate_delegated_removal_context {
+  my ($event, $tag_values, $context, $target_event) = @_;
+  my $delegation_input = ref($context) eq 'HASH' ? $context->{delegation_event} : undef;
+  if (!defined $delegation_input) {
+    return ("Delegated removal requires delegation event context");
+  }
+  my ($delegation_event, $delegation_error) = _parse_event($delegation_input, 'Invalid delegation event');
+  if (!($delegation_event)) {
+    return ($delegation_error);
+  }
+  if ($tag_values->{overnet_delegate} ne $delegation_event->id) {
+    return ("Delegated removal delegation context does not match overnet_delegate tag");
+  }
+  my @errors;
+  _validate_delegated_removal(
+    event            => $event,
+    tag_values       => $tag_values,
+    target_event     => $target_event,
+    delegation_event => $delegation_event,
+    errors           => \@errors,
+  );
+  return @errors;
+}
+
+sub _validate_nostr_crypto {
+  my ($event)        = @_;
+  my $validate_ok    = eval { $event->validate(); 1 };
+  my $validate_error = $EVAL_ERROR;
+  if (!$validate_ok) {
+    (my $err = $validate_error) =~ s/\ at\ .+\ line\ \d+.*//smx;
+    return ("Nostr validation failed: $err");
+  }
+  return;
+}
+
 sub _validate_delegated_removal {
-  my %args = @_;
-  my $event = $args{event};
-  my $tag_values = $args{tag_values};
-  my $target_event = $args{target_event};
+  my %args             = @_;
+  my $event            = $args{event};
+  my $tag_values       = $args{tag_values};
+  my $target_event     = $args{target_event};
   my $delegation_event = $args{delegation_event};
-  my $errors = $args{errors};
+  my $errors           = $args{errors};
 
   my %delegation_tags;
   for my $tag (@{$delegation_event->tags // []}) {
-    next unless ref $tag eq 'ARRAY' && @$tag >= 2;
+    if (!(ref $tag eq 'ARRAY' && @{$tag} >= 2)) {
+      next;
+    }
     $delegation_tags{$tag->[0]} = $tag->[1];
   }
 
-  if (($delegation_tags{overnet_et} // '') ne 'core.delegation') {
+  if (($delegation_tags{overnet_et} // q{}) ne 'core.delegation') {
     push @{$errors}, "Delegated removal requires a core.delegation event";
     return;
   }
 
-  if (($delegation_tags{overnet_ot} // '') ne ($tag_values->{overnet_ot} // '')
-      || ($delegation_tags{overnet_oid} // '') ne ($tag_values->{overnet_oid} // '')) {
+  if ( ($delegation_tags{overnet_ot} // q{}) ne ($tag_values->{overnet_ot} // q{})
+    || ($delegation_tags{overnet_oid} // q{}) ne ($tag_values->{overnet_oid} // q{})) {
     push @{$errors}, "Delegation object scope does not match removal object";
     return;
   }
@@ -288,24 +403,27 @@ sub _validate_delegated_removal {
   }
 
   my $content;
-  eval { $content = $JSON->decode($delegation_event->content) };
-  if ($@ || ref $content ne 'HASH' || ref($content->{body}) ne 'HASH') {
+  my $content_ok = eval { $content = $JSON->decode($delegation_event->content); 1 };
+  if ( !$content_ok
+    || ref $content ne 'HASH'
+    || ref($content->{body}) ne 'HASH') {
     push @{$errors}, "Invalid delegation event content";
     return;
   }
 
   my $body = $content->{body};
-  if (($body->{action} // '') ne 'remove') {
+  if (($body->{action} // q{}) ne 'remove') {
     push @{$errors}, "Delegation action must be remove";
     return;
   }
 
-  if (($body->{delegate_pubkey} // '') ne $event->pubkey) {
+  if (($body->{delegate_pubkey} // q{}) ne $event->pubkey) {
     push @{$errors}, "Delegation delegate_pubkey does not authorize this removal pubkey";
     return;
   }
 
-  if (defined $body->{expires_at} && $body->{expires_at} < $event->created_at) {
+  if (defined $body->{expires_at}
+    && $body->{expires_at} < $event->created_at) {
     push @{$errors}, "Delegation is expired at removal event timestamp";
   }
   return;
@@ -313,11 +431,20 @@ sub _validate_delegated_removal {
 
 sub _result {
   my (%args) = @_;
-  my $event = $args{event};
+  my $event  = $args{event};
   my $errors = $args{errors} || [];
   return @{$errors}
-    ? { valid => 0, errors => $errors, reason => $errors->[0], (defined $event ? (event => $event) : ()) }
-    : { valid => 1, errors => [], (defined $event ? (event => $event) : ()) };
+    ? {
+    valid  => 0,
+    errors => $errors,
+    reason => $errors->[0],
+    (defined $event ? (event => $event) : ())
+    }
+    : {
+    valid  => 1,
+    errors => [],
+    (defined $event ? (event => $event) : ())
+    };
 }
 
 sub _is_non_empty_string {
@@ -327,13 +454,69 @@ sub _is_non_empty_string {
 
 sub _is_string_array {
   my ($value) = @_;
-  return 0 unless ref($value) eq 'ARRAY';
+  if (!(ref($value) eq 'ARRAY')) {
+    return 0;
+  }
 
   for my $item (@{$value}) {
-    return 0 unless _is_non_empty_string($item);
+    if (!(_is_non_empty_string($item))) {
+      return 0;
+    }
   }
 
   return 1;
 }
 
 1;
+
+=head1 NAME
+
+Overnet::Core::Validator - Overnet Perl module
+
+=head1 VERSION
+
+Version 0.001.
+
+=head1 SYNOPSIS
+
+  use Overnet::Core::Validator;
+
+=head1 DESCRIPTION
+
+This module is part of the Overnet Perl implementation.
+
+=head1 SUBROUTINES/METHODS
+
+=head2 validate
+
+Public API entry point.
+
+=head1 DIAGNOSTICS
+
+This module reports errors through normal Perl exceptions or structured return values.
+
+=head1 CONFIGURATION AND ENVIRONMENT
+
+No module-specific environment configuration is required.
+
+=head1 DEPENDENCIES
+
+See the distribution metadata for runtime dependencies.
+
+=head1 INCOMPATIBILITIES
+
+No known incompatibilities are documented.
+
+=head1 BUGS AND LIMITATIONS
+
+No known bugs are documented.
+
+=head1 AUTHOR
+
+Overnet Project.
+
+=head1 LICENSE AND COPYRIGHT
+
+See the project license.
+
+=cut

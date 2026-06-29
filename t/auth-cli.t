@@ -8,7 +8,8 @@ use Test::More;
 use Overnet::Auth::CLI;
 
 {
-  package t::auth_cli::FakeClient; ## no critic (Modules::RequireFilenameMatchesPackage)
+
+  package t::auth_cli::FakeClient;
 
   sub new {
     my ($class, %args) = @_;
@@ -20,100 +21,111 @@ use Overnet::Auth::CLI;
 
   sub identities_list {
     my ($self) = @_;
-    push @{$self->{calls}}, {
+    push @{$self->{calls}},
+      {
       method => 'identities.list',
       params => {},
-    };
+      };
     return $self->{responses}{'identities.list'};
   }
 
   sub policies_list {
     my ($self) = @_;
-    push @{$self->{calls}}, {
+    push @{$self->{calls}},
+      {
       method => 'policies.list',
       params => {},
-    };
+      };
     return $self->{responses}{'policies.list'};
   }
 
   sub policies_grant {
     my ($self, %params) = @_;
-    push @{$self->{calls}}, {
+    push @{$self->{calls}},
+      {
       method => 'policies.grant',
       params => \%params,
-    };
+      };
     return $self->{responses}{'policies.grant'};
   }
 
   sub policies_revoke {
     my ($self, %params) = @_;
-    push @{$self->{calls}}, {
+    push @{$self->{calls}},
+      {
       method => 'policies.revoke',
       params => \%params,
-    };
+      };
     return $self->{responses}{'policies.revoke'};
   }
 
   sub service_pins_list {
     my ($self) = @_;
-    push @{$self->{calls}}, {
+    push @{$self->{calls}},
+      {
       method => 'service_pins.list',
       params => {},
-    };
+      };
     return $self->{responses}{'service_pins.list'};
   }
 
   sub service_pins_set {
     my ($self, %params) = @_;
-    push @{$self->{calls}}, {
+    push @{$self->{calls}},
+      {
       method => 'service_pins.set',
       params => \%params,
-    };
+      };
     return $self->{responses}{'service_pins.set'};
   }
 
   sub service_pins_forget {
     my ($self, %params) = @_;
-    push @{$self->{calls}}, {
+    push @{$self->{calls}},
+      {
       method => 'service_pins.forget',
       params => \%params,
-    };
+      };
     return $self->{responses}{'service_pins.forget'};
   }
 
   sub sessions_list {
     my ($self) = @_;
-    push @{$self->{calls}}, {
+    push @{$self->{calls}},
+      {
       method => 'sessions.list',
       params => {},
-    };
+      };
     return $self->{responses}{'sessions.list'};
   }
 
   sub sessions_authorize {
     my ($self, %params) = @_;
-    push @{$self->{calls}}, {
+    push @{$self->{calls}},
+      {
       method => 'sessions.authorize',
       params => \%params,
-    };
+      };
     return $self->{responses}{'sessions.authorize'};
   }
 
   sub sessions_renew {
     my ($self, %params) = @_;
-    push @{$self->{calls}}, {
+    push @{$self->{calls}},
+      {
       method => 'sessions.renew',
       params => \%params,
-    };
+      };
     return $self->{responses}{'sessions.renew'};
   }
 
   sub sessions_revoke {
     my ($self, %params) = @_;
-    push @{$self->{calls}}, {
+    push @{$self->{calls}},
+      {
       method => 'sessions.revoke',
       params => \%params,
-    };
+      };
     return $self->{responses}{'sessions.revoke'};
   }
 
@@ -136,7 +148,7 @@ subtest 'identities command prints the identity list result as JSON' => sub {
         result => {
           identities => [
             {
-              identity_id => 'default',
+              identity_id     => 'default',
               public_identity => {
                 scheme => 'nostr.pubkey',
                 value  => ('a' x 64),
@@ -149,17 +161,18 @@ subtest 'identities command prints the identity list result as JSON' => sub {
   );
 
   my $result = Overnet::Auth::CLI->run(
-    argv   => [ 'identities' ],
+    argv   => ['identities'],
     client => $client,
   );
 
   is $result->{exit_code}, 0, 'identities exits successfully';
-  is_deeply JSON::decode_json($result->{output}), {
+  is_deeply JSON::decode_json($result->{output}),
+    {
     ok     => JSON::true,
     result => {
       identities => [
         {
-          identity_id => 'default',
+          identity_id     => 'default',
           public_identity => {
             scheme => 'nostr.pubkey',
             value  => ('a' x 64),
@@ -167,13 +180,16 @@ subtest 'identities command prints the identity list result as JSON' => sub {
         },
       ],
     },
-  }, 'identities prints the auth-agent result payload';
-  is_deeply $client->calls, [
+    },
+    'identities prints the auth-agent result payload';
+  is_deeply $client->calls,
+    [
     {
       method => 'identities.list',
       params => {},
     },
-  ], 'identities calls identities.list';
+    ],
+    'identities calls identities.list';
 };
 
 subtest 'authorize command builds the expected sessions.authorize request' => sub {
@@ -189,7 +205,7 @@ JSON
         id     => 'auth-1',
         ok     => JSON::true,
         result => {
-          session_handle => { id => 'sess-1' },
+          session_handle => {id => 'sess-1'},
         },
       },
     },
@@ -197,38 +213,40 @@ JSON
 
   my $result = Overnet::Auth::CLI->run(
     argv => [
-      'authorize',
-      '--identity-id', 'default',
-      '--program-id', 'irc.bridge',
-      '--service-locator', 'irc://irc.example.test/overnet',
-      '--scope', 'irc://irc.example.test/overnet',
-      '--action', 'session.authenticate',
-      '--challenge-type', 'opaque',
-      '--challenge-value', 'abcd',
-      '--artifact-file', $artifact_file,
-      '--service-identity-scheme', 'nostr.pubkey',
-      '--service-identity-value', ('b' x 64),
-      '--service-identity-display', 'irc.example.test authority',
-      '--no-interactive',
+      'authorize',                      '--identity-id',
+      'default',                        '--program-id',
+      'irc.bridge',                     '--service-locator',
+      'irc://irc.example.test/overnet', '--scope',
+      'irc://irc.example.test/overnet', '--action',
+      'session.authenticate',           '--challenge-type',
+      'opaque',                         '--challenge-value',
+      'abcd',                           '--artifact-file',
+      $artifact_file,                   '--service-identity-scheme',
+      'nostr.pubkey',                   '--service-identity-value',
+      ('b' x 64),                       '--service-identity-display',
+      'irc.example.test authority',     '--no-interactive',
     ],
     client => $client,
   );
 
   is $result->{exit_code}, 0, 'authorize exits successfully';
-  is_deeply JSON::decode_json($result->{output}), {
+  is_deeply JSON::decode_json($result->{output}),
+    {
     ok     => JSON::true,
     result => {
-      session_handle => { id => 'sess-1' },
+      session_handle => {id => 'sess-1'},
     },
-  }, 'authorize prints the auth-agent result payload';
-  is_deeply $client->calls, [
+    },
+    'authorize prints the auth-agent result payload';
+  is_deeply $client->calls,
+    [
     {
       method => 'sessions.authorize',
       params => {
         identity_id => 'default',
         program_id  => 'irc.bridge',
         service     => {
-          locators => [ 'irc://irc.example.test/overnet' ],
+          locators         => ['irc://irc.example.test/overnet'],
           service_identity => {
             scheme  => 'nostr.pubkey',
             value   => ('b' x 64),
@@ -244,19 +262,17 @@ JSON
         },
         artifacts => [
           {
-            type => 'nostr.event',
+            type   => 'nostr.event',
             params => {
               kind => 22242,
-              tags => [
-                [ 'relay', 'irc://irc.example.test/overnet' ],
-                [ 'challenge', 'abcd' ],
-              ],
+              tags => [['relay', 'irc://irc.example.test/overnet'], ['challenge', 'abcd'],],
             },
           },
         ],
       },
     },
-  ], 'authorize maps CLI flags onto sessions.authorize';
+    ],
+    'authorize maps CLI flags onto sessions.authorize';
 
   unlink $artifact_file or die "unlink $artifact_file failed: $!";
 };
@@ -274,7 +290,7 @@ subtest 'policies and sessions commands print daemon-managed state as JSON' => s
               policy_id   => 'policy-1',
               identity_id => 'default',
               program_id  => 'irc.bridge',
-              locators    => [ 'irc://irc.example.test/overnet' ],
+              locators    => ['irc://irc.example.test/overnet'],
               scope       => 'irc://irc.example.test/overnet',
               action      => 'session.authenticate',
             },
@@ -288,7 +304,7 @@ subtest 'policies and sessions commands print daemon-managed state as JSON' => s
         result => {
           sessions => [
             {
-              session_handle => { id => 'sess-1' },
+              session_handle => {id => 'sess-1'},
               identity_id    => 'default',
               action         => 'session.authenticate',
             },
@@ -299,17 +315,18 @@ subtest 'policies and sessions commands print daemon-managed state as JSON' => s
   );
 
   my $policies = Overnet::Auth::CLI->run(
-    argv   => [ 'policies' ],
+    argv   => ['policies'],
     client => $client,
   );
   my $sessions = Overnet::Auth::CLI->run(
-    argv   => [ 'sessions' ],
+    argv   => ['sessions'],
     client => $client,
   );
 
   is $policies->{exit_code}, 0, 'policies exits successfully';
   is $sessions->{exit_code}, 0, 'sessions exits successfully';
-  is_deeply JSON::decode_json($policies->{output}), {
+  is_deeply JSON::decode_json($policies->{output}),
+    {
     ok     => JSON::true,
     result => {
       policies => [
@@ -317,28 +334,33 @@ subtest 'policies and sessions commands print daemon-managed state as JSON' => s
           policy_id   => 'policy-1',
           identity_id => 'default',
           program_id  => 'irc.bridge',
-          locators    => [ 'irc://irc.example.test/overnet' ],
+          locators    => ['irc://irc.example.test/overnet'],
           scope       => 'irc://irc.example.test/overnet',
           action      => 'session.authenticate',
         },
       ],
     },
-  }, 'policies prints daemon-managed policy state';
-  is_deeply JSON::decode_json($sessions->{output}), {
+    },
+    'policies prints daemon-managed policy state';
+  is_deeply JSON::decode_json($sessions->{output}),
+    {
     ok     => JSON::true,
     result => {
       sessions => [
         {
-          session_handle => { id => 'sess-1' },
+          session_handle => {id => 'sess-1'},
           identity_id    => 'default',
           action         => 'session.authenticate',
         },
       ],
     },
-  }, 'sessions prints daemon-managed session state';
+    },
+    'sessions prints daemon-managed session state';
 };
 
-subtest 'policy-grant, policy-revoke, service-pins, service-pin-set, and service-pin-forget build the expected requests' => sub {
+subtest
+  'policy-grant, policy-revoke, service-pins, service-pin-set, and service-pin-forget build the expected requests' =>
+  sub {
   my $client = t::auth_cli::FakeClient->new(
     responses => {
       'policies.grant' => {
@@ -346,7 +368,7 @@ subtest 'policy-grant, policy-revoke, service-pins, service-pin-set, and service
         id     => 'auth-1',
         ok     => JSON::true,
         result => {
-          policy => { policy_id => 'policy-1' },
+          policy => {policy_id => 'policy-1'},
         },
       },
       'policies.revoke' => {
@@ -386,46 +408,47 @@ subtest 'policy-grant, policy-revoke, service-pins, service-pin-set, and service
 
   my $grant = Overnet::Auth::CLI->run(
     argv => [
-      'policy-grant',
-      '--identity-id', 'default',
-      '--program-id', 'irc.bridge',
-      '--service-locator', 'wss://relay.example.test/auth',
-      '--service-identity-scheme', 'nostr.pubkey',
-      '--service-identity-value', ('b' x 64),
-      '--scope', 'irc://irc.example.test/overnet',
-      '--action', 'session.delegate',
+      'policy-grant',                   '--identity-id',
+      'default',                        '--program-id',
+      'irc.bridge',                     '--service-locator',
+      'wss://relay.example.test/auth',  '--service-identity-scheme',
+      'nostr.pubkey',                   '--service-identity-value',
+      ('b' x 64),                       '--scope',
+      'irc://irc.example.test/overnet', '--action',
+      'session.delegate',
     ],
     client => $client,
   );
   my $revoke = Overnet::Auth::CLI->run(
-    argv   => [ 'policy-revoke', '--policy-id', 'policy-1' ],
+    argv   => ['policy-revoke', '--policy-id', 'policy-1'],
     client => $client,
   );
   my $pins = Overnet::Auth::CLI->run(
-    argv   => [ 'service-pins' ],
+    argv   => ['service-pins'],
     client => $client,
   );
   my $set = Overnet::Auth::CLI->run(
     argv => [
-      'service-pin-set',
-      '--service-locator', 'wss://relay.example.test/auth',
-      '--service-identity-scheme', 'nostr.pubkey',
-      '--service-identity-value', ('c' x 64),
-      '--service-identity-display', 'relay.example.test authority',
+      'service-pin-set',               '--service-locator',
+      'wss://relay.example.test/auth', '--service-identity-scheme',
+      'nostr.pubkey',                  '--service-identity-value',
+      ('c' x 64),                      '--service-identity-display',
+      'relay.example.test authority',
     ],
     client => $client,
   );
   my $forget = Overnet::Auth::CLI->run(
-    argv   => [ 'service-pin-forget', '--service-locator', 'wss://relay.example.test/auth' ],
+    argv   => ['service-pin-forget', '--service-locator', 'wss://relay.example.test/auth'],
     client => $client,
   );
 
-  is $grant->{exit_code}, 0, 'policy-grant exits successfully';
+  is $grant->{exit_code},  0, 'policy-grant exits successfully';
   is $revoke->{exit_code}, 0, 'policy-revoke exits successfully';
-  is $pins->{exit_code}, 0, 'service-pins exits successfully';
-  is $set->{exit_code}, 0, 'service-pin-set exits successfully';
+  is $pins->{exit_code},   0, 'service-pins exits successfully';
+  is $set->{exit_code},    0, 'service-pin-set exits successfully';
   is $forget->{exit_code}, 0, 'service-pin-forget exits successfully';
-  is_deeply $client->calls, [
+  is_deeply $client->calls,
+    [
     {
       method => 'policies.grant',
       params => {
@@ -433,7 +456,7 @@ subtest 'policy-grant, policy-revoke, service-pins, service-pin-set, and service
           identity_id => 'default',
           program_id  => 'irc.bridge',
           service     => {
-            locators => [ 'wss://relay.example.test/auth' ],
+            locators         => ['wss://relay.example.test/auth'],
             service_identity => {
               scheme => 'nostr.pubkey',
               value  => ('b' x 64),
@@ -457,7 +480,7 @@ subtest 'policy-grant, policy-revoke, service-pins, service-pin-set, and service
     {
       method => 'service_pins.set',
       params => {
-        locator => 'wss://relay.example.test/auth',
+        locator          => 'wss://relay.example.test/auth',
         service_identity => {
           scheme  => 'nostr.pubkey',
           value   => ('c' x 64),
@@ -471,8 +494,9 @@ subtest 'policy-grant, policy-revoke, service-pins, service-pin-set, and service
         locator => 'wss://relay.example.test/auth',
       },
     },
-  ], 'management commands map CLI flags to auth-agent methods';
-};
+    ],
+    'management commands map CLI flags to auth-agent methods';
+  };
 
 subtest 'renew and revoke commands wrap session ids as session handles' => sub {
   my $client = t::auth_cli::FakeClient->new(
@@ -482,7 +506,7 @@ subtest 'renew and revoke commands wrap session ids as session handles' => sub {
         id     => 'auth-1',
         ok     => JSON::true,
         result => {
-          session_handle => { id => 'sess-2' },
+          session_handle => {id => 'sess-2'},
         },
       },
       'sessions.revoke' => {
@@ -497,31 +521,33 @@ subtest 'renew and revoke commands wrap session ids as session handles' => sub {
   );
 
   my $renew = Overnet::Auth::CLI->run(
-    argv   => [ 'renew', '--session-id', 'sess-2', '--no-interactive' ],
+    argv   => ['renew', '--session-id', 'sess-2', '--no-interactive'],
     client => $client,
   );
   my $revoke = Overnet::Auth::CLI->run(
-    argv   => [ 'revoke', '--session-id', 'sess-2' ],
+    argv   => ['revoke', '--session-id', 'sess-2'],
     client => $client,
   );
 
-  is $renew->{exit_code}, 0, 'renew exits successfully';
+  is $renew->{exit_code},  0, 'renew exits successfully';
   is $revoke->{exit_code}, 0, 'revoke exits successfully';
-  is_deeply $client->calls, [
+  is_deeply $client->calls,
+    [
     {
       method => 'sessions.renew',
       params => {
-        session_handle => { id => 'sess-2' },
+        session_handle => {id => 'sess-2'},
         interactive    => JSON::false,
       },
     },
     {
       method => 'sessions.revoke',
       params => {
-        session_handle => { id => 'sess-2' },
+        session_handle => {id => 'sess-2'},
       },
     },
-  ], 'renew and revoke wrap the session id as a session_handle object';
+    ],
+    'renew and revoke wrap the session id as a session_handle object';
 };
 
 subtest 'client CLI script exists and prints help' => sub {
@@ -533,14 +559,10 @@ subtest 'client CLI script exists and prints help' => sub {
 
   my $help = qx{$^X -I$libdir $script --help 2>&1};
   is $? >> 8, 0, '--help exits cleanly';
-  like $help, qr/Usage:\s+overnet-auth\.pl\ identities/mx,
-    '--help prints the command synopsis';
-  like $help, qr/overnet-auth\.pl\ policies/mx,
-    '--help lists policies';
-  like $help, qr/overnet-auth\.pl\ service-pin-set/mx,
-    '--help lists service pin management';
-  like $help, qr/overnet-auth\.pl\ sessions/mx,
-    '--help lists sessions';
+  like $help, qr/Usage:\s+overnet-auth\.pl\ identities/mx, '--help prints the command synopsis';
+  like $help, qr/overnet-auth\.pl\ policies/mx,            '--help lists policies';
+  like $help, qr/overnet-auth\.pl\ service-pin-set/mx,     '--help lists service pin management';
+  like $help, qr/overnet-auth\.pl\ sessions/mx,            '--help lists sessions';
 };
 
 done_testing;

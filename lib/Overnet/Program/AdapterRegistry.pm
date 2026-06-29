@@ -1,6 +1,7 @@
 package Overnet::Program::AdapterRegistry;
 
 use strictures 2;
+use Carp qw(croak);
 use Overnet::Program::AdapterFactory;
 
 our $VERSION = '0.001';
@@ -9,8 +10,9 @@ sub new {
   my ($class, %args) = @_;
   my $adapter_factory = $args{adapter_factory} || Overnet::Program::AdapterFactory->new;
 
-  die "adapter_factory must be an Overnet::Program::AdapterFactory instance\n"
-    unless ref($adapter_factory) && $adapter_factory->isa('Overnet::Program::AdapterFactory');
+  if (!(ref($adapter_factory) && $adapter_factory->isa('Overnet::Program::AdapterFactory'))) {
+    croak "adapter_factory must be an Overnet::Program::AdapterFactory instance\n";
+  }
 
   my $self = bless {
     %args,
@@ -24,12 +26,14 @@ sub register {
   my ($self, %args) = @_;
 
   my $adapter_id = $args{adapter_id};
-  my $adapter = $args{adapter};
+  my $adapter    = $args{adapter};
 
-  die "adapter_id is required\n"
-    unless defined $adapter_id && !ref($adapter_id) && length($adapter_id);
-  die "adapter is required\n"
-    unless defined $adapter && ref($adapter);
+  if (!(defined $adapter_id && !ref($adapter_id) && length($adapter_id))) {
+    croak "adapter_id is required\n";
+  }
+  if (!(defined $adapter && ref($adapter))) {
+    croak "adapter is required\n";
+  }
 
   $self->{adapters}{$adapter_id} = $adapter;
   return 1;
@@ -41,10 +45,12 @@ sub register_definition {
   my $adapter_id = $args{adapter_id};
   my $definition = $args{definition};
 
-  die "adapter_id is required\n"
-    unless defined $adapter_id && !ref($adapter_id) && length($adapter_id);
-  die "definition is required\n"
-    unless defined $definition && ref($definition) eq 'HASH';
+  if (!(defined $adapter_id && !ref($adapter_id) && length($adapter_id))) {
+    croak "adapter_id is required\n";
+  }
+  if (!(defined $definition && ref($definition) eq 'HASH')) {
+    croak "definition is required\n";
+  }
 
   $self->{adapters}{$adapter_id} = $definition;
   return 1;
@@ -52,14 +58,18 @@ sub register_definition {
 
 sub get {
   my ($self, $adapter_id) = @_;
-  return unless defined $adapter_id;
+  if (!(defined $adapter_id)) {
+    return;
+  }
   return $self->{adapters}{$adapter_id};
 }
 
 sub build {
   my ($self, $adapter_id) = @_;
   my $entry = $self->get($adapter_id);
-  return unless defined $entry;
+  if (!(defined $entry)) {
+    return;
+  }
 
   if (ref($entry) eq 'HASH' && exists $entry->{kind}) {
     return $self->{adapter_factory}->build(definition => $entry);
@@ -75,18 +85,83 @@ sub has {
 
 sub adapter_ids {
   my ($self) = @_;
-  return [ sort keys %{$self->{adapters}} ];
+  return [sort keys %{$self->{adapters}}];
 }
 
 1;
 
 =head1 NAME
 
-Overnet::Program::AdapterRegistry - Runtime-managed adapter registry
+Overnet::Program::AdapterRegistry - Overnet Perl module
+
+=head1 VERSION
+
+Version 0.001.
+
+=head1 SYNOPSIS
+
+  use Overnet::Program::AdapterRegistry;
 
 =head1 DESCRIPTION
 
-Registers adapter implementations by adapter id for use by the Overnet Program
-Runtime, including direct objects and runtime-instantiated adapter definitions.
+This module is part of the Overnet Perl implementation.
+
+=head1 SUBROUTINES/METHODS
+
+=head2 new
+
+Public API entry point.
+
+=head2 register
+
+Public API entry point.
+
+=head2 register_definition
+
+Public API entry point.
+
+=head2 get
+
+Public API entry point.
+
+=head2 build
+
+Public API entry point.
+
+=head2 has
+
+Public API entry point.
+
+=head2 adapter_ids
+
+Public API entry point.
+
+=head1 DIAGNOSTICS
+
+This module reports errors through normal Perl exceptions or structured return values.
+
+=head1 CONFIGURATION AND ENVIRONMENT
+
+No module-specific environment configuration is required.
+
+=head1 DEPENDENCIES
+
+See the distribution metadata for runtime dependencies.
+
+=head1 INCOMPATIBILITIES
+
+No known incompatibilities are documented.
+
+=head1 BUGS AND LIMITATIONS
+
+No known bugs are documented.
+
+=head1 AUTHOR
+
+Overnet Project.
+
+=head1 LICENSE AND COPYRIGHT
+
+See the project license.
 
 =cut
