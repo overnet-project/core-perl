@@ -615,7 +615,8 @@ sub _handle_eof {
       or croak "close child stdout failed: $OS_ERROR";
     if (!($self->current_state eq 'shutdown_complete')) {
       $self->_drain_child_stderr;
-      $self->_reap_child;
+      $self->_reap_child_until(timeout_ms => 50);
+      $self->_drain_child_stderr;
       croak $self->_unexpected_stdout_close_error;
     }
     return;
@@ -649,6 +650,30 @@ sub _reap_child {
   $self->{exit_signal} = $wait_status & 127;
   $self->_release_runtime_resources;
   return;
+}
+
+sub _reap_child_until {
+  my ($self, %args) = @_;
+  my $timeout_ms = exists $args{timeout_ms} ? $args{timeout_ms} : 0;
+  my $deadline   = _now_ms() + $timeout_ms;
+
+  while (1) {
+    $self->_reap_child;
+    if (defined $self->{wait_status}) {
+      return 1;
+    }
+    if (_now_ms() >= $deadline) {
+      return 0;
+    }
+
+    my $remaining_ms = $deadline - _now_ms();
+    my $sleep_ms     = $remaining_ms < 5 ? $remaining_ms : 5;
+    if ($sleep_ms > 0) {
+      sleep $sleep_ms / 1000;
+    }
+  }
+
+  return 0;
 }
 
 sub _release_runtime_resources {

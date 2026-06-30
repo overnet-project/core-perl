@@ -5,7 +5,7 @@ use File::Spec;
 use File::Temp qw(tempdir);
 use JSON       ();
 use Socket     qw(AF_UNIX PF_UNSPEC SOCK_STREAM);
-use Test::More;
+use Test2::V0;
 
 use Overnet::Auth::Client;
 use Overnet::Auth::Daemon;
@@ -102,6 +102,28 @@ subtest 'endpoint argument overrides the configured daemon endpoint' => sub {
   is $client->endpoint, $override_socket, 'client was pointed at the override endpoint';
 
   _wait_for_child($pid, 'daemon exits cleanly after serving the override socket');
+};
+
+subtest 'daemon rejects invalid max_connections values at construction' => sub {
+  my $error = eval {
+    Overnet::Auth::Daemon->new(
+      endpoint        => '/virtual/auth.sock',
+      max_connections => 'not-a-number',
+    );
+    1;
+  } ? undef : $@;
+
+  like $error, qr/max_connections\ must\ be\ a\ positive\ integer/mx, 'non-numeric max_connections is rejected';
+
+  $error = eval {
+    Overnet::Auth::Daemon->new(
+      endpoint        => '/virtual/auth.sock',
+      max_connections => 0,
+    );
+    1;
+  } ? undef : $@;
+
+  like $error, qr/max_connections\ must\ be\ a\ positive\ integer/mx, 'zero max_connections is rejected';
 };
 
 subtest 'daemon rejects a pre-existing non-socket file at the endpoint path' => sub {

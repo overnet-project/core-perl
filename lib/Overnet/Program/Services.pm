@@ -3,6 +3,7 @@ package Overnet::Program::Services;
 use strictures 2;
 use Carp    qw(croak);
 use English qw(-no_match_vars);
+use JSON    ();
 use Overnet::Core::Nostr;
 use Overnet::Program::Permissions;
 use Overnet::Program::Runtime;
@@ -423,17 +424,8 @@ sub read_nostr_subscription_snapshot {
     subscription_id => $subscription_id,
   );
   if (exists $args{refresh}) {
-    if (
-      !(
-        defined $args{refresh} && !ref($args{refresh}) && ($args{refresh} eq '0'
-          || $args{refresh} eq '1'
-          || $args{refresh} == 0
-          || $args{refresh} == 1)
-      )
-    ) {
-      _invalid_params('refresh must be 0 or 1', {param => 'refresh'},);
-    }
-    $read_args{refresh} = $args{refresh} ? 1 : 0;
+    $read_args{refresh} =
+      _require_boolean_param('refresh', $args{refresh});
   }
 
   return $self->{runtime}->read_nostr_subscription_snapshot(%read_args);
@@ -1057,6 +1049,18 @@ sub _require_positive_integer_param {
     _invalid_params("$name must be a positive integer", {param => $name});
   }
   return 0 + $value;
+}
+
+sub _require_boolean_param {
+  my ($name, $value) = @_;
+  if (JSON::is_bool($value)) {
+    return $value ? 1 : 0;
+  }
+  if (defined $value && !ref($value) && ($value eq '0' || $value eq '1')) {
+    return 0 + $value;
+  }
+  _invalid_params("$name must be 0 or 1", {param => $name});
+  return;
 }
 
 sub _validate_subscription_query {

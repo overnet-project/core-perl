@@ -1,6 +1,6 @@
 use strictures 2;
 use JSON ();
-use Test::More;
+use Test2::V0;
 
 use Overnet::Program::Protocol;
 
@@ -40,7 +40,7 @@ subtest 'decodes a complete frame' => sub {
 
   my $messages = $protocol->feed($frame);
   is scalar(@{$messages}), 1, 'one message decoded';
-  is_deeply $messages->[0],
+  is $messages->[0],
     {
     type   => 'notification',
     method => 'program.ready',
@@ -161,6 +161,16 @@ subtest 'encode_message rejects non-object messages' => sub {
   my $protocol = Overnet::Program::Protocol->new;
 
   like dies_with { $protocol->encode_message([]) }, qr/hash\ reference/mx, 'non-hash messages are rejected';
+};
+
+subtest 'constructor rejects invalid max_frame_size values' => sub {
+  like dies_with { Overnet::Program::Protocol->new(max_frame_size => 'not-a-number') },
+    qr/max_frame_size\ must\ be\ a\ positive\ integer/mx,
+    'non-numeric max_frame_size is rejected at construction';
+
+  like dies_with { Overnet::Program::Protocol->new(max_frame_size => 0) },
+    qr/max_frame_size\ must\ be\ a\ positive\ integer/mx,
+    'zero max_frame_size is rejected at construction';
 };
 
 subtest 'validates baseline request messages' => sub {

@@ -3,10 +3,10 @@
       "target_event" : {
          "content" : "{\"provenance\":{\"type\":\"native\"},\"body\":{\"text\":\"Hello, world!\"}}",
          "created_at" : 1744300800,
-         "id" : "1703a5505c787f79222eebf66a09356525adef9fbb54ac0d1ec56eaa458434a1",
+         "id" : "f9834b94836527a3469c35bdc9f5b358d390b34ce25a6e71452428cd8bb85f4f",
          "kind" : 7800,
-         "pubkey" : "2afc97c5af6cea9d8b03c792cee59788dc46c2ed3a0257755cb5390b7d0b6784",
-         "sig" : "5cc3874a3bddb9c4653bc7fc07660176bfc027a2586cd6477c86993c85d3c99b2eb160f035b0948c81ee7117c1aa7eae8fe8931309ca1e53536a87e22fc2e1cb",
+         "pubkey" : "7d6a28215704d9a963bf2a5d86d9372808d0838a9418dd29feeba301d0e3a20d",
+         "sig" : "cd2cdf1dec2aeb5bb20f230f45f7c2f7ada984656a8692e308117d573fd4196c326fe836533f7c9c9adbde641dc28f62a1473913879b5ba28114a9e93d202c52",
          "tags" : [
             [
                "overnet_v",
@@ -23,6 +23,22 @@
             [
                "overnet_oid",
                "f47ac10b-58cc-4372-a567-0e02b2c3d479"
+            ],
+            [
+               "v",
+               "0.1.0"
+            ],
+            [
+               "t",
+               "chat.message"
+            ],
+            [
+               "o",
+               "chat.channel"
+            ],
+            [
+               "d",
+               "f47ac10b-58cc-4372-a567-0e02b2c3d479"
             ]
          ]
       }
@@ -34,10 +50,10 @@
    "input" : {
       "content" : "{\"provenance\":{\"type\":\"native\"},\"body\":{}}",
       "created_at" : 1744301000,
-      "id" : "cbb4c118cd6c55bdcea59de3bade820500f255c90f55b55447fceb6c1aace420",
+      "id" : "0bee8c1120c2b042a30ce1ac0ebc92077301d633a67268c393b74b61d6fac329",
       "kind" : 7801,
-      "pubkey" : "2afc97c5af6cea9d8b03c792cee59788dc46c2ed3a0257755cb5390b7d0b6784",
-      "sig" : "3f95af9b5209adf2a7507d2e6cc828f27637c06442a90a02522cd982105418a546af3ac79b49a9c945bb26c95fe1ca662c992c55cbaad6abad5847d6ae937e57",
+      "pubkey" : "7d6a28215704d9a963bf2a5d86d9372808d0838a9418dd29feeba301d0e3a20d",
+      "sig" : "0765947b1c4ff2b8b84bd2ec0ba797180294c04ee0868e311e837ceb552957aa90312ccd1f18c226210d21141a8075adba37e4678ee4a5346eafaa064e83907a",
       "tags" : [
          [
             "overnet_v",
@@ -57,7 +73,23 @@
          ],
          [
             "e",
-            "1703a5505c787f79222eebf66a09356525adef9fbb54ac0d1ec56eaa458434a1"
+            "f9834b94836527a3469c35bdc9f5b358d390b34ce25a6e71452428cd8bb85f4f"
+         ],
+         [
+            "v",
+            "0.1.0"
+         ],
+         [
+            "t",
+            "core.removal"
+         ],
+         [
+            "o",
+            "chat.channel"
+         ],
+         [
+            "d",
+            "f47ac10b-58cc-4372-a567-0e02b2c3d479"
          ]
       ]
    }

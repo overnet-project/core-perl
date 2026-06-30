@@ -19,18 +19,19 @@ our $VERSION = '0.001';
 sub new {
   my ($class, %args) = @_;
 
-  my $config      = _daemon_config(%args);
-  my $endpoint    = _daemon_endpoint($config, %args);
-  my $socket_mode = _daemon_socket_mode($config, %args);
-  my $state_store = _daemon_state_store($config, %args);
-  my $agent       = _daemon_agent($config, $state_store, %args);
-  my $server      = $args{server} || Overnet::Auth::Server->new(agent => $agent);
+  my $config          = _daemon_config(%args);
+  my $endpoint        = _daemon_endpoint($config, %args);
+  my $socket_mode     = _daemon_socket_mode($config, %args);
+  my $max_connections = _daemon_max_connections(%args);
+  my $state_store     = _daemon_state_store($config, %args);
+  my $agent           = _daemon_agent($config, $state_store, %args);
+  my $server          = $args{server} || Overnet::Auth::Server->new(agent => $agent);
 
   return bless {
     config          => $config,
     endpoint        => $endpoint,
     socket_mode     => $socket_mode,
-    max_connections => $args{max_connections},
+    max_connections => $max_connections,
     server          => $server,
     state_store     => $state_store,
     listen_factory  => $args{listen_factory},
@@ -91,6 +92,18 @@ sub _daemon_state_store {
     return Overnet::Auth::StateStore->new(path => $state_file);
   }
   return;
+}
+
+sub _daemon_max_connections {
+  my (%args) = @_;
+  if (!(exists $args{max_connections})) {
+    return;
+  }
+  my $max_connections = $args{max_connections};
+  if (!(defined $max_connections && !ref($max_connections) && $max_connections =~ /\A[1-9]\d*\z/mxs)) {
+    croak "max_connections must be a positive integer\n";
+  }
+  return 0 + $max_connections;
 }
 
 sub _daemon_agent {

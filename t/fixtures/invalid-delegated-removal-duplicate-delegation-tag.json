@@ -1,12 +1,12 @@
 {
    "context" : {
       "delegation_event" : {
-         "content" : "{\n   \"body\" : {\n      \"action\" : \"remove\",\n      \"delegate_pubkey\" : \"2359d3347105cabf05d83dc1466e50f4a6b98af337660069ed65db2502793388\",\n      \"expires_at\" : 1744304600\n   },\n   \"provenance\" : {\n      \"type\" : \"native\"\n   }\n}\n",
+         "content" : "{\n   \"body\" : {\n      \"action\" : \"remove\",\n      \"delegate_pubkey\" : \"73e4993fe857ba094bac3034616415c0de5520025f3e24b685a95f08544691c1\",\n      \"expires_at\" : 1744304600\n   },\n   \"provenance\" : {\n      \"type\" : \"native\"\n   }\n}\n",
          "created_at" : 1744300950,
-         "id" : "a36d5c6f0a83d53f12f55e72071e23f451912c7ce453c570721fdc27567d3f3c",
+         "id" : "f4b0654e06bdd4c90105f871fc4b35663bd643bd6e4226654d35d98c42262a32",
          "kind" : 7800,
-         "pubkey" : "2afc97c5af6cea9d8b03c792cee59788dc46c2ed3a0257755cb5390b7d0b6784",
-         "sig" : "656b1767cf9b18b8ca950fffa1fc8720db495ec78d1c786fc0805f00e0072cb142b5de332ae8f8055ea403f5962e934ca55c99296e35685e242ece513bf511e9",
+         "pubkey" : "7d6a28215704d9a963bf2a5d86d9372808d0838a9418dd29feeba301d0e3a20d",
+         "sig" : "ae17c16a741548bffd14da1369f3064aed99f8c3b152a6755e3b4614c5a75555ebd7675b2733de8b981e688313cbe47e8393bf4403a619c5b9b624a95f8673d2",
          "tags" : [
             [
                "overnet_v",
@@ -23,16 +23,32 @@
             [
                "overnet_oid",
                "f47ac10b-58cc-4372-a567-0e02b2c3d479"
+            ],
+            [
+               "v",
+               "0.1.0"
+            ],
+            [
+               "t",
+               "core.delegation"
+            ],
+            [
+               "o",
+               "chat.channel"
+            ],
+            [
+               "d",
+               "f47ac10b-58cc-4372-a567-0e02b2c3d479"
             ]
          ]
       },
       "target_event" : {
          "content" : "{\"provenance\":{\"type\":\"native\"},\"body\":{\"text\":\"Hello, world!\"}}",
          "created_at" : 1744300800,
-         "id" : "1703a5505c787f79222eebf66a09356525adef9fbb54ac0d1ec56eaa458434a1",
+         "id" : "f9834b94836527a3469c35bdc9f5b358d390b34ce25a6e71452428cd8bb85f4f",
          "kind" : 7800,
-         "pubkey" : "2afc97c5af6cea9d8b03c792cee59788dc46c2ed3a0257755cb5390b7d0b6784",
-         "sig" : "5cc3874a3bddb9c4653bc7fc07660176bfc027a2586cd6477c86993c85d3c99b2eb160f035b0948c81ee7117c1aa7eae8fe8931309ca1e53536a87e22fc2e1cb",
+         "pubkey" : "7d6a28215704d9a963bf2a5d86d9372808d0838a9418dd29feeba301d0e3a20d",
+         "sig" : "cd2cdf1dec2aeb5bb20f230f45f7c2f7ada984656a8692e308117d573fd4196c326fe836533f7c9c9adbde641dc28f62a1473913879b5ba28114a9e93d202c52",
          "tags" : [
             [
                "overnet_v",
@@ -49,6 +65,22 @@
             [
                "overnet_oid",
                "f47ac10b-58cc-4372-a567-0e02b2c3d479"
+            ],
+            [
+               "v",
+               "0.1.0"
+            ],
+            [
+               "t",
+               "chat.message"
+            ],
+            [
+               "o",
+               "chat.channel"
+            ],
+            [
+               "d",
+               "f47ac10b-58cc-4372-a567-0e02b2c3d479"
             ]
          ]
       }
@@ -63,7 +95,7 @@
       "created_at" : 1744301000,
       "id" : "6677889966778899667788996677889966778899667788996677889966778899",
       "kind" : 7801,
-      "pubkey" : "2359d3347105cabf05d83dc1466e50f4a6b98af337660069ed65db2502793388",
+      "pubkey" : "73e4993fe857ba094bac3034616415c0de5520025f3e24b685a95f08544691c1",
       "sig" : "66778899667788996677889966778899667788996677889966778899667788996677889966778899667788996677889966778899667788996677889966778899",
       "tags" : [
          [
@@ -84,15 +116,31 @@
          ],
          [
             "e",
-            "1703a5505c787f79222eebf66a09356525adef9fbb54ac0d1ec56eaa458434a1"
+            "f9834b94836527a3469c35bdc9f5b358d390b34ce25a6e71452428cd8bb85f4f"
          ],
          [
             "overnet_delegate",
-            "a36d5c6f0a83d53f12f55e72071e23f451912c7ce453c570721fdc27567d3f3c"
+            "f4b0654e06bdd4c90105f871fc4b35663bd643bd6e4226654d35d98c42262a32"
          ],
          [
             "overnet_delegate",
-            "a36d5c6f0a83d53f12f55e72071e23f451912c7ce453c570721fdc27567d3f3c"
+            "f4b0654e06bdd4c90105f871fc4b35663bd643bd6e4226654d35d98c42262a32"
+         ],
+         [
+            "v",
+            "0.1.0"
+         ],
+         [
+            "t",
+            "core.removal"
+         ],
+         [
+            "o",
+            "chat.channel"
+         ],
+         [
+            "d",
+            "f47ac10b-58cc-4372-a567-0e02b2c3d479"
          ]
       ]
    }

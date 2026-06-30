@@ -557,8 +557,6 @@ sub _dispatch_renew {
     return $self->_error_response($id, @{$service_error});
   }
 
-  my $interactive =
-    exists($params->{interactive}) ? ($params->{interactive} ? 1 : 0) : 1;
   my $approved = $self->_policy_matches(
     identity_id => $session->{identity_id},
     program_id  => $session->{program_id},
@@ -567,9 +565,8 @@ sub _dispatch_renew {
     action      => $session->{action},
   );
 
-  if (!$approved && !$interactive) {
-    return $self->_error_response($id, 'headless_unavailable',
-      'approval is required but interactive approval is unavailable');
+  if (!$approved) {
+    return $self->_error_response($id, 'policy_denied', 'session no longer matches current policy');
   }
 
   my @returned;

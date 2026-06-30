@@ -27,6 +27,22 @@
          [
             "overnet_oid",
             "irc:libera.chat:#overnet"
+         ],
+         [
+            "v",
+            "0.1.0"
+         ],
+         [
+            "t",
+            "chat.message"
+         ],
+         [
+            "o",
+            "chat.channel"
+         ],
+         [
+            "d",
+            "irc:libera.chat:#overnet"
          ]
       ]
    }

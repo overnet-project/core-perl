@@ -58,9 +58,16 @@ my %BASELINE_REQUEST_METHODS      = (%RUNTIME_REQUEST_METHODS,      %SERVICE_REQ
 
 sub new {
   my ($class, %args) = @_;
+  my $max_frame_size =
+    exists $args{max_frame_size}
+    ? $args{max_frame_size}
+    : $DEFAULT_MAX_FRAME_SIZE;
+  if (!(defined $max_frame_size && !ref($max_frame_size) && $max_frame_size =~ /\A[1-9]\d*\z/mxs)) {
+    croak "max_frame_size must be a positive integer\n";
+  }
 
   my $self = bless {
-    max_frame_size => $args{max_frame_size} || $DEFAULT_MAX_FRAME_SIZE,
+    max_frame_size => 0 + $max_frame_size,
     _buffer        => q{},
   }, $class;
 

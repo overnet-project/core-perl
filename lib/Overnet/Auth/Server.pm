@@ -5,6 +5,7 @@ use Carp    qw(croak);
 use English qw(-no_match_vars);
 
 use Overnet::Program::Protocol;
+use Overnet::Auth::SocketIO;
 
 our $VERSION = '0.001';
 
@@ -53,17 +54,11 @@ sub serve_socket {
 
 sub _write_all {
   my ($socket, $bytes) = @_;
-  my $offset = 0;
-
-  while ($offset < length($bytes)) {
-    my $written = syswrite($socket, $bytes, length($bytes) - $offset, $offset);
-    if (!(defined $written)) {
-      croak "write to auth-agent socket failed: $OS_ERROR";
-    }
-    $offset += $written;
-  }
-
-  return 1;
+  return Overnet::Auth::SocketIO->write_all(
+    socket => $socket,
+    bytes  => $bytes,
+    target => 'auth-agent socket',
+  );
 }
 
 1;

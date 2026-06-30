@@ -35,6 +35,18 @@
          [
             "overnet_oid",
             "b4c5d6b4c5d6b4c5d6b4c5d6b4c5d6b4c5d6b4c5d6b4c5d6b4c5d6b4c5d6b4c5"
+         ],
+         [
+            "v",
+            "0.1.0"
+         ],
+         [
+            "t",
+            "identity.profile"
+         ],
+         [
+            "o",
+            "identity.profile"
          ]
       ]
    }

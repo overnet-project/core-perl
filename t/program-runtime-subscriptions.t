@@ -1,5 +1,5 @@
 use strictures 2;
-use Test::More;
+use Test2::V0;
 use JSON           ();
 use File::Basename qw(dirname);
 use File::Spec;
@@ -8,6 +8,7 @@ use Overnet::Program::Instance;
 use Overnet::Program::Protocol;
 use Overnet::Program::Runtime;
 use Overnet::Program::Services;
+use Overnet::Core::Nostr;
 
 sub _load_fixture_input {
   my ($name) = @_;
@@ -129,6 +130,45 @@ subtest 'services reject invalid subscription params and duplicates' => sub {
   is $error->{code}, 'protocol.invalid_params', 'unknown subscription close is invalid params';
 };
 
+subtest 'nostr subscription snapshot rejects invalid refresh values as invalid params' => sub {
+  my $runtime  = Overnet::Program::Runtime->new;
+  my $services = Overnet::Program::Services->new(runtime => $runtime);
+
+  {
+    no warnings qw(redefine);
+    local *Overnet::Core::Nostr::query_events = sub { return [] };
+
+    $services->dispatch_request(
+      'nostr.open_subscription',
+      {
+        subscription_id => 'nostr-sub-1',
+        relay_url       => 'wss://relay.example.test',
+        filters         => [{kinds => [1],},],
+      },
+      permissions => ['nostr.read'],
+      session_id  => 'session-1',
+    );
+
+    my $error;
+    eval {
+      $services->dispatch_request(
+        'nostr.read_subscription_snapshot',
+        {
+          subscription_id => 'nostr-sub-1',
+          refresh         => 'definitely',
+        },
+        permissions => ['nostr.read'],
+        session_id  => 'session-1',
+      );
+      1;
+    } or $error = $@;
+
+    is ref($error),              'HASH',                    'invalid refresh error is structured';
+    is $error->{code},           'protocol.invalid_params', 'invalid refresh is invalid params';
+    is $error->{details}{param}, 'refresh',                 'invalid refresh identifies the refresh parameter';
+  }
+};
+
 subtest 'closing subscription stops future delivery and clears pending notifications' => sub {
   my $runtime  = Overnet::Program::Runtime->new;
   my $services = Overnet::Program::Services->new(runtime => $runtime);
@@ -199,9 +239,9 @@ subtest 'empty-query subscriptions receive capability notifications' => sub {
   );
 
   my $all_notifications = $runtime->drain_runtime_notifications('session-all');
-  is scalar @{$all_notifications},                1, 'empty-query subscription receives capability notification';
-  is $all_notifications->[0]{params}{item_type},  'capability',        'notification records capability item type';
-  is $all_notifications->[0]{params}{data}{name}, $capability->{name}, 'notification includes capability payload';
+  is(scalar @{$all_notifications},                1, 'empty-query subscription receives capability notification');
+  is($all_notifications->[0]{params}{item_type},  'capability',        'notification records capability item type');
+  is($all_notifications->[0]{params}{data}{name}, $capability->{name}, 'notification includes capability payload');
 
   is scalar @{$runtime->drain_runtime_notifications('session-filtered')}, 0,
     'field-filtered subscription does not receive capability notifications';

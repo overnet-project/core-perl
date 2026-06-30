@@ -2,6 +2,10 @@ use strictures 2;
 
 use ExtUtils::MakeMaker;
 
+our $VERSION = '0.001';
+
+my $space = chr 32;
+
 WriteMakefile(
   NAME               => 'Overnet',
   DISTNAME           => 'Overnet-Core',
@@ -26,7 +30,7 @@ WriteMakefile(
   },
   test => {
     TESTS => join(
-      ' ',
+      $space,
       qw(
         t/00-load-program-runtime.t
         t/auth-agent.t
@@ -38,6 +42,7 @@ WriteMakefile(
         t/auth-daemon.t
         t/auth-readme.t
         t/auth-state-store.t
+        t/auth-write-all.t
         t/auth-fixtures.t
         t/authority-delegation.t
         t/authority-hosted-channel.t

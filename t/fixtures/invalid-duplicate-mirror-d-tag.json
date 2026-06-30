@@ -1,17 +1,21 @@
 {
-   "description" : "Invalid: missing required overnet_v tag. A relay MUST reject this event.",
+   "description" : "Invalid: duplicate d mirror tags are present. The d compatibility mirror tag MUST be singular.",
    "expected" : {
       "overnet_valid" : false,
-      "reason" : "Missing required overnet_v tag"
+      "reason" : "Duplicate d tag"
    },
    "input" : {
-      "content" : "{\"provenance\":{\"type\":\"native\"},\"body\":{\"text\":\"Hello\"}}",
+      "content" : "{\"provenance\":{\"type\":\"native\"},\"body\":{\"text\":\"Hello, world!\"}}",
       "created_at" : 1744300800,
-      "id" : "aaaa0000aaaa0000aaaa0000aaaa0000aaaa0000aaaa0000aaaa0000aaaa0000",
+      "id" : "000000000000000000000000000000000000000000000000000000000000000b",
       "kind" : 7800,
       "pubkey" : "b4c5d6b4c5d6b4c5d6b4c5d6b4c5d6b4c5d6b4c5d6b4c5d6b4c5d6b4c5d6b4c5",
-      "sig" : "bbbb1111bbbb1111bbbb1111bbbb1111bbbb1111bbbb1111bbbb1111bbbb1111bbbb1111bbbb1111bbbb1111bbbb1111bbbb1111bbbb1111bbbb1111bbbb1111",
+      "sig" : "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000b",
       "tags" : [
+         [
+            "overnet_v",
+            "0.1.0"
+         ],
          [
             "overnet_et",
             "chat.message"
@@ -35,6 +39,10 @@
          [
             "o",
             "chat.channel"
+         ],
+         [
+            "d",
+            "f47ac10b-58cc-4372-a567-0e02b2c3d479"
          ],
          [
             "d",

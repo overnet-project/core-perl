@@ -1,10 +1,14 @@
 #!/usr/bin/env perl
 
 use strictures 2;
+use English qw(-no_match_vars);
 
+use Carp         qw(croak);
 use Getopt::Long qw(GetOptions);
 
 use Overnet::Auth::Daemon;
+
+our $VERSION = '0.001';
 
 my %args;
 my $help;
@@ -15,21 +19,22 @@ GetOptions(
   'auth-sock=s'   => \$args{endpoint},
   'socket-mode=s' => \$socket_mode,
   'help'          => \$help,
-) or die _usage();
+) or croak _usage();
 
 if ($help) {
-  print _usage();
+  print {*STDOUT} _usage()
+    or croak "Can't write auth-agent usage: $OS_ERROR";
   exit 0;
 }
 
-die _usage()
-  unless defined($args{config_file})
-  && !ref($args{config_file})
-  && length($args{config_file});
+if (!(defined($args{config_file}) && !ref($args{config_file}) && length($args{config_file}))) {
+  croak _usage();
+}
 
 if (defined $socket_mode) {
-  die "--socket-mode must be an octal mode like 0600\n"
-    unless $socket_mode =~ /\A0?[0-7]{3,4}\z/mx;
+  if (!($socket_mode =~ /\A0?[0-7]{3,4}\z/smx)) {
+    croak "--socket-mode must be an octal mode like 0600";
+  }
   $args{socket_mode} = oct($socket_mode);
 }
 

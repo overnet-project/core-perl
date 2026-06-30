@@ -31,6 +31,22 @@
          [
             "e",
             "a1e2f3a1e2f3a1e2f3a1e2f3a1e2f3a1e2f3a1e2f3a1e2f3a1e2f3a1e2f3a1e2"
+         ],
+         [
+            "v",
+            "0.1.0"
+         ],
+         [
+            "t",
+            "chat.message"
+         ],
+         [
+            "o",
+            "chat.channel"
+         ],
+         [
+            "d",
+            "f47ac10b-58cc-4372-a567-0e02b2c3d479"
          ]
       ]
    }

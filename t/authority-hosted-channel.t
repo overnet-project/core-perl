@@ -1,8 +1,5 @@
 use strictures 2;
-use Test::More;
-
-use lib 'lib';
-use lib 'local/lib/perl5';
+use Test2::V0;
 
 use Overnet::Authority::HostedChannel;
 

@@ -6,10 +6,10 @@
    "input" : {
       "content" : "{\"provenance\":{\"type\":\"native\"},\"body\":{\"text\":\"Hello, world!\"}}",
       "created_at" : 1744300800,
-      "id" : "1703a5505c787f79222eebf66a09356525adef9fbb54ac0d1ec56eaa458434a1",
+      "id" : "f9834b94836527a3469c35bdc9f5b358d390b34ce25a6e71452428cd8bb85f4f",
       "kind" : 7800,
-      "pubkey" : "2afc97c5af6cea9d8b03c792cee59788dc46c2ed3a0257755cb5390b7d0b6784",
-      "sig" : "b699dea16bbf33e68d996ef99e2f357e74911752ec1333168b395f165125b5781ca35c351c5930cd6d2186d0a4571aa63506df948419c13ffcf9c0689a1d2a01",
+      "pubkey" : "7d6a28215704d9a963bf2a5d86d9372808d0838a9418dd29feeba301d0e3a20d",
+      "sig" : "f1aaab89186861477d91f21f7e7ef2a3796b5ffa9091c3284ea1227b16965faa69902cb3a9b34a17ba627d90a10550229effb314e278c492cdbbee9534e45cc9",
       "tags" : [
          [
             "overnet_v",
@@ -25,6 +25,22 @@
          ],
          [
             "overnet_oid",
+            "f47ac10b-58cc-4372-a567-0e02b2c3d479"
+         ],
+         [
+            "v",
+            "0.1.0"
+         ],
+         [
+            "t",
+            "chat.message"
+         ],
+         [
+            "o",
+            "chat.channel"
+         ],
+         [
+            "d",
             "f47ac10b-58cc-4372-a567-0e02b2c3d479"
          ]
       ]

@@ -3,12 +3,12 @@ use strictures 2;
 use Cwd qw(getcwd);
 use File::Spec;
 use FindBin;
-use Test::More;
+use Test2::V0;
 
 my $makefile_pl = File::Spec->catfile($FindBin::Bin, '..', 'Makefile.PL');
 
 ok -f $makefile_pl, 'Makefile.PL exists'
-  or BAIL_OUT('Makefile.PL is required');
+  or bail_out('Makefile.PL is required');
 
 my $args = _capture_makefile_args($makefile_pl);
 
@@ -19,7 +19,7 @@ is $args->{ABSTRACT}, 'Perl reference implementation of the Overnet core and pro
 is $args->{VERSION_FROM},     'lib/Overnet.pm', 'version comes from root module';
 is $args->{LICENSE},          'gpl_3',          'license';
 is $args->{MIN_PERL_VERSION}, '5.040',          'minimum Perl version';
-is_deeply(
+is(
   $args->{CONFIGURE_REQUIRES},
   {
     'ExtUtils::MakeMaker' => 0,
@@ -27,9 +27,9 @@ is_deeply(
   },
   'configure prerequisites include modules required to load Makefile.PL',
 );
-is_deeply($args->{EXE_FILES}, ['bin/overnet-auth.pl', 'bin/overnet-auth-agent.pl',], 'auth scripts are installed',);
+is($args->{EXE_FILES}, ['bin/overnet-auth.pl', 'bin/overnet-auth-agent.pl',], 'auth scripts are installed',);
 
-is_deeply(
+is(
   $args->{PREREQ_PM},
   {
     'AnyEvent'             => 0,
@@ -43,9 +43,9 @@ is_deeply(
   'runtime prerequisites are limited to top-level non-core distributions',
 );
 
-is_deeply($args->{TEST_REQUIRES} || {}, {}, 'no extra non-core test-only prerequisites',);
+is($args->{TEST_REQUIRES} || {}, {}, 'no extra non-core test-only prerequisites',);
 
-is_deeply(
+is(
   $args->{META_MERGE},
   {
     resources => {
@@ -56,7 +56,7 @@ is_deeply(
   'metadata resources point at the public repo',
 );
 
-is_deeply(
+is(
   $args->{test},
   {
     TESTS => join(
@@ -72,6 +72,7 @@ is_deeply(
         t/auth-daemon.t
         t/auth-readme.t
         t/auth-state-store.t
+        t/auth-write-all.t
         t/auth-fixtures.t
         t/authority-delegation.t
         t/authority-hosted-channel.t

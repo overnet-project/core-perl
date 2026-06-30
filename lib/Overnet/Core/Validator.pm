@@ -7,9 +7,16 @@ use Net::Nostr::Event;
 
 our $VERSION = '0.001';
 
-my %VALID_KINDS   = (7_800 => 1, 37_800 => 1, 7_801 => 1);
-my %SINGULAR_TAGS = map { $_ => 1 } qw(overnet_v overnet_et overnet_ot overnet_oid overnet_delegate);
-my $JSON          = JSON->new->utf8;
+my %VALID_KINDS = (7_800 => 1, 37_800 => 1, 7_801 => 1);
+my %SINGULAR_TAGS =
+  map { $_ => 1 } qw(overnet_v overnet_et overnet_ot overnet_oid overnet_delegate v t o d);
+my %MIRROR_TAG = (
+  overnet_v   => 'v',
+  overnet_et  => 't',
+  overnet_ot  => 'o',
+  overnet_oid => 'd',
+);
+my $JSON = JSON->new->utf8;
 
 sub validate {
   my ($input, $context) = @_;
@@ -53,11 +60,13 @@ sub _tag_info {
   my %tag_values;
   my %tag_counts;
   for my $tag (@{$tags}) {
-    if (!(@{$tag} >= 2)) {
+    if (!(ref($tag) eq 'ARRAY' && @{$tag})) {
       next;
     }
     $tag_counts{$tag->[0]}++;
-    $tag_values{$tag->[0]} = $tag->[1];
+    if (@{$tag} >= 2) {
+      $tag_values{$tag->[0]} = $tag->[1];
+    }
   }
   return (\%tag_values, \%tag_counts);
 }
@@ -78,6 +87,27 @@ sub _validate_common_tags {
   for my $tag_name (qw(overnet_v overnet_et overnet_ot overnet_oid)) {
     if (!(defined $tag_values->{$tag_name})) {
       push @errors, "Missing required $tag_name tag";
+    }
+  }
+  for my $tag_name (qw(v t o d)) {
+    if (!(defined $tag_values->{$tag_name})) {
+      push @errors, "Missing required $tag_name tag";
+    }
+  }
+  push @errors, _validate_mirror_tags($tag_values);
+  return @errors;
+}
+
+sub _validate_mirror_tags {
+  my ($tag_values) = @_;
+  my @errors;
+  for my $canonical (sort keys %MIRROR_TAG) {
+    my $mirror = $MIRROR_TAG{$canonical};
+    if (!(defined $tag_values->{$canonical} && defined $tag_values->{$mirror})) {
+      next;
+    }
+    if ($tag_values->{$canonical} ne $tag_values->{$mirror}) {
+      push @errors, "Mirror $mirror tag must match $canonical tag";
     }
   }
   return @errors;

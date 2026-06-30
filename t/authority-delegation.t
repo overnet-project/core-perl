@@ -1,8 +1,5 @@
 use strictures 2;
-use Test::More;
-
-use lib 'lib';
-use lib 'local/lib/perl5';
+use Test2::V0;
 
 use Net::Nostr::Key;
 use Overnet::Authority::Delegation;
@@ -24,7 +21,7 @@ subtest 'create_auth_event builds a verifiable kind 22242 auth event' => sub {
   is $event->{kind},       22242,       'the auth event uses kind 22242';
   is $event->{created_at}, $created_at, 'the auth event preserves the requested timestamp';
   is $event->{content},    '',          'the auth event uses an empty content payload';
-  is_deeply $event->{tags},
+  is $event->{tags},
     [[relay => $scope], [challenge => $challenge],],
     'the auth event includes the required relay scope and challenge tags';
   like $event->{id},  qr/\A[0-9a-f]{64}\z/mx,  'the auth event is signed';
@@ -63,7 +60,7 @@ subtest 'create_delegation_grant_event builds a verifiable kind 14142 delegation
   is $event->{kind},       14142,       'the delegation grant uses the default kind 14142';
   is $event->{created_at}, $created_at, 'the delegation grant preserves the requested timestamp';
   is $event->{content},    '',          'the delegation grant uses an empty content payload';
-  is_deeply $event->{tags},
+  is $event->{tags},
     [
     [relay      => $relay_url],
     [server     => $scope],
