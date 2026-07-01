@@ -1,7 +1,7 @@
 use strictures 2;
-use Test::More;
 use FindBin;
 use File::Spec;
+use Test2::V0;
 
 use Overnet::Program::Host;
 
@@ -27,16 +27,15 @@ sub _method_seen {
 {
 
   package Test::SlowFlushHost;
-  use parent 'Overnet::Program::Host';
+  use Moo;
+  extends 'Overnet::Program::Host';
   use Time::HiRes qw(sleep);
 
-  sub new {
-    my ($class) = @_;
-    return bless {
-      poll_interval_ms => 1,
-      poll_calls       => [],
-    }, $class;
-  }
+  has poll_calls => (is => 'ro', default => sub { [] });
+
+  no Moo;
+
+  sub BUILDARGS { return {poll_interval_ms => 1}; }
 
   sub _poll_io {
     my ($self, %args) = @_;
@@ -100,7 +99,7 @@ subtest 'host supervises a real child program over stdio' => sub {
 
   my $observed = $host->observed_notifications;
   is scalar @{$observed}, 2, 'host records observed program notifications';
-  is_deeply(
+  is(
     [map { $_->{method} } @{$observed}],
     ['program.log', 'program.health'],
     'host preserves observed notification order',

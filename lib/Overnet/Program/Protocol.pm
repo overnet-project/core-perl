@@ -1,6 +1,7 @@
 package Overnet::Program::Protocol;
 
 use strictures 2;
+use Moo;
 use Carp       qw(croak);
 use English    qw(-no_match_vars);
 use JSON       ();
@@ -56,8 +57,14 @@ my %SERVICE_REQUEST_METHODS = map { $_ => 1 } qw(
 my %BASELINE_NOTIFICATION_METHODS = (%PROGRAM_NOTIFICATION_METHODS, %RUNTIME_NOTIFICATION_METHODS,);
 my %BASELINE_REQUEST_METHODS      = (%RUNTIME_REQUEST_METHODS,      %SERVICE_REQUEST_METHODS,);
 
-sub new {
-  my ($class, %args) = @_;
+has max_frame_size => (is => 'ro');
+has _buffer        => (is => 'rw');
+
+no Moo;
+
+sub BUILDARGS {
+  my ($class, @args) = @_;
+  my %args = _constructor_args_hash(@args);
   my $max_frame_size =
     exists $args{max_frame_size}
     ? $args{max_frame_size}
@@ -66,17 +73,17 @@ sub new {
     croak "max_frame_size must be a positive integer\n";
   }
 
-  my $self = bless {
+  return {
     max_frame_size => 0 + $max_frame_size,
     _buffer        => q{},
-  }, $class;
-
-  return $self;
+  };
 }
 
-sub max_frame_size {
-  my ($self) = @_;
-  return $self->{max_frame_size};
+sub _constructor_args_hash {
+  my (@args) = @_;
+  return %{$args[0]} if @args == 1 && ref($args[0]) eq 'HASH';
+  return @args       if @args % 2 == 0;
+  die "constructor arguments must be a hash or hash reference\n";
 }
 
 sub buffered_bytes {

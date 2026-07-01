@@ -1,6 +1,6 @@
 use strictures 2;
 use JSON ();
-use Test::More;
+use Test2::V0;
 
 use Overnet::Program::Instance;
 use Overnet::Program::Protocol;
@@ -11,7 +11,8 @@ use Overnet::Program::Services;
 
   package Local::MockAdapter;
 
-  sub new { return bless {}, shift; }
+  use Moo;
+  no Moo;
 
   sub map_input {
     my ($self, %args) = @_;
@@ -335,7 +336,7 @@ subtest 'ready session rejects adapter service requests without adapters.use' =>
   ok !$open->{send}{ok}, 'open_session is denied';
   is $open->{send}{error}{code},                         'runtime.permission_denied', 'permission error code returned';
   is $open->{send}{error}{details}{required_permission}, 'adapters.use',              'required permission is reported';
-  is_deeply $runtime->adapter_session_ids, [], 'no adapter session is created';
+  is $runtime->adapter_session_ids,                      [],                          'no adapter session is created';
 };
 
 subtest 'ready session rejects runtime-originated notifications from program' => sub {

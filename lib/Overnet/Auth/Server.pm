@@ -1,6 +1,7 @@
 package Overnet::Auth::Server;
 
 use strictures 2;
+use Moo;
 use Carp    qw(croak);
 use English qw(-no_match_vars);
 
@@ -9,16 +10,29 @@ use Overnet::Auth::SocketIO;
 
 our $VERSION = '0.001';
 
-sub new {
-  my ($class, %args) = @_;
+has agent    => (is => 'ro', reader => '_agent');
+has protocol => (is => 'ro', reader => '_protocol');
+
+no Moo;
+
+sub BUILDARGS {
+  my ($class, @args) = @_;
+  my %args = _constructor_args_hash(@args);
   if (!(ref($args{agent}) && $args{agent}->can('dispatch'))) {
     croak "agent is required\n";
   }
 
-  return bless {
+  return {
     agent    => $args{agent},
     protocol => $args{protocol} || Overnet::Program::Protocol->new,
-  }, $class;
+  };
+}
+
+sub _constructor_args_hash {
+  my (@args) = @_;
+  return %{$args[0]} if @args == 1 && ref($args[0]) eq 'HASH';
+  return @args       if @args % 2 == 0;
+  die "constructor arguments must be a hash or hash reference\n";
 }
 
 sub serve_socket {

@@ -1,14 +1,12 @@
 package Overnet::Auth::Backend;
 
 use strictures 2;
+use Moo;
 use Carp qw(croak);
 
 our $VERSION = '0.001';
 
-sub new {
-  my ($class, %args) = @_;
-  return bless {%args}, $class;
-}
+no Moo;
 
 sub backend_type {
   my ($self) = @_;

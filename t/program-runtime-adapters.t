@@ -1,5 +1,5 @@
 use strictures 2;
-use Test::More;
+use Test2::V0;
 
 use Overnet::Program::Runtime;
 use Overnet::Program::Services;
@@ -18,7 +18,8 @@ sub _random_bytes_cb {
 
   package Local::MockAdapter;
 
-  sub new { return bless {}, shift; }
+  use Moo;
+  no Moo;
 
   sub map_input {
     my ($self, %args) = @_;
@@ -51,7 +52,8 @@ sub _random_bytes_cb {
 
   package Local::SessionConfigAdapter;
 
-  sub new { return bless {}, shift; }
+  use Moo;
+  no Moo;
 
   sub map_input {
     my ($self, %args) = @_;
@@ -82,7 +84,8 @@ sub _random_bytes_cb {
 
   package Local::CapabilityAdapter;
 
-  sub new { return bless {}, shift; }
+  use Moo;
+  no Moo;
 
   sub map_input {
     return {
@@ -112,7 +115,8 @@ sub _random_bytes_cb {
 
   package Local::BadCapabilityAdapter;
 
-  sub new { return bless {}, shift; }
+  use Moo;
+  no Moo;
 
   sub map_input {
     return {
@@ -140,9 +144,12 @@ sub _random_bytes_cb {
 
   package Local::SecretAwareAdapter;
 
-  sub new {
-    return bless {opened_sessions => {}, closed_sessions => []}, shift;
-  }
+  use Moo;
+
+  has opened_sessions => (is => 'ro', default => sub { {} });
+  has closed_sessions => (is => 'ro', default => sub { [] });
+
+  no Moo;
 
   sub supported_secret_slots {
     return ['server_password', 'nickserv_password', 'sasl_password',];
@@ -182,7 +189,8 @@ sub _random_bytes_cb {
 
   package Local::UnsupportedSecretAdapter;
 
-  sub new { return bless {}, shift; }
+  use Moo;
+  no Moo;
 }
 
 subtest 'runtime registers adapters and opens sessions' => sub {
@@ -200,8 +208,8 @@ subtest 'runtime registers adapters and opens sessions' => sub {
     config     => {mode => 'test'},
   );
 
-  is $session->adapter_id, 'mock.adapter', 'session records adapter id';
-  is_deeply $runtime->adapter_session_ids, [$session->session_id], 'runtime tracks session';
+  is $session->adapter_id,          'mock.adapter',         'session records adapter id';
+  is $runtime->adapter_session_ids, [$session->session_id], 'runtime tracks session';
 };
 
 subtest 'runtime can instantiate adapters from class definitions' => sub {
@@ -347,8 +355,8 @@ subtest 'services open, use, derive, and close adapter sessions' => sub {
   );
   is $derived->{state}[0]{operation}, 'channel_presence', 'derived adapter output returned';
 
-  is_deeply $services->close_adapter_session(adapter_session_id => $session_id), {}, 'close returns empty result';
-  is_deeply $runtime->adapter_session_ids, [], 'session removed after close';
+  is $services->close_adapter_session(adapter_session_id => $session_id), {}, 'close returns empty result';
+  is $runtime->adapter_session_ids, [], 'session removed after close';
 };
 
 subtest 'dispatch_request enforces adapters.use permission' => sub {
@@ -372,7 +380,7 @@ subtest 'dispatch_request enforces adapters.use permission' => sub {
   is ref($error),                            'HASH',                      'permission denial is structured';
   is $error->{code},                         'runtime.permission_denied', 'permission denial code returned';
   is $error->{details}{required_permission}, 'adapters.use',              'required permission is reported';
-  is_deeply $runtime->adapter_session_ids, [], 'session is not opened without permission';
+  is $runtime->adapter_session_ids,          [],                          'session is not opened without permission';
 
   my $opened = $services->dispatch_request(
     'adapters.open_session',
@@ -516,7 +524,7 @@ subtest
   );
 
   my $session = $runtime->get_adapter_session($opened->{adapter_session_id});
-  is_deeply $session->config, {mode => 'secure'}, 'adapter session stores only non-secret config';
+  is $session->config, {mode => 'secure'}, 'adapter session stores only non-secret config';
   is $adapter->{opened_sessions}{$opened->{adapter_session_id}}
     {secret_values}{server_password},
     'server-secret',
@@ -536,7 +544,7 @@ subtest
   );
   is $mapped->{events}[0]{session_mode}, 'secure', 'non-secret session config still flows through session methods';
 
-  is_deeply $services->dispatch_request(
+  is $services->dispatch_request(
     'adapters.close_session',
     {
       adapter_session_id => $opened->{adapter_session_id},

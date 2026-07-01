@@ -1,6 +1,7 @@
 package Overnet::Program::Store;
 
 use strictures 2;
+use Moo;
 use Carp qw(croak);
 use JSON ();
 
@@ -8,13 +9,25 @@ our $VERSION = '0.001';
 
 my $JSON = JSON->new->utf8->canonical;
 
-sub new {
-  my ($class, %args) = @_;
-  return bless {
-    %args,
+has streams   => (is => 'rw', accessor => '_streams');
+has documents => (is => 'rw', accessor => '_documents');
+
+no Moo;
+
+sub BUILDARGS {
+  my ($class, @args) = @_;
+  _constructor_args_hash(@args);
+  return {
     streams   => {},
     documents => {},
-  }, $class;
+  };
+}
+
+sub _constructor_args_hash {
+  my (@args) = @_;
+  return %{$args[0]} if @args == 1 && ref($args[0]) eq 'HASH';
+  return @args       if @args % 2 == 0;
+  die "constructor arguments must be a hash or hash reference\n";
 }
 
 sub has_document {

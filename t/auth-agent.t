@@ -1,7 +1,7 @@
 use strictures 2;
 
 use JSON ();
-use Test::More;
+use Test2::V0;
 
 use Overnet::Auth::Agent;
 use Overnet::Core::Nostr;
@@ -13,13 +13,12 @@ my $fixture_pubkey = '4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b70407
 
   package t::auth_agent::CountingBackend;
 
-  sub new {
-    my ($class, %args) = @_;
-    return bless {
-      calls  => 0,
-      secret => $args{secret},
-    }, $class;
-  }
+  use Moo;
+
+  has calls  => (is => 'rw', default => sub {0});
+  has secret => (is => 'ro');
+
+  no Moo;
 
   sub load_signing_key {
     my ($self) = @_;
@@ -27,7 +26,6 @@ my $fixture_pubkey = '4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b70407
     return (Overnet::Core::Nostr->load_key(privkey => $self->{secret}), undef,);
   }
 
-  sub calls { return $_[0]->{calls}; }
 }
 
 subtest 'sessions.authorize uses the direct_secret backend type' => sub {
@@ -144,8 +142,8 @@ subtest 'sessions.authorize uses the pass backend type' => sub {
     }
   );
 
-  is $response->{ok}, 1, 'authorize succeeds';
-  is_deeply \@seen, ['pass', 'show', 'overnet-priv-key'], 'agent routed through the pass backend';
+  is $response->{ok}, 1,                                    'authorize succeeds';
+  is \@seen,          ['pass', 'show', 'overnet-priv-key'], 'agent routed through the pass backend';
   is $response->{result}{artifacts}[0]{value}{pubkey}, $fixture_pubkey,
     'authorize signs with the pass backend identity';
 };
@@ -500,7 +498,7 @@ subtest 'sessions.revoke succeeds without consulting an unavailable backend' => 
   );
 
   is $revoke->{ok}, 1, 'revoke succeeds';
-  is_deeply $revoke->{result}, {}, 'revoke does not depend on backend availability';
+  is $revoke->{result}, {}, 'revoke does not depend on backend availability';
 };
 
 subtest 'policies.grant enables matching headless authorization until policies.revoke removes it' => sub {
@@ -703,7 +701,7 @@ subtest 'policies.list and sessions.list expose stored auth state' => sub {
   );
 
   is $policies->{ok}, 1, 'policies.list succeeds';
-  is_deeply $policies->{result}{policies},
+  is $policies->{result}{policies},
     [
     {
       policy_id   => 'policy-1',
@@ -716,7 +714,7 @@ subtest 'policies.list and sessions.list expose stored auth state' => sub {
     ],
     'policies.list returns stored policies with ids';
   is $sessions->{ok}, 1, 'sessions.list succeeds';
-  is_deeply $sessions->{result}{sessions},
+  is $sessions->{result}{sessions},
     [
     {
       session_handle => {id => 'sess-1'},
@@ -764,7 +762,7 @@ subtest 'service_pins.set, service_pins.list, and service_pins.forget manage pin
   );
 
   is $list->{ok}, 1, 'service_pins.list succeeds';
-  is_deeply $list->{result}{service_pins},
+  is $list->{result}{service_pins},
     [
     {
       locator          => 'wss://relay.example.test/auth',
@@ -799,7 +797,7 @@ subtest 'service_pins.set, service_pins.list, and service_pins.forget manage pin
     }
   );
 
-  is_deeply $empty->{result}{service_pins}, [], 'forgotten service pins are removed';
+  is $empty->{result}{service_pins}, [], 'forgotten service pins are removed';
 };
 
 subtest 'policies.grant advances policy ids past preloaded policy ids and accepts service_identity-only policies' =>
@@ -842,7 +840,7 @@ subtest 'policies.grant advances policy ids past preloaded policy ids and accept
 
   is $grant->{ok},                        1,           'policy grant succeeds';
   is $grant->{result}{policy}{policy_id}, 'policy-10', 'policy ids advance past preloaded ids';
-  is_deeply $grant->{result}{policy}{service_identity},
+  is $grant->{result}{policy}{service_identity},
     {
     scheme => 'nostr.pubkey',
     value  => ('2' x 64),
@@ -984,8 +982,8 @@ subtest 'authorize and revoke persist session state and roll back on state write
     }
   );
 
-  is $revoke->{ok}, 1, 'revoke succeeds';
-  is_deeply $writes[1]{sessions}, [], 'revoke persisted session removal';
+  is $revoke->{ok},        1,  'revoke succeeds';
+  is $writes[1]{sessions}, [], 'revoke persisted session removal';
 
   $fail = 1;
   my $failed = $agent->dispatch(
@@ -1013,9 +1011,9 @@ subtest 'authorize and revoke persist session state and roll back on state write
     }
   );
 
-  is $failed->{ok},          0,                  'failed persistence turns the mutation into an error';
-  is $failed->{error}{code}, 'internal_failure', 'state write failure is surfaced';
-  is_deeply $policies->{result}{policies}, [], 'failed persistence rolled the in-memory mutation back';
+  is $failed->{ok},                 0,                  'failed persistence turns the mutation into an error';
+  is $failed->{error}{code},        'internal_failure', 'state write failure is surfaced';
+  is $policies->{result}{policies}, [],                 'failed persistence rolled the in-memory mutation back';
 };
 
 done_testing;

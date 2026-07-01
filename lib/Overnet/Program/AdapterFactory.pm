@@ -1,15 +1,13 @@
 package Overnet::Program::AdapterFactory;
 
 use strictures 2;
+use Moo;
 use Carp    qw(croak);
 use English qw(-no_match_vars);
 
 our $VERSION = '0.001';
 
-sub new {
-  my ($class, %args) = @_;
-  return bless \%args, $class;
-}
+no Moo;
 
 sub build {
   my ($self, %args) = @_;

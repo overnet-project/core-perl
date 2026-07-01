@@ -1,6 +1,7 @@
 package Overnet::Program::SecretProvider;
 
 use strictures 2;
+use Moo;
 use Carp        qw(croak);
 use English     qw(-no_match_vars);
 use JSON        ();
@@ -9,8 +10,19 @@ use Time::HiRes qw(time);
 
 our $VERSION = '0.001';
 
-sub new {
-  my ($class, %args) = @_;
+has now_cb               => (is => 'ro', reader   => '_now_cb');
+has random_bytes_cb      => (is => 'ro', reader   => '_random_bytes_cb');
+has secrets              => (is => 'rw', accessor => '_secrets');
+has secret_policies      => (is => 'rw', accessor => '_secret_policies');
+has secret_handle_ttl_ms => (is => 'ro', reader   => '_secret_handle_ttl_ms');
+has secret_handles       => (is => 'rw', accessor => '_secret_handles');
+has audit_events         => (is => 'rw', accessor => '_audit_events');
+
+no Moo;
+
+sub BUILDARGS {
+  my ($class, @args) = @_;
+  my %args = _constructor_args_hash(@args);
 
   my $now_cb          = $args{now_cb} || sub { int(time() * 1000) };
   my $random_bytes_cb = $args{random_bytes_cb};
@@ -41,7 +53,7 @@ sub new {
   _validate_secrets($secrets);
   _validate_secret_policies($secret_policies);
 
-  return bless {
+  return {
     now_cb               => $now_cb,
     random_bytes_cb      => $random_bytes_cb,
     secrets              => _clone_json($secrets),
@@ -49,7 +61,14 @@ sub new {
     secret_handle_ttl_ms => 0 + $secret_handle_ttl_ms,
     secret_handles       => {},
     audit_events         => [],
-  }, $class;
+  };
+}
+
+sub _constructor_args_hash {
+  my (@args) = @_;
+  return %{$args[0]} if @args == 1 && ref($args[0]) eq 'HASH';
+  return @args       if @args % 2 == 0;
+  die "constructor arguments must be a hash or hash reference\n";
 }
 
 sub has_secret {

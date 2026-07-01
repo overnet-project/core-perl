@@ -1,25 +1,37 @@
 package Overnet::Program::AdapterRegistry;
 
 use strictures 2;
+use Moo;
 use Carp qw(croak);
 use Overnet::Program::AdapterFactory;
 
 our $VERSION = '0.001';
 
-sub new {
-  my ($class, %args) = @_;
+has adapters        => (is => 'rw', accessor => '_adapters');
+has adapter_factory => (is => 'ro', reader   => '_adapter_factory');
+
+no Moo;
+
+sub BUILDARGS {
+  my ($class, @args) = @_;
+  my %args            = _constructor_args_hash(@args);
   my $adapter_factory = $args{adapter_factory} || Overnet::Program::AdapterFactory->new;
 
   if (!(ref($adapter_factory) && $adapter_factory->isa('Overnet::Program::AdapterFactory'))) {
     croak "adapter_factory must be an Overnet::Program::AdapterFactory instance\n";
   }
 
-  my $self = bless {
-    %args,
+  return {
     adapters        => {},
     adapter_factory => $adapter_factory,
-  }, $class;
-  return $self;
+  };
+}
+
+sub _constructor_args_hash {
+  my (@args) = @_;
+  return %{$args[0]} if @args == 1 && ref($args[0]) eq 'HASH';
+  return @args       if @args % 2 == 0;
+  die "constructor arguments must be a hash or hash reference\n";
 }
 
 sub register {

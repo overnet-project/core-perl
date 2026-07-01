@@ -1,13 +1,18 @@
 package Overnet::Auth::Backend::Pass;
 
 use strictures 2;
+use Moo;
 
-use parent 'Overnet::Auth::Backend';
+extends 'Overnet::Auth::Backend';
 
 use English qw(-no_match_vars);
 use Overnet::Core::Nostr;
 
 our $VERSION = '0.001';
+
+has command_runner => (is => 'ro');
+
+no Moo;
 
 sub backend_type { return 'pass'; }
 

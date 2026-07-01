@@ -25,6 +25,7 @@ WriteMakefile(
     'IO::Socket::SSL'      => 0,
     'JSON'                 => 0,
     'JSON::Schema::Modern' => 0,
+    'Moo'                  => 0,
     'Net::Nostr'           => 0,
     'strictures'           => 2,
   },

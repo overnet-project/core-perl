@@ -1,6 +1,7 @@
 package Overnet::Program::Host;
 
 use strictures 2;
+use Moo;
 use Carp       qw(croak);
 use English    qw(-no_match_vars);
 use IO::Handle ();
@@ -17,8 +18,28 @@ use Overnet::Program::Services;
 
 our $VERSION = '0.001';
 
-sub new {
-  my ($class, %args) = @_;
+has command                => (is => 'ro', reader   => '_command');
+has runtime                => (is => 'ro', reader   => '_runtime');
+has service_handler        => (is => 'ro', reader   => '_service_handler');
+has protocol               => (is => 'ro', reader   => '_protocol');
+has instance               => (is => 'ro', reader   => '_instance');
+has poll_interval_ms       => (is => 'ro', reader   => '_poll_interval_ms');
+has read_chunk_size        => (is => 'ro', reader   => '_read_chunk_size');
+has startup_timeout_ms     => (is => 'ro', reader   => '_startup_timeout_ms');
+has shutdown_timeout_ms    => (is => 'ro', reader   => '_shutdown_timeout_ms');
+has transcript             => (is => 'rw', accessor => '_transcript');
+has observed_notifications => (is => 'rw', accessor => '_observed_notifications');
+has stderr_output          => (is => 'rw', accessor => '_raw_stderr_output');
+has pid                    => (is => 'rw', accessor => '_pid');
+has wait_status            => (is => 'rw', accessor => '_wait_status');
+has exit_code              => (is => 'rw', accessor => '_exit_code');
+has exit_signal            => (is => 'rw', accessor => '_exit_signal');
+
+no Moo;
+
+sub BUILDARGS {
+  my ($class, @args) = @_;
+  my %args = _constructor_args_hash(@args);
 
   my $command             = $args{command};
   my $runtime             = $args{runtime};
@@ -45,7 +66,7 @@ sub new {
   $service_handler = _build_service_handler($service_handler, $runtime);
   my $instance = _build_instance($protocol, $service_handler, \%args);
 
-  return bless {
+  return {
     command                => [@{$command}],
     runtime                => $runtime,
     service_handler        => $service_handler,
@@ -58,7 +79,14 @@ sub new {
     transcript             => [],
     observed_notifications => [],
     stderr_output          => q{},
-  }, $class;
+  };
+}
+
+sub _constructor_args_hash {
+  my (@args) = @_;
+  return %{$args[0]} if @args == 1 && ref($args[0]) eq 'HASH';
+  return @args       if @args % 2 == 0;
+  die "constructor arguments must be a hash or hash reference\n";
 }
 
 sub _validate_host_args {

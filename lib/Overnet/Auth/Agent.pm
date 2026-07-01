@@ -1,6 +1,7 @@
 package Overnet::Auth::Agent;
 
 use strictures 2;
+use Moo;
 use English qw(-no_match_vars);
 
 use JSON         ();
@@ -10,10 +11,22 @@ use Overnet::Authority::Delegation;
 
 our $VERSION = '0.001';
 
-sub new {
-  my ($class, %args) = @_;
+has identities      => (is => 'rw', accessor => '_identities');
+has identity_order  => (is => 'rw', accessor => '_identity_order');
+has policies        => (is => 'rw', accessor => '_policies');
+has service_pins    => (is => 'rw', accessor => '_service_pins');
+has sessions        => (is => 'rw', accessor => '_sessions');
+has state_writer    => (is => 'ro', reader   => '_state_writer');
+has next_policy_id  => (is => 'rw', accessor => '_next_policy_id_value');
+has next_session_id => (is => 'rw', accessor => '_next_session_id_value');
 
-  my $self = bless {
+no Moo;
+
+sub BUILDARGS {
+  my ($class, @args) = @_;
+  my %args = _constructor_args_hash(@args);
+
+  my $state = {
     identities      => {},
     identity_order  => [],
     policies        => [],
@@ -22,7 +35,7 @@ sub new {
     state_writer    => $args{state_writer},
     next_policy_id  => 1,
     next_session_id => 1,
-  }, $class;
+  };
 
   for my $identity (@{$args{identities} || []}) {
     if (!(ref($identity) eq 'HASH')) {
@@ -34,8 +47,8 @@ sub new {
     }
 
     my %stored = %{$identity};
-    $self->{identities}{$identity_id} = \%stored;
-    push @{$self->{identity_order}}, $identity_id;
+    $state->{identities}{$identity_id} = \%stored;
+    push @{$state->{identity_order}}, $identity_id;
   }
 
   for my $policy (@{$args{policies} || []}) {
@@ -49,14 +62,14 @@ sub new {
 
     my $policy_id = _policy_id_value($policy->{policy_id});
     if (!(defined $policy_id)) {
-      $policy_id = $self->_next_policy_id;
+      $policy_id = _next_policy_id($state);
     }
     $stored->{policy_id} = $policy_id;
-    push @{$self->{policies}}, $stored;
-    $self->_note_policy_id($policy_id);
+    push @{$state->{policies}}, $stored;
+    _note_policy_id($state, $policy_id);
   }
 
-  $self->{service_pins} = {
+  $state->{service_pins} = {
     map  { $_ => {%{$args{service_pins}{$_}}} }
     grep { ref($args{service_pins}{$_}) eq 'HASH' }
       keys %{$args{service_pins} || {}}
@@ -70,13 +83,20 @@ sub new {
     if (!(defined $handle)) {
       next;
     }
-    $self->{sessions}{$handle} = {%{$session}, session_handle => {%{$session->{session_handle} || {}}},};
-    while (exists $self->{sessions}{'sess-' . $self->{next_session_id}}) {
-      $self->{next_session_id}++;
+    $state->{sessions}{$handle} = {%{$session}, session_handle => {%{$session->{session_handle} || {}}},};
+    while (exists $state->{sessions}{'sess-' . $state->{next_session_id}}) {
+      $state->{next_session_id}++;
     }
   }
 
-  return $self;
+  return $state;
+}
+
+sub _constructor_args_hash {
+  my (@args) = @_;
+  return %{$args[0]} if @args == 1 && ref($args[0]) eq 'HASH';
+  return @args       if @args % 2 == 0;
+  die "constructor arguments must be a hash or hash reference\n";
 }
 
 sub dispatch {

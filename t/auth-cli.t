@@ -3,7 +3,7 @@ use strictures 2;
 use File::Spec;
 use FindBin;
 use JSON ();
-use Test::More;
+use Test2::V0;
 
 use Overnet::Auth::CLI;
 
@@ -11,13 +11,12 @@ use Overnet::Auth::CLI;
 
   package t::auth_cli::FakeClient;
 
-  sub new {
-    my ($class, %args) = @_;
-    return bless {
-      responses => $args{responses} || {},
-      calls     => [],
-    }, $class;
-  }
+  use Moo;
+
+  has responses => (is => 'ro', default => sub { {} });
+  has calls => (is => 'ro', reader => '_calls', default => sub { [] });
+
+  no Moo;
 
   sub identities_list {
     my ($self) = @_;
@@ -166,7 +165,7 @@ subtest 'identities command prints the identity list result as JSON' => sub {
   );
 
   is $result->{exit_code}, 0, 'identities exits successfully';
-  is_deeply JSON::decode_json($result->{output}),
+  is JSON::decode_json($result->{output}),
     {
     ok     => JSON::true,
     result => {
@@ -182,7 +181,7 @@ subtest 'identities command prints the identity list result as JSON' => sub {
     },
     },
     'identities prints the auth-agent result payload';
-  is_deeply $client->calls,
+  is $client->calls,
     [
     {
       method => 'identities.list',
@@ -230,7 +229,7 @@ JSON
   );
 
   is $result->{exit_code}, 0, 'authorize exits successfully';
-  is_deeply JSON::decode_json($result->{output}),
+  is JSON::decode_json($result->{output}),
     {
     ok     => JSON::true,
     result => {
@@ -238,7 +237,7 @@ JSON
     },
     },
     'authorize prints the auth-agent result payload';
-  is_deeply $client->calls,
+  is $client->calls,
     [
     {
       method => 'sessions.authorize',
@@ -325,7 +324,7 @@ subtest 'policies and sessions commands print daemon-managed state as JSON' => s
 
   is $policies->{exit_code}, 0, 'policies exits successfully';
   is $sessions->{exit_code}, 0, 'sessions exits successfully';
-  is_deeply JSON::decode_json($policies->{output}),
+  is JSON::decode_json($policies->{output}),
     {
     ok     => JSON::true,
     result => {
@@ -342,7 +341,7 @@ subtest 'policies and sessions commands print daemon-managed state as JSON' => s
     },
     },
     'policies prints daemon-managed policy state';
-  is_deeply JSON::decode_json($sessions->{output}),
+  is JSON::decode_json($sessions->{output}),
     {
     ok     => JSON::true,
     result => {
@@ -447,7 +446,7 @@ subtest
   is $pins->{exit_code},   0, 'service-pins exits successfully';
   is $set->{exit_code},    0, 'service-pin-set exits successfully';
   is $forget->{exit_code}, 0, 'service-pin-forget exits successfully';
-  is_deeply $client->calls,
+  is $client->calls,
     [
     {
       method => 'policies.grant',
@@ -531,7 +530,7 @@ subtest 'renew and revoke commands wrap session ids as session handles' => sub {
 
   is $renew->{exit_code},  0, 'renew exits successfully';
   is $revoke->{exit_code}, 0, 'revoke exits successfully';
-  is_deeply $client->calls,
+  is $client->calls,
     [
     {
       method => 'sessions.renew',

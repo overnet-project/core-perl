@@ -1,13 +1,21 @@
 package Overnet::Program::Subscription;
 
 use strictures 2;
+use Moo;
 use Carp qw(croak);
 use Net::Nostr::Event;
 
 our $VERSION = '0.001';
 
-sub new {
-  my ($class, %args) = @_;
+has session_id      => (is => 'ro');
+has subscription_id => (is => 'ro');
+has query           => (is => 'ro', reader => '_query');
+
+no Moo;
+
+sub BUILDARGS {
+  my ($class, @args) = @_;
+  my %args = _constructor_args_hash(@args);
 
   my $session_id      = $args{session_id};
   my $subscription_id = $args{subscription_id};
@@ -23,21 +31,18 @@ sub new {
     croak "query must be an object\n";
   }
 
-  return bless {
+  return {
     session_id      => $session_id,
     subscription_id => $subscription_id,
     query           => {%{$query}},
-  }, $class;
+  };
 }
 
-sub session_id {
-  my ($self) = @_;
-  return $self->{session_id};
-}
-
-sub subscription_id {
-  my ($self) = @_;
-  return $self->{subscription_id};
+sub _constructor_args_hash {
+  my (@args) = @_;
+  return %{$args[0]} if @args == 1 && ref($args[0]) eq 'HASH';
+  return @args       if @args % 2 == 0;
+  die "constructor arguments must be a hash or hash reference\n";
 }
 
 sub query {

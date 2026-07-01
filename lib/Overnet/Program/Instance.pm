@@ -1,6 +1,7 @@
 package Overnet::Program::Instance;
 
 use strictures 2;
+use Moo;
 use Carp    qw(croak);
 use English qw(-no_match_vars);
 use Overnet::Program::Protocol;
@@ -8,8 +9,28 @@ use Overnet::Program::Services;
 
 our $VERSION = '0.001';
 
-sub new {
-  my ($class, %args) = @_;
+has protocol                    => (is => 'ro', reader   => '_protocol');
+has supported_protocol_versions => (is => 'ro', reader   => '_supported_protocol_versions');
+has program_id                  => (is => 'ro', reader   => '_program_id');
+has instance_id                 => (is => 'ro', reader   => '_instance_id');
+has runtime_program_id          => (is => 'ro', reader   => '_runtime_program_id');
+has config                      => (is => 'ro', reader   => '_config');
+has permissions                 => (is => 'ro', reader   => '_permissions');
+has services                    => (is => 'ro', reader   => '_services');
+has service_handler             => (is => 'ro', reader   => '_service_handler');
+has state                       => (is => 'rw', accessor => '_state');
+has next_request_id             => (is => 'rw', accessor => '_next_request_id');
+has inflight                    => (is => 'rw', accessor => '_inflight');
+has selected_protocol_version   => (is => 'rw', accessor => '_selected_protocol_version');
+has peer_program_id             => (is => 'rw', accessor => '_peer_program_id');
+has peer_program_version        => (is => 'rw', accessor => '_peer_program_version');
+has peer_metadata               => (is => 'rw', accessor => '_peer_metadata');
+
+no Moo;
+
+sub BUILDARGS {
+  my ($class, @args) = @_;
+  my %args = _constructor_args_hash(@args);
 
   my $protocol                    = $args{protocol}                    || Overnet::Program::Protocol->new;
   my $supported_protocol_versions = $args{supported_protocol_versions} || ['0.1'];
@@ -28,7 +49,7 @@ sub new {
     config                      => $config,
   );
 
-  return bless {
+  return {
     protocol                    => $protocol,
     supported_protocol_versions => [@{$supported_protocol_versions}],
     program_id                  => $program_id,
@@ -41,7 +62,14 @@ sub new {
     state                       => 'awaiting_hello',
     next_request_id             => 1,
     inflight                    => {},
-  }, $class;
+  };
+}
+
+sub _constructor_args_hash {
+  my (@args) = @_;
+  return %{$args[0]} if @args == 1 && ref($args[0]) eq 'HASH';
+  return @args       if @args % 2 == 0;
+  die "constructor arguments must be a hash or hash reference\n";
 }
 
 sub _config_from_args {

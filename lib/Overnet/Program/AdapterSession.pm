@@ -1,12 +1,23 @@
 package Overnet::Program::AdapterSession;
 
 use strictures 2;
+use Moo;
 use Carp qw(croak);
 
 our $VERSION = '0.001';
 
-sub new {
-  my ($class, %args) = @_;
+has session_id         => (is => 'ro');
+has adapter_id         => (is => 'ro');
+has adapter            => (is => 'ro', reader => '_adapter');
+has config             => (is => 'ro');
+has program_session_id => (is => 'ro');
+has program_id         => (is => 'ro');
+
+no Moo;
+
+sub BUILDARGS {
+  my ($class, @args) = @_;
+  my %args = _constructor_args_hash(@args);
 
   my $session_id         = $args{session_id};
   my $adapter_id         = $args{adapter_id};
@@ -35,39 +46,21 @@ sub new {
     croak "program_id must be a non-empty string\n";
   }
 
-  return bless {
+  return {
     session_id         => $session_id,
     adapter_id         => $adapter_id,
     adapter            => $adapter,
     config             => $config,
     program_session_id => $program_session_id,
     program_id         => $program_id,
-  }, $class;
+  };
 }
 
-sub session_id {
-  my ($self) = @_;
-  return $self->{session_id};
-}
-
-sub adapter_id {
-  my ($self) = @_;
-  return $self->{adapter_id};
-}
-
-sub config {
-  my ($self) = @_;
-  return $self->{config};
-}
-
-sub program_session_id {
-  my ($self) = @_;
-  return $self->{program_session_id};
-}
-
-sub program_id {
-  my ($self) = @_;
-  return $self->{program_id};
+sub _constructor_args_hash {
+  my (@args) = @_;
+  return %{$args[0]} if @args == 1 && ref($args[0]) eq 'HASH';
+  return @args       if @args % 2 == 0;
+  die "constructor arguments must be a hash or hash reference\n";
 }
 
 sub open_session {

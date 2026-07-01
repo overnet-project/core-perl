@@ -1,6 +1,7 @@
 package Overnet::Auth::Config;
 
 use strictures 2;
+use Moo;
 use Carp    qw(croak);
 use English qw(-no_match_vars);
 
@@ -8,8 +9,13 @@ use JSON ();
 
 our $VERSION = '0.001';
 
-sub new {
-  my ($class, %args) = @_;
+has config => (is => 'ro', reader => '_raw_config');
+
+no Moo;
+
+sub BUILDARGS {
+  my ($class, @args) = @_;
+  my %args   = _constructor_args_hash(@args);
   my $config = exists $args{config} ? $args{config} : {};
 
   if (!(ref($config) eq 'HASH')) {
@@ -40,7 +46,14 @@ sub new {
     croak "auth config sessions must be an array\n";
   }
 
-  return bless {config => _clone($config),}, $class;
+  return {config => _clone($config),};
+}
+
+sub _constructor_args_hash {
+  my (@args) = @_;
+  return %{$args[0]} if @args == 1 && ref($args[0]) eq 'HASH';
+  return @args       if @args % 2 == 0;
+  die "constructor arguments must be a hash or hash reference\n";
 }
 
 sub load_file {

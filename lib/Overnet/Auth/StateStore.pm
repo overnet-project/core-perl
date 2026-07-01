@@ -1,6 +1,7 @@
 package Overnet::Auth::StateStore;
 
 use strictures 2;
+use Moo;
 use Carp    qw(croak);
 use English qw(-no_match_vars);
 
@@ -15,20 +16,27 @@ $STATE_JSON->utf8;
 $STATE_JSON->canonical;
 $STATE_JSON->pretty;
 
-sub new {
-  my ($class, %args) = @_;
+has path => (is => 'ro');
+
+no Moo;
+
+sub BUILDARGS {
+  my ($class, @args) = @_;
+  my %args = _constructor_args_hash(@args);
   my $path = $args{path};
 
   if (!(defined $path && !ref($path) && length($path))) {
     croak "path is required\n";
   }
 
-  return bless {path => $path,}, $class;
+  return {path => $path,};
 }
 
-sub path {
-  my ($self) = @_;
-  return $self->{path};
+sub _constructor_args_hash {
+  my (@args) = @_;
+  return %{$args[0]} if @args == 1 && ref($args[0]) eq 'HASH';
+  return @args       if @args % 2 == 0;
+  die "constructor arguments must be a hash or hash reference\n";
 }
 
 sub load_state {

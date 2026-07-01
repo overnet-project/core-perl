@@ -1,6 +1,7 @@
 package Overnet::Program::Runtime;
 
 use strictures 2;
+use Moo;
 use Carp       qw(croak);
 use English    qw(-no_match_vars);
 use JSON       ();
@@ -21,8 +22,25 @@ our $VERSION = '0.001';
 
 my $JSON = JSON->new->utf8->canonical;
 
-sub new {
-  my ($class, %args) = @_;
+has adapter_registry      => (is => 'ro', reader   => '_adapter_registry');
+has store                 => (is => 'ro', reader   => '_store');
+has secret_provider       => (is => 'ro', reader   => '_secret_provider');
+has now_cb                => (is => 'ro', reader   => '_now_cb');
+has config                => (is => 'ro', reader   => '_raw_config');
+has config_description    => (is => 'ro', reader   => '_raw_config_description');
+has next_session_id       => (is => 'rw', accessor => '_next_session_id_value');
+has adapter_sessions      => (is => 'rw', accessor => '_adapter_sessions');
+has timers                => (is => 'rw', accessor => '_timers');
+has emitted_items         => (is => 'rw', accessor => '_emitted_items');
+has subscriptions         => (is => 'rw', accessor => '_subscriptions');
+has nostr_subscriptions   => (is => 'rw', accessor => '_nostr_subscriptions');
+has runtime_notifications => (is => 'rw', accessor => '_runtime_notifications');
+
+no Moo;
+
+sub BUILDARGS {
+  my ($class, @args) = @_;
+  my %args             = _constructor_args_hash(@args);
   my $adapter_registry = $args{adapter_registry} || Overnet::Program::AdapterRegistry->new;
   my $store            = $args{store}            || Overnet::Program::Store->new;
   my $now_cb           = $args{now_cb}           || sub { int(time() * 1000) };
@@ -43,7 +61,7 @@ sub new {
 
   _validate_config_description($config_description);
 
-  return bless {
+  return {
     adapter_registry      => $adapter_registry,
     store                 => $store,
     secret_provider       => $secret_provider,
@@ -57,7 +75,14 @@ sub new {
     subscriptions         => {},
     nostr_subscriptions   => {},
     runtime_notifications => {},
-  }, $class;
+  };
+}
+
+sub _constructor_args_hash {
+  my (@args) = @_;
+  return %{$args[0]} if @args == 1 && ref($args[0]) eq 'HASH';
+  return @args       if @args % 2 == 0;
+  die "constructor arguments must be a hash or hash reference\n";
 }
 
 sub adapter_registry {

@@ -1,8 +1,13 @@
 package Overnet::Core::Nostr::Event;
 
 use strictures 2;
+use Moo;
 
 our $VERSION = '0.001';
+
+has event => (is => 'ro');
+
+no Moo;
 
 sub id {
   my ($self) = @_;

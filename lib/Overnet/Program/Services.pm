@@ -1,6 +1,7 @@
 package Overnet::Program::Services;
 
 use strictures 2;
+use Moo;
 use Carp    qw(croak);
 use English qw(-no_match_vars);
 use JSON    ();
@@ -38,20 +39,27 @@ my %SERVICE_METHODS = map { $_ => 1 } qw(
   overnet.emit_capabilities
 );
 
-sub new {
-  my ($class, %args) = @_;
+has runtime => (is => 'ro');
+
+no Moo;
+
+sub BUILDARGS {
+  my ($class, @args) = @_;
+  my %args = _constructor_args_hash(@args);
 
   my $runtime = $args{runtime};
   if (!(defined $runtime && ref($runtime) && $runtime->isa('Overnet::Program::Runtime'))) {
     croak "runtime is required\n";
   }
 
-  return bless {runtime => $runtime,}, $class;
+  return {runtime => $runtime,};
 }
 
-sub runtime {
-  my ($self) = @_;
-  return $self->{runtime};
+sub _constructor_args_hash {
+  my (@args) = @_;
+  return %{$args[0]} if @args == 1 && ref($args[0]) eq 'HASH';
+  return @args       if @args % 2 == 0;
+  die "constructor arguments must be a hash or hash reference\n";
 }
 
 sub is_service_method {

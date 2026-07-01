@@ -1,6 +1,7 @@
 package Overnet::Auth::Client;
 
 use strictures 2;
+use Moo;
 use Carp    qw(croak);
 use English qw(-no_match_vars);
 
@@ -12,15 +13,30 @@ use Overnet::Auth::SocketIO;
 
 our $VERSION = '0.001';
 
-sub new {
-  my ($class, %args) = @_;
+has endpoint        => (is => 'ro', reader   => '_configured_endpoint');
+has protocol        => (is => 'ro', reader   => '_protocol');
+has next_request_id => (is => 'rw', accessor => '_next_request_id');
+has socket_factory  => (is => 'ro', reader   => '_socket_factory');
 
-  return bless {
+no Moo;
+
+sub BUILDARGS {
+  my ($class, @args) = @_;
+  my %args = _constructor_args_hash(@args);
+
+  return {
     endpoint        => $args{endpoint},
     protocol        => $args{protocol} || Overnet::Program::Protocol->new,
     next_request_id => 1,
     socket_factory  => $args{socket_factory},
-  }, $class;
+  };
+}
+
+sub _constructor_args_hash {
+  my (@args) = @_;
+  return %{$args[0]} if @args == 1 && ref($args[0]) eq 'HASH';
+  return @args       if @args % 2 == 0;
+  die "constructor arguments must be a hash or hash reference\n";
 }
 
 sub endpoint {

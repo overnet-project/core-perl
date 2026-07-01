@@ -1,6 +1,7 @@
 package Overnet::Program::Timer;
 
 use strictures 2;
+use Moo;
 use Carp qw(croak);
 use JSON ();
 
@@ -8,8 +9,17 @@ our $VERSION = '0.001';
 
 my $JSON = JSON->new->utf8->canonical;
 
-sub new {
-  my ($class, %args) = @_;
+has session_id => (is => 'ro');
+has timer_id   => (is => 'ro');
+has due_at_ms  => (is => 'rw');
+has repeat_ms  => (is => 'ro');
+has payload    => (is => 'ro', reader => '_payload');
+
+no Moo;
+
+sub BUILDARGS {
+  my ($class, @args) = @_;
+  my %args = _constructor_args_hash(@args);
 
   my $session_id = $args{session_id};
   my $timer_id   = $args{timer_id};
@@ -34,33 +44,20 @@ sub new {
     croak "payload must be an object\n";
   }
 
-  return bless {
+  return {
     session_id => $session_id,
     timer_id   => $timer_id,
     due_at_ms  => 0 + $due_at_ms,
     (defined $repeat_ms ? (repeat_ms => 0 + $repeat_ms)        : ()),
     (defined $payload   ? (payload   => _clone_json($payload)) : ()),
-  }, $class;
+  };
 }
 
-sub session_id {
-  my ($self) = @_;
-  return $self->{session_id};
-}
-
-sub timer_id {
-  my ($self) = @_;
-  return $self->{timer_id};
-}
-
-sub due_at_ms {
-  my ($self) = @_;
-  return $self->{due_at_ms};
-}
-
-sub repeat_ms {
-  my ($self) = @_;
-  return $self->{repeat_ms};
+sub _constructor_args_hash {
+  my (@args) = @_;
+  return %{$args[0]} if @args == 1 && ref($args[0]) eq 'HASH';
+  return @args       if @args % 2 == 0;
+  die "constructor arguments must be a hash or hash reference\n";
 }
 
 sub payload {

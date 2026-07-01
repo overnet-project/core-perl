@@ -41,13 +41,13 @@ sub load_key {
     $key = Net::Nostr::Key->new(privkey => $input);
   }
 
-  return bless {key => $key}, 'Overnet::Core::Nostr::Key';
+  return Overnet::Core::Nostr::Key->new(key => $key);
 }
 
 sub generate_key {
   my ($class) = @_;
   my $key = Net::Nostr::Key->new;
-  return bless {key => $key}, 'Overnet::Core::Nostr::Key';
+  return Overnet::Core::Nostr::Key->new(key => $key);
 }
 
 sub event_from_wire {
@@ -56,7 +56,7 @@ sub event_from_wire {
   if (!($event)) {
     return;
   }
-  return bless {event => $event}, 'Overnet::Core::Nostr::Event';
+  return Overnet::Core::Nostr::Event->new(event => $event);
 }
 
 sub wrap_private_message {
@@ -87,8 +87,8 @@ sub wrap_private_message {
   );
 
   return {
-    transport       => bless({event => $wrap},  'Overnet::Core::Nostr::Event'),
-    decrypted_rumor => bless({event => $rumor}, 'Overnet::Core::Nostr::Event'),
+    transport       => Overnet::Core::Nostr::Event->new(event => $wrap),
+    decrypted_rumor => Overnet::Core::Nostr::Event->new(event => $rumor),
   };
 }
 
@@ -128,7 +128,7 @@ sub sign_event_hash {
     ? $event_hash->{content}
     : q{},
   );
-  return bless {event => $event}, 'Overnet::Core::Nostr::Event';
+  return Overnet::Core::Nostr::Event->new(event => $event);
 }
 
 sub publish_event {
@@ -301,7 +301,7 @@ sub _coerce_signed_event {
   }
 
   my $event = Net::Nostr::Event->from_wire($input);
-  return bless {event => $event}, 'Overnet::Core::Nostr::Event';
+  return Overnet::Core::Nostr::Event->new(event => $event);
 }
 
 sub _key_from_hex_secret {
@@ -309,9 +309,8 @@ sub _key_from_hex_secret {
   my $pk = Crypt::PK::ECC->new;
   $pk->import_key_raw(pack('H*', $hex), 'secp256k1');
 
-  my $key = bless {}, 'Net::Nostr::Key';
-  $key->_cryptpkecc($pk);
-  return $key;
+  my $der = $pk->export_key_der('private');
+  return Net::Nostr::Key->new(privkey => \$der);
 }
 
 1;

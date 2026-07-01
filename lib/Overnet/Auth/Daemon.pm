@@ -1,6 +1,7 @@
 package Overnet::Auth::Daemon;
 
 use strictures 2;
+use Moo;
 use Carp    qw(croak);
 use English qw(-no_match_vars);
 
@@ -16,8 +17,20 @@ use Overnet::Auth::StateStore;
 
 our $VERSION = '0.001';
 
-sub new {
-  my ($class, %args) = @_;
+has config          => (is => 'ro', reader => '_config');
+has endpoint        => (is => 'ro');
+has socket_mode     => (is => 'ro', reader   => '_socket_mode');
+has max_connections => (is => 'ro', reader   => '_max_connections');
+has server          => (is => 'ro', reader   => '_server');
+has state_store     => (is => 'ro', reader   => '_state_store');
+has listen_factory  => (is => 'ro', reader   => '_listen_factory');
+has listen_socket   => (is => 'rw', accessor => '_current_listen_socket');
+
+no Moo;
+
+sub BUILDARGS {
+  my ($class, @args) = @_;
+  my %args = _constructor_args_hash(@args);
 
   my $config          = _daemon_config(%args);
   my $endpoint        = _daemon_endpoint($config, %args);
@@ -27,7 +40,7 @@ sub new {
   my $agent           = _daemon_agent($config, $state_store, %args);
   my $server          = $args{server} || Overnet::Auth::Server->new(agent => $agent);
 
-  return bless {
+  return {
     config          => $config,
     endpoint        => $endpoint,
     socket_mode     => $socket_mode,
@@ -36,7 +49,14 @@ sub new {
     state_store     => $state_store,
     listen_factory  => $args{listen_factory},
     listen_socket   => undef,
-  }, $class;
+  };
+}
+
+sub _constructor_args_hash {
+  my (@args) = @_;
+  return %{$args[0]} if @args == 1 && ref($args[0]) eq 'HASH';
+  return @args       if @args % 2 == 0;
+  die "constructor arguments must be a hash or hash reference\n";
 }
 
 sub _daemon_config {
@@ -144,11 +164,6 @@ sub _state_writer_arg {
       return $state_store->save_state(state => $state);
     },
   );
-}
-
-sub endpoint {
-  my ($self) = @_;
-  return $self->{endpoint};
 }
 
 sub run {

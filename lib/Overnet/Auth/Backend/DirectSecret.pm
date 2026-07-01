@@ -1,13 +1,16 @@
 package Overnet::Auth::Backend::DirectSecret;
 
 use strictures 2;
+use Moo;
 use English qw(-no_match_vars);
 
-use parent 'Overnet::Auth::Backend';
+extends 'Overnet::Auth::Backend';
 
 use Overnet::Core::Nostr;
 
 our $VERSION = '0.001';
+
+no Moo;
 
 sub backend_type { return 'direct_secret'; }
 

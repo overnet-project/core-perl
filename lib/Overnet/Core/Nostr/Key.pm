@@ -1,8 +1,13 @@
 package Overnet::Core::Nostr::Key;
 
 use strictures 2;
+use Moo;
 
 our $VERSION = '0.001';
+
+has key => (is => 'ro');
+
+no Moo;
 
 sub pubkey_hex {
   my ($self) = @_;

@@ -745,8 +745,7 @@ sub _build_irc_server_harness {
 
 sub _new_irc_server_harness {
   my ($input) = @_;
-  my $server = Overnet::Program::IRC::Server->new;
-  bless $server, 'Overnet::Test::SpecConformance::IRCServerHarness';
+  my $server = Overnet::Test::SpecConformance::IRCServerHarness->new;
 
   my $server_view    = _fixture_server_view($input);
   my $adapter_config = _fixture_adapter_config($server_view);

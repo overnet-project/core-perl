@@ -18,13 +18,12 @@ my $challenge      = '6cf8a952df516a8e691c6138496516abe84ccfefa9678f518bb52f70b1
 
   package t::auth_daemon::FakeListener;
 
-  sub new {
-    my ($class, %args) = @_;
-    return bless {
-      queue  => $args{queue} || [],
-      closed => 0,
-    }, $class;
-  }
+  use Moo;
+
+  has queue  => (is => 'ro', default => sub { [] });
+  has closed => (is => 'rw', default => sub {0});
+
+  no Moo;
 
   sub accept {
     my ($self) = @_;
