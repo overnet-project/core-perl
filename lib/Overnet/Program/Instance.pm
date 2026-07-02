@@ -4,6 +4,7 @@ use strictures 2;
 use Moo;
 use Carp    qw(croak);
 use English qw(-no_match_vars);
+use Overnet::CommandBus;
 use Overnet::Program::Protocol;
 use Overnet::Program::Services;
 
@@ -397,31 +398,17 @@ sub _handle_service_request {
   } or $error = $EVAL_ERROR;
 
   if ($error) {
-    if ( ref($error) eq 'HASH'
-      && defined $error->{code}
-      && defined $error->{message}) {
-      my %response = (
-        id      => $message->{id},
-        code    => $error->{code},
-        message => $error->{message},
-      );
-      if (defined $error->{details}) {
-        $response{details} = $error->{details};
-      }
-
-      return {send => Overnet::Program::Protocol::build_response_error(%response),};
+    my $normalized = Overnet::CommandBus->normalize_error($error, code => 'program.operation_failed');
+    my %response   = (
+      id      => $message->{id},
+      code    => $normalized->{code},
+      message => $normalized->{message},
+    );
+    if (defined $normalized->{details}) {
+      $response{details} = $normalized->{details};
     }
 
-    if (!ref($error)) {
-      chomp $error;
-    }
-    return {
-      send => Overnet::Program::Protocol::build_response_error(
-        id      => $message->{id},
-        code    => 'program.operation_failed',
-        message => $error,
-      ),
-    };
+    return {send => Overnet::Program::Protocol::build_response_error(%response),};
   }
 
   return {

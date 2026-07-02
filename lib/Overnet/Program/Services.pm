@@ -658,6 +658,7 @@ sub _build_bus {
 
   my $bus = Overnet::CommandBus->new(
     middleware => [
+      Overnet::CommandBus->error_normalizer(code => 'program.operation_failed'),
       sub {
         my ($method, $params, $context, $next) = @_;
         Overnet::Program::Permissions->assert_method_allowed(

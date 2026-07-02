@@ -6,7 +6,7 @@ use Overnet::CommandBus;
 
 subtest 'constructor defaults to empty handlers and middleware' => sub {
   my $bus = Overnet::CommandBus->new;
-  is $bus->handlers,   {}, 'handlers default to an empty hash';
+  is $bus->handlers, {}, 'handlers default to an empty hash';
   is $bus->middleware, [], 'middleware defaults to an empty array';
 
   my $from_hashref = Overnet::CommandBus->new({});
@@ -46,34 +46,34 @@ subtest 'constructor-supplied handlers and middleware are used and copied' => su
     middleware => $middleware,
   );
 
-  is $bus->dispatch('echo.params', {value => 1}), {value => 1},
-    'constructor-supplied handler dispatches';
+  is $bus->dispatch('echo.params', {value => 1}), {value => 1}, 'constructor-supplied handler dispatches';
   is \@order, ['mw'], 'constructor-supplied middleware runs';
 
   $handlers->{'late.addition'} = sub { };
-  ok !$bus->has_handler('late.addition'),
-    'mutating the original handlers hash does not affect the bus';
+  ok !$bus->has_handler('late.addition'), 'mutating the original handlers hash does not affect the bus';
 };
 
 subtest 'register adds handlers and rejects bad input' => sub {
   my $bus = Overnet::CommandBus->new;
 
-  my $returned = $bus->register('math.add',
-    sub { my ($method, $params) = @_; $params->{a} + $params->{b} });
+  my $returned = $bus->register('math.add', sub { my ($method, $params) = @_; $params->{a} + $params->{b} });
   ref_is $returned, $bus, 'register returns the bus for chaining';
 
   is $bus->dispatch('math.add', {a => 2, b => 3}), 5, 'registered handler dispatches';
 
-  like dies { $bus->register('math.add', sub { }) },
-    qr/handler already registered for method: math\.add/,
-    'duplicate registration is rejected';
+  like dies {
+    $bus->register('math.add', sub { })
+  }, qr/handler already registered for method: math\.add/, 'duplicate registration is rejected';
 
-  like dies { $bus->register(undef, sub { }) }, qr/method is required/,
-    'undefined method name is rejected';
-  like dies { $bus->register(q{}, sub { }) }, qr/method is required/,
-    'empty method name is rejected';
-  like dies { $bus->register([], sub { }) }, qr/method is required/,
-    'reference method name is rejected';
+  like dies {
+    $bus->register(undef, sub { })
+  }, qr/method is required/, 'undefined method name is rejected';
+  like dies {
+    $bus->register(q{}, sub { })
+  }, qr/method is required/, 'empty method name is rejected';
+  like dies {
+    $bus->register([], sub { })
+  }, qr/method is required/, 'reference method name is rejected';
   like dies { $bus->register('math.subtract', 'not code') },
     qr/handler must be a code reference/,
     'non-code handler is rejected';
@@ -93,11 +93,9 @@ subtest 'dispatch validates its arguments' => sub {
   my $bus = Overnet::CommandBus->new;
   $bus->register('known.method', sub { });
 
-  like dies { $bus->dispatch(undef) }, qr/method is required/,
-    'undefined method is rejected';
-  like dies { $bus->dispatch(q{}) }, qr/method is required/, 'empty method is rejected';
-  like dies { $bus->dispatch({}) }, qr/method is required/,
-    'reference method is rejected';
+  like dies { $bus->dispatch(undef) }, qr/method is required/, 'undefined method is rejected';
+  like dies { $bus->dispatch(q{}) },   qr/method is required/, 'empty method is rejected';
+  like dies { $bus->dispatch({}) },    qr/method is required/, 'reference method is rejected';
   like dies { $bus->dispatch('known.method', 'not a hash') },
     qr/params must be a hash reference/,
     'non-hash params are rejected';
@@ -114,13 +112,12 @@ subtest 'dispatch passes method, params, and context to the handler' => sub {
   my @seen;
   $bus->register('capture.args', sub { @seen = @_; {ok => 1} });
 
-  my $params  = {key => 'value'};
+  my $params  = {key        => 'value'};
   my $context = {session_id => 'session-1'};
   my $result  = $bus->dispatch('capture.args', $params, $context);
 
   is $result, {ok => 1}, 'handler result is returned unchanged';
-  is \@seen, ['capture.args', $params, $context],
-    'handler receives method, params, and context';
+  is \@seen, ['capture.args', $params, $context], 'handler receives method, params, and context';
 
   $bus->register('capture.defaults', sub { @seen = @_; return });
   $bus->dispatch('capture.defaults');
@@ -179,8 +176,7 @@ subtest 'middleware receives dispatch arguments and can enrich context' => sub {
   my $params = {p => 1};
   $bus->dispatch('context.reader', $params, {session_id => 'session-2'});
 
-  is \@seen_by_middleware, ['context.reader', $params],
-    'middleware receives the dispatched method and params';
+  is \@seen_by_middleware, ['context.reader', $params], 'middleware receives the dispatched method and params';
   is $seen_by_handler, {session_id => 'session-2', stamped => 'yes'},
     'handler observes context changes made by middleware';
 };
@@ -197,9 +193,8 @@ subtest 'middleware can short-circuit without calling the handler' => sub {
     }
   );
 
-  is $bus->dispatch('guarded.method'), 'from middleware',
-    'short-circuiting middleware supplies the result';
-  is $handler_called, 0, 'handler is not called when middleware short-circuits';
+  is $bus->dispatch('guarded.method'), 'from middleware', 'short-circuiting middleware supplies the result';
+  is $handler_called,                  0,                 'handler is not called when middleware short-circuits';
 };
 
 subtest 'errors propagate through the middleware chain unchanged' => sub {
@@ -213,8 +208,48 @@ subtest 'errors propagate through the middleware chain unchanged' => sub {
   my $error = dies { $bus->dispatch('failing.structured') };
   ref_is $error, $structured, 'structured hash errors pass through by reference';
 
-  like dies { $bus->dispatch('failing.string') }, qr/\Aplain failure\n\z/,
-    'string errors pass through unchanged';
+  like dies { $bus->dispatch('failing.string') }, qr/\Aplain failure\n\z/, 'string errors pass through unchanged';
+};
+
+subtest 'normalize_error shapes errors into structured hashes' => sub {
+  my $structured = {code => 'runtime.permission_denied', message => 'denied'};
+  ref_is +Overnet::CommandBus->normalize_error($structured, code => 'fallback.code'),
+    $structured, 'conforming structured errors pass through by reference';
+
+  is +Overnet::CommandBus->normalize_error("plain failure\n", code => 'fallback.code'),
+    {code => 'fallback.code', message => 'plain failure'},
+    'string errors are chomped and wrapped with the fallback code';
+
+  my $incomplete = {message => 'no code here'};
+  my $normalized = Overnet::CommandBus->normalize_error($incomplete, code => 'fallback.code');
+  is $normalized->{code}, 'fallback.code', 'hashes missing code are wrapped';
+  ok !ref($normalized->{message}), 'wrapped non-conforming errors carry a string message';
+
+  like dies { Overnet::CommandBus->normalize_error('x') }, qr/code is required/,
+    'normalize_error requires a fallback code';
+};
+
+subtest 'error_normalizer middleware guarantees structured errors' => sub {
+  my $bus =
+    Overnet::CommandBus->new(middleware => [Overnet::CommandBus->error_normalizer(code => 'program.operation_failed')],
+    );
+
+  my $structured = {code => 'protocol.invalid_params', message => 'bad params'};
+  $bus->register('failing.structured', sub { CORE::die $structured });
+  $bus->register('failing.string',     sub { CORE::die "backend exploded\n" });
+  $bus->register('passing.method',     sub { {ok => 1} });
+
+  ref_is dies { $bus->dispatch('failing.structured') }, $structured,
+    'structured errors pass through the normalizer unchanged';
+
+  is dies { $bus->dispatch('failing.string') },
+    {code => 'program.operation_failed', message => 'backend exploded'},
+    'string errors leave the bus as structured errors';
+
+  is $bus->dispatch('passing.method'), {ok => 1}, 'successful results are unaffected';
+
+  like dies { Overnet::CommandBus->error_normalizer() }, qr/code is required/,
+    'error_normalizer requires a fallback code';
 };
 
 subtest 'middleware can observe and translate errors' => sub {
@@ -235,8 +270,7 @@ subtest 'middleware can observe and translate errors' => sub {
     }
   );
 
-  is $bus->dispatch('failing.method'), {caught => 'inner.error'},
-    'middleware can catch and translate handler errors';
+  is $bus->dispatch('failing.method'), {caught => 'inner.error'}, 'middleware can catch and translate handler errors';
 };
 
 done_testing;

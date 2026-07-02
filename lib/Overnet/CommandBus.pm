@@ -3,7 +3,8 @@ package Overnet::CommandBus;
 use strictures 2;
 use Moo;
 
-use Carp qw(croak);
+use Carp    qw(croak);
+use English qw(-no_match_vars);
 
 our $VERSION = '0.001';
 
@@ -108,6 +109,57 @@ sub dispatch {
   return $next->();
 }
 
+sub normalize_error {
+  my ($class, $error, %args) = @_;
+
+  my $code = $args{code};
+  if (!(defined $code && !ref($code) && length($code))) {
+    croak "code is required\n";
+  }
+
+  if (ref($error) eq 'HASH' && defined $error->{code} && defined $error->{message}) {
+    return $error;
+  }
+
+  my $message = $error;
+  if (ref($message)) {
+    $message = "$message";
+  } else {
+    chomp $message;
+  }
+
+  return {
+    code    => $code,
+    message => $message,
+  };
+}
+
+sub error_normalizer {
+  my ($class, %args) = @_;
+
+  my $code = $args{code};
+  if (!(defined $code && !ref($code) && length($code))) {
+    croak "code is required\n";
+  }
+
+  return sub {
+    my ($method, $params, $context, $next) = @_;
+
+    my $result;
+    my $error;
+    eval {
+      $result = $next->();
+      1;
+    } or $error = $EVAL_ERROR;
+
+    if ($error) {
+      CORE::die $class->normalize_error($error, code => $code);
+    }
+
+    return $result;
+  };
+}
+
 sub _constructor_args_hash {
   my (@args) = @_;
   return %{$args[0]} if @args == 1 && ref($args[0]) eq 'HASH';
@@ -185,6 +237,14 @@ Public API entry point.
 Public API entry point.
 
 =head2 dispatch
+
+Public API entry point.
+
+=head2 normalize_error
+
+Public API entry point.
+
+=head2 error_normalizer
 
 Public API entry point.
 

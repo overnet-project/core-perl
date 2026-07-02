@@ -420,4 +420,27 @@ subtest 'instance can use document storage through protocol' => sub {
   is_deeply $delete->{send}{result}, {}, 'storage.delete returns empty result';
 };
 
+subtest 'services normalize unstructured handler failures' => sub {
+  my $runtime  = Overnet::Program::Runtime->new;
+  my $services = Overnet::Program::Services->new(runtime => $runtime);
+
+  no warnings 'redefine';
+  local *Overnet::Program::Runtime::put_document = sub { die "storage backend exploded\n" };
+  use warnings 'redefine';
+
+  my $error;
+  eval {
+    $services->dispatch_request(
+      'storage.put',
+      {key => 'profiles/alice', value => {ok => 1}},
+      permissions => ['storage.write'],
+    );
+    1;
+  } or $error = $@;
+
+  is ref($error),       'HASH',                     'unstructured handler failure is structured';
+  is $error->{code},    'program.operation_failed', 'unstructured failure uses the fallback code';
+  is $error->{message}, 'storage backend exploded', 'failure message is preserved without trailing newline';
+};
+
 done_testing;
