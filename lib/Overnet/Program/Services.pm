@@ -2,9 +2,11 @@ package Overnet::Program::Services;
 
 use strictures 2;
 use Moo;
-use Carp    qw(croak);
-use English qw(-no_match_vars);
-use JSON    ();
+use Carp         qw(croak);
+use English      qw(-no_match_vars);
+use JSON         ();
+use Scalar::Util qw(weaken);
+use Overnet::CommandBus;
 use Overnet::Core::Nostr;
 use Overnet::Program::Permissions;
 use Overnet::Program::Runtime;
@@ -40,6 +42,7 @@ my %SERVICE_METHODS = map { $_ => 1 } qw(
 );
 
 has runtime => (is => 'ro');
+has bus     => (is => 'lazy', init_arg => undef);
 
 no Moo;
 
@@ -606,70 +609,79 @@ sub dispatch_request {
     _protocol_unknown_method("Unknown service method: $method", {method => $method});
   }
 
-  Overnet::Program::Permissions->assert_method_allowed(
-    method      => $method,
-    permissions => $args{permissions},
+  if (!($self->bus->has_handler($method))) {
+    _service_unavailable("Runtime service method $method is not available", {method => $method},);
+  }
+
+  return $self->bus->dispatch(
+    $method, $params,
+    {
+      session_id  => $args{session_id},
+      program_id  => $args{program_id},
+      permissions => $args{permissions},
+    },
+  );
+}
+
+sub _build_bus {
+  my ($self) = @_;
+  weaken(my $services = $self);
+
+  my %service_impls = (
+    'config.get'                       => {impl => 'get_config'},
+    'config.describe'                  => {impl => 'describe_config'},
+    'secrets.get'                      => {impl => 'get_secret', context => [qw(session_id program_id)]},
+    'storage.put'                      => {impl => 'put_storage_value'},
+    'storage.get'                      => {impl => 'get_storage_value'},
+    'storage.delete'                   => {impl => 'delete_storage_value'},
+    'storage.list'                     => {impl => 'list_storage_keys'},
+    'events.append'                    => {impl => 'append_event_entry'},
+    'events.read'                      => {impl => 'read_event_entries'},
+    'subscriptions.open'               => {impl => 'open_subscription',  context => ['session_id']},
+    'subscriptions.close'              => {impl => 'close_subscription', context => ['session_id']},
+    'nostr.publish_event'              => {impl => 'publish_nostr_event'},
+    'nostr.query_events'               => {impl => 'query_nostr_events'},
+    'nostr.open_subscription'          => {impl => 'open_nostr_subscription',          context => ['session_id']},
+    'nostr.read_subscription_snapshot' => {impl => 'read_nostr_subscription_snapshot', context => ['session_id']},
+    'nostr.close_subscription'         => {impl => 'close_nostr_subscription',         context => ['session_id']},
+    'timers.schedule'                  => {impl => 'schedule_timer',                   context => ['session_id']},
+    'timers.cancel'                    => {impl => 'cancel_timer',                     context => ['session_id']},
+    'adapters.open_session'            => {impl => 'open_adapter_session', context => [qw(session_id program_id)]},
+    'adapters.map_input'               => {impl => 'map_input'},
+    'adapters.derive'                  => {impl => 'derive'},
+    'adapters.close_session'           => {impl => 'close_adapter_session'},
+    'overnet.emit_event'               => {impl => 'emit_event'},
+    'overnet.emit_state'               => {impl => 'emit_state'},
+    'overnet.emit_private_message'     => {impl => 'emit_private_message'},
+    'overnet.emit_capabilities'        => {impl => 'emit_capabilities'},
   );
 
-  my %dispatch = (
-    'config.get'      => sub { $self->get_config(%{$params}) },
-    'config.describe' => sub { $self->describe_config(%{$params}) },
-    'secrets.get'     => sub {
-      $self->get_secret(
-        %{$params},
-        session_id => $args{session_id},
-        program_id => $args{program_id}
-      );
-    },
-    'storage.put'        => sub { $self->put_storage_value(%{$params}) },
-    'storage.get'        => sub { $self->get_storage_value(%{$params}) },
-    'storage.delete'     => sub { $self->delete_storage_value(%{$params}) },
-    'storage.list'       => sub { $self->list_storage_keys(%{$params}) },
-    'events.append'      => sub { $self->append_event_entry(%{$params}) },
-    'events.read'        => sub { $self->read_event_entries(%{$params}) },
-    'subscriptions.open' => sub {
-      $self->open_subscription(%{$params}, session_id => $args{session_id});
-    },
-    'subscriptions.close' => sub {
-      $self->close_subscription(%{$params}, session_id => $args{session_id});
-    },
-    'nostr.publish_event'     => sub { $self->publish_nostr_event(%{$params}) },
-    'nostr.query_events'      => sub { $self->query_nostr_events(%{$params}) },
-    'nostr.open_subscription' => sub {
-      $self->open_nostr_subscription(%{$params}, session_id => $args{session_id});
-    },
-    'nostr.read_subscription_snapshot' => sub {
-      $self->read_nostr_subscription_snapshot(%{$params}, session_id => $args{session_id});
-    },
-    'nostr.close_subscription' => sub {
-      $self->close_nostr_subscription(%{$params}, session_id => $args{session_id});
-    },
-    'timers.schedule' => sub {
-      $self->schedule_timer(%{$params}, session_id => $args{session_id});
-    },
-    'timers.cancel' => sub {
-      $self->cancel_timer(%{$params}, session_id => $args{session_id});
-    },
-    'adapters.open_session' => sub {
-      $self->open_adapter_session(
-        %{$params},
-        session_id => $args{session_id},
-        program_id => $args{program_id},
-      );
-    },
-    'adapters.map_input'           => sub { $self->map_input(%{$params}) },
-    'adapters.derive'              => sub { $self->derive(%{$params}) },
-    'adapters.close_session'       => sub { $self->close_adapter_session(%{$params}) },
-    'overnet.emit_event'           => sub { $self->emit_event(%{$params}) },
-    'overnet.emit_state'           => sub { $self->emit_state(%{$params}) },
-    'overnet.emit_private_message' => sub { $self->emit_private_message(%{$params}) },
-    'overnet.emit_capabilities'    => sub { $self->emit_capabilities(%{$params}) },
+  my $bus = Overnet::CommandBus->new(
+    middleware => [
+      sub {
+        my ($method, $params, $context, $next) = @_;
+        Overnet::Program::Permissions->assert_method_allowed(
+          method      => $method,
+          permissions => $context->{permissions},
+        );
+        return $next->();
+      },
+    ],
   );
 
-  my $handler = $dispatch{$method}
-    or _service_unavailable("Runtime service method $method is not available", {method => $method},);
+  for my $method (sort keys %service_impls) {
+    my $impl         = $service_impls{$method}{impl};
+    my @context_keys = @{$service_impls{$method}{context} || []};
+    $bus->register(
+      $method,
+      sub {
+        my (undef, $params, $context) = @_;
+        return $services->$impl(%{$params}, map { $_ => $context->{$_} } @context_keys);
+      }
+    );
+  }
 
-  return $handler->();
+  return $bus;
 }
 
 sub _call_adapter {
@@ -1157,6 +1169,10 @@ This module is part of the Overnet Perl implementation.
 Public API entry point.
 
 =head2 runtime
+
+Public API entry point.
+
+=head2 bus
 
 Public API entry point.
 
