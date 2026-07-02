@@ -25,7 +25,7 @@ sub load_signing_key {
     return (
       undef,
       {
-        code    => 'backend_unavailable',
+        code    => 'auth.backend_unavailable',
         message => 'no pass entry is configured for the selected identity',
       }
     );
@@ -41,7 +41,7 @@ sub load_signing_key {
     return (
       undef,
       {
-        code    => 'backend_unavailable',
+        code    => 'auth.backend_unavailable',
         message => $error,
       }
     );
@@ -55,7 +55,7 @@ sub load_signing_key {
     return (
       undef,
       {
-        code    => 'backend_unavailable',
+        code    => 'auth.backend_unavailable',
         message => "pass entry $entry did not return a usable secret",
       }
     );
@@ -67,7 +67,7 @@ sub load_signing_key {
     return (
       undef,
       {
-        code    => 'backend_unavailable',
+        code    => 'auth.backend_unavailable',
         message => "$exception",
       }
     );

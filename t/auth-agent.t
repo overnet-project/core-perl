@@ -148,7 +148,7 @@ subtest 'sessions.authorize uses the pass backend type' => sub {
     'authorize signs with the pass backend identity';
 };
 
-subtest 'sessions.authorize reports backend_unavailable for an unknown backend type' => sub {
+subtest 'sessions.authorize reports auth.backend_unavailable for an unknown backend type' => sub {
   my $agent = Overnet::Auth::Agent->new(
     identities => [
       {
@@ -198,7 +198,7 @@ subtest 'sessions.authorize reports backend_unavailable for an unknown backend t
   );
 
   is $response->{ok},          0,                     'authorize fails';
-  is $response->{error}{code}, 'backend_unavailable', 'unknown backend type is reported as backend_unavailable';
+  is $response->{error}{code}, 'auth.backend_unavailable', 'unknown backend type is reported as auth.backend_unavailable';
 };
 
 subtest 'sessions.authorize honors an injected backend instance' => sub {
@@ -316,7 +316,7 @@ subtest 'sessions.authorize invokes the backend for each authorization request' 
   is $backend->calls, 2, 'the backend was invoked for both authorization requests';
 };
 
-subtest 'sessions.renew propagates backend_unavailable when the identity backend fails' => sub {
+subtest 'sessions.renew propagates auth.backend_unavailable when the identity backend fails' => sub {
   my $agent = Overnet::Auth::Agent->new(
     identities => [
       {
@@ -389,7 +389,7 @@ subtest 'sessions.renew propagates backend_unavailable when the identity backend
   );
 
   is $renew->{ok},          0,                     'renew fails';
-  is $renew->{error}{code}, 'backend_unavailable', 'renew surfaces the backend failure';
+  is $renew->{error}{code}, 'auth.backend_unavailable', 'renew surfaces the backend failure';
 };
 
 subtest 'sessions.revoke drops one stored session so later renew fails' => sub {
@@ -449,7 +449,7 @@ subtest 'sessions.revoke drops one stored session so later renew fails' => sub {
   );
 
   is $renew->{ok},          0,                 'renew fails after revoke';
-  is $renew->{error}{code}, 'invalid_request', 'renew reports an unknown session handle';
+  is $renew->{error}{code}, 'protocol.invalid_params', 'renew reports an unknown session handle';
 };
 
 subtest 'sessions.revoke succeeds without consulting an unavailable backend' => sub {
@@ -640,7 +640,7 @@ subtest 'policies.grant enables matching headless authorization until policies.r
   );
 
   is $after_revoke->{ok},          0,                      'headless authorization fails again after policy revoke';
-  is $after_revoke->{error}{code}, 'headless_unavailable', 'revoked policy no longer matches';
+  is $after_revoke->{error}{code}, 'auth.headless_unavailable', 'revoked policy no longer matches';
 };
 
 subtest 'policies.list and sessions.list expose stored auth state' => sub {
@@ -1012,7 +1012,7 @@ subtest 'authorize and revoke persist session state and roll back on state write
   );
 
   is $failed->{ok},                 0,                  'failed persistence turns the mutation into an error';
-  is $failed->{error}{code},        'internal_failure', 'state write failure is surfaced';
+  is $failed->{error}{code},        'auth.internal_failure', 'state write failure is surfaced';
   is $policies->{result}{policies}, [],                 'failed persistence rolled the in-memory mutation back';
 };
 

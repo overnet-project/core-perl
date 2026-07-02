@@ -109,19 +109,19 @@ sub dispatch {
     : undef;
 
   if (!(ref($request) eq 'HASH')) {
-    return $self->_error_response($id, 'invalid_request', 'request must be an object');
+    return $self->_error_response($id, 'protocol.invalid_message', 'request must be an object');
   }
   if (!((($request->{type} || q{}) eq 'request'))) {
-    return $self->_error_response($id, 'invalid_request', 'request type must be request');
+    return $self->_error_response($id, 'protocol.invalid_message', 'request type must be request');
   }
 
   my $method = $request->{method};
   if (!(defined $method && !ref($method) && length($method))) {
-    return $self->_error_response($id, 'invalid_request', 'method is required');
+    return $self->_error_response($id, 'protocol.invalid_message', 'method is required');
   }
 
   if (!($self->bus->has_handler($method))) {
-    return $self->_error_response($id, 'invalid_request', "unsupported method: $method");
+    return $self->_error_response($id, 'protocol.unknown_method', "unsupported method: $method");
   }
 
   my $params = ref($request->{params}) eq 'HASH' ? $request->{params} : {};
@@ -172,7 +172,7 @@ sub _dispatch_agent_info {
     id     => $id,
     ok     => JSON::true,
     result => {
-      protocol_version => '0.1.0',
+      protocol_version => '0.2.0',
       capabilities     => [
         'agent.info',      'identities.list',    'policies.list',    'policies.grant',
         'policies.revoke', 'service_pins.list',  'service_pins.set', 'service_pins.forget',
@@ -230,11 +230,11 @@ sub _dispatch_policies_grant {
   my $params = $request->{params};
 
   if (!(ref($params) eq 'HASH')) {
-    return $self->_error_response($id, 'invalid_request', 'params must be an object');
+    return $self->_error_response($id, 'protocol.invalid_params', 'params must be an object');
   }
 
   my $stored = _normalize_policy_input($params->{policy})
-    or return $self->_error_response($id, 'invalid_request', 'policy must be a valid policy object');
+    or return $self->_error_response($id, 'protocol.invalid_params', 'policy must be a valid policy object');
 
   my ($policy, $persist_error) = $self->_persist_mutation(
     sub {
@@ -264,12 +264,12 @@ sub _dispatch_policies_revoke {
   my $params = $request->{params};
 
   if (!(ref($params) eq 'HASH')) {
-    return $self->_error_response($id, 'invalid_request', 'params must be an object');
+    return $self->_error_response($id, 'protocol.invalid_params', 'params must be an object');
   }
 
   my $policy_id = _policy_id_value($params->{policy_id});
   if (!(defined $policy_id)) {
-    return $self->_error_response($id, 'invalid_request', 'policy_id is required');
+    return $self->_error_response($id, 'protocol.invalid_params', 'policy_id is required');
   }
 
   my ($revoked, $persist_error) = $self->_persist_mutation(
@@ -314,17 +314,17 @@ sub _dispatch_service_pins_set {
   my $params = $request->{params};
 
   if (!(ref($params) eq 'HASH')) {
-    return $self->_error_response($id, 'invalid_request', 'params must be an object');
+    return $self->_error_response($id, 'protocol.invalid_params', 'params must be an object');
   }
 
   my $locator = $params->{locator};
   if (!(defined $locator && !ref($locator) && length($locator))) {
-    return $self->_error_response($id, 'invalid_request', 'locator is required');
+    return $self->_error_response($id, 'protocol.invalid_params', 'locator is required');
   }
 
   my $service_identity = _normalize_service_identity($params->{service_identity});
   if (!($service_identity)) {
-    return $self->_error_response($id, 'invalid_request', 'service_identity must be a valid descriptor');
+    return $self->_error_response($id, 'protocol.invalid_params', 'service_identity must be a valid descriptor');
   }
 
   my ($stored, $persist_error) = $self->_persist_mutation(
@@ -354,12 +354,12 @@ sub _dispatch_service_pins_forget {
   my $params = $request->{params};
 
   if (!(ref($params) eq 'HASH')) {
-    return $self->_error_response($id, 'invalid_request', 'params must be an object');
+    return $self->_error_response($id, 'protocol.invalid_params', 'params must be an object');
   }
 
   my $locator = $params->{locator};
   if (!(defined $locator && !ref($locator) && length($locator))) {
-    return $self->_error_response($id, 'invalid_request', 'locator is required');
+    return $self->_error_response($id, 'protocol.invalid_params', 'locator is required');
   }
 
   my ($forgotten, $persist_error) = $self->_persist_mutation(
@@ -412,7 +412,7 @@ sub _dispatch_authorize {
   }
 
   if (!($self->_authorize_allowed($context))) {
-    return $self->_error_response($id, 'headless_unavailable',
+    return $self->_error_response($id, 'auth.headless_unavailable',
       'approval is required but interactive approval is unavailable');
   }
 
@@ -438,7 +438,7 @@ sub _dispatch_authorize {
 sub _authorize_context {
   my ($self, $params) = @_;
   if (!(ref($params) eq 'HASH')) {
-    return (undef, ['invalid_request', 'params must be an object']);
+    return (undef, ['protocol.invalid_params', 'params must be an object']);
   }
   my $error = _validate_authorize_params($params);
   if ($error) {
@@ -467,20 +467,20 @@ sub _validate_authorize_params {
   my ($params) = @_;
   for my $check ([program_id => 'program_id is required'], [scope => 'scope is required'],) {
     if (!(_non_empty_scalar($params->{$check->[0]}))) {
-      return ['invalid_request', $check->[1]];
+      return ['protocol.invalid_params', $check->[1]];
     }
   }
   if (!(ref($params->{service}) eq 'HASH')) {
-    return ['invalid_request', 'service must be an object'];
+    return ['protocol.invalid_params', 'service must be an object'];
   }
   if (!(ref($params->{service}{locators}) eq 'ARRAY' && @{$params->{service}{locators}})) {
-    return ['invalid_request', 'service.locators must be a non-empty array'];
+    return ['protocol.invalid_params', 'service.locators must be a non-empty array'];
   }
   if (!(_supported_authorize_action($params->{action}))) {
-    return ['unsupported_action', "unsupported action: $params->{action}"];
+    return ['auth.unsupported_action', "unsupported action: $params->{action}"];
   }
   if (!(ref($params->{artifacts}) eq 'ARRAY' && @{$params->{artifacts}})) {
-    return ['invalid_request', 'artifacts must be a non-empty array'];
+    return ['protocol.invalid_params', 'artifacts must be a non-empty array'];
   }
   return;
 }
@@ -574,19 +574,19 @@ sub _dispatch_renew {
   my $params = $request->{params};
 
   if (!(ref($params) eq 'HASH')) {
-    return $self->_error_response($id, 'invalid_request', 'params must be an object');
+    return $self->_error_response($id, 'protocol.invalid_params', 'params must be an object');
   }
 
   my $session_handle = _session_handle_id($params->{session_handle});
   if (!(defined $session_handle)) {
-    return $self->_error_response($id, 'invalid_request', 'session_handle.id is required');
+    return $self->_error_response($id, 'protocol.invalid_params', 'session_handle.id is required');
   }
 
   my $session = $self->{sessions}{$session_handle}
-    or return $self->_error_response($id, 'invalid_request', 'unknown session_handle');
+    or return $self->_error_response($id, 'protocol.invalid_params', 'unknown session_handle');
 
   if (!($session->{renewable})) {
-    return $self->_error_response($id, 'policy_denied', 'session is not renewable');
+    return $self->_error_response($id, 'auth.policy_denied', 'session is not renewable');
   }
 
   my ($identity, $identity_error) =
@@ -610,7 +610,7 @@ sub _dispatch_renew {
   );
 
   if (!$approved) {
-    return $self->_error_response($id, 'policy_denied', 'session no longer matches current policy');
+    return $self->_error_response($id, 'auth.policy_denied', 'session no longer matches current policy');
   }
 
   my @returned;
@@ -647,12 +647,12 @@ sub _dispatch_revoke {
   my $params = $request->{params};
 
   if (!(ref($params) eq 'HASH')) {
-    return $self->_error_response($id, 'invalid_request', 'params must be an object');
+    return $self->_error_response($id, 'protocol.invalid_params', 'params must be an object');
   }
 
   my $session_handle = _session_handle_id($params->{session_handle});
   if (!(defined $session_handle)) {
-    return $self->_error_response($id, 'invalid_request', 'session_handle.id is required');
+    return $self->_error_response($id, 'protocol.invalid_params', 'session_handle.id is required');
   }
 
   my ($revoked, $persist_error) = $self->_persist_mutation(
@@ -678,12 +678,12 @@ sub _resolve_identity {
 
   if (defined $identity_id && !ref($identity_id) && length($identity_id)) {
     my $identity = $self->{identities}{$identity_id}
-      or return (undef, ['unknown_identity', "unknown identity_id: $identity_id"]);
+      or return (undef, ['auth.unknown_identity', "unknown identity_id: $identity_id"]);
     return ($identity, undef);
   }
 
   if (!(@{$self->{identity_order}} == 1)) {
-    return (undef, ['identity_required', 'identity_id is required']);
+    return (undef, ['auth.identity_required', 'identity_id is required']);
   }
 
   my $default_id = $self->{identity_order}[0];
@@ -921,7 +921,7 @@ sub _persist_mutation {
       my $message = $EVAL_ERROR || 'auth state write failed';
       chomp $message;
       $self->_restore_mutable_state_snapshot($snapshot);
-      return (undef, ['internal_failure', $message]);
+      return (undef, ['auth.internal_failure', $message]);
     }
   }
 
@@ -981,7 +981,7 @@ sub _service_pin_state {
       )
     ) {
       return (undef,
-        ['service_identity_mismatch', 'presented service identity does not match pinned service identity']);
+        ['auth.service_identity_mismatch', 'presented service identity does not match pinned service identity']);
     }
   }
 
@@ -1033,7 +1033,7 @@ sub _build_artifact {
   }
 
   if (ref($event) eq 'HASH' && !$event->{valid} && $event->{reason}) {
-    return (undef, ['internal_failure', $event->{reason}]);
+    return (undef, ['auth.internal_failure', $event->{reason}]);
   }
 
   return (
@@ -1049,14 +1049,14 @@ sub _build_artifact {
 sub _artifact_params {
   my ($artifact) = @_;
   if (!(ref($artifact) eq 'HASH')) {
-    return (undef, ['invalid_request', 'artifact must be an object']);
+    return (undef, ['protocol.invalid_params', 'artifact must be an object']);
   }
   my $type = $artifact->{type} || q{};
   if (!($type eq 'nostr.event')) {
-    return (undef, ['unsupported_artifact', "unsupported artifact type: $type"]);
+    return (undef, ['auth.unsupported_artifact', "unsupported artifact type: $type"]);
   }
   if (!(ref($artifact->{params}) eq 'HASH')) {
-    return (undef, ['invalid_request', 'artifact params must be an object']);
+    return (undef, ['protocol.invalid_params', 'artifact params must be an object']);
   }
   return ($artifact->{params}, undef);
 }
@@ -1069,7 +1069,7 @@ sub _event_for_action {
   if (($args{action} || q{}) eq 'session.delegate') {
     return _delegation_event_for_artifact(%args);
   }
-  return (undef, ['unsupported_action', "unsupported action: $args{action}"]);
+  return (undef, ['auth.unsupported_action', "unsupported action: $args{action}"]);
 }
 
 sub _auth_event_for_artifact {
@@ -1092,10 +1092,10 @@ sub _auth_event_for_artifact {
 sub _validate_auth_artifact {
   my (%args) = @_;
   if (!(_has_challenge_value($args{challenge}))) {
-    return ['invalid_request', 'challenge.value is required for session.authenticate'];
+    return ['protocol.invalid_params', 'challenge.value is required for session.authenticate'];
   }
   if (!(defined($args{params}{kind}) && $args{params}{kind} == 22_242)) {
-    return ['invalid_request', 'session.authenticate requires kind 22242 nostr.event artifact'];
+    return ['protocol.invalid_params', 'session.authenticate requires kind 22242 nostr.event artifact'];
   }
   my %tags = _first_tag_values($args{params}{tags});
   return _validate_auth_tags(\%tags, $args{scope}, $args{challenge}{value});
@@ -1113,10 +1113,10 @@ sub _has_challenge_value {
 sub _validate_auth_tags {
   my ($tags, $scope, $challenge) = @_;
   if (!(defined($tags->{relay}) && $tags->{relay} eq $scope)) {
-    return ['invalid_request', 'auth event relay tag must match the requested scope'];
+    return ['protocol.invalid_params', 'auth event relay tag must match the requested scope'];
   }
   if (!(defined($tags->{challenge}) && $tags->{challenge} eq $challenge)) {
-    return ['invalid_request', 'auth event challenge tag must match the requested challenge'];
+    return ['protocol.invalid_params', 'auth event challenge tag must match the requested challenge'];
   }
   return;
 }
@@ -1145,7 +1145,7 @@ sub _delegation_event_for_artifact {
 sub _validated_delegation_tags {
   my (%args) = @_;
   if (!(defined($args{params}{kind}) && $args{params}{kind} == 14_142)) {
-    return (undef, ['invalid_request', 'session.delegate requires kind 14142 nostr.event artifact']);
+    return (undef, ['protocol.invalid_params', 'session.delegate requires kind 14142 nostr.event artifact']);
   }
   my %tags  = _first_tag_values($args{params}{tags});
   my $error = _validate_delegation_tags(\%tags, $args{scope});
@@ -1174,7 +1174,7 @@ sub _validate_delegation_tags {
     ],
   ) {
     if (!($check->[1]->())) {
-      return ['invalid_request', $check->[2]];
+      return ['protocol.invalid_params', $check->[2]];
     }
   }
   return;
@@ -1288,7 +1288,7 @@ sub _identity_backend {
     return (
       undef,
       {
-        code    => 'backend_unavailable',
+        code    => 'auth.backend_unavailable',
         message => "unsupported backend_type: $backend_type",
       }
     );
@@ -1302,7 +1302,7 @@ sub _identity_backend {
     or return (
     undef,
     {
-      code    => 'backend_unavailable',
+      code    => 'auth.backend_unavailable',
       message => "$EVAL_ERROR",
     }
     );

@@ -23,7 +23,7 @@ subtest 'agent_info discovers the endpoint from OVERNET_AUTH_SOCK' => sub {
       my $response = $client->agent_info;
 
       is $response->{ok},                       1,       'agent.info succeeds';
-      is $response->{result}{protocol_version}, '0.1.0', 'protocol version is returned';
+      is $response->{result}{protocol_version}, '0.2.0', 'protocol version is returned';
       ok scalar grep { $_ eq 'sessions.authorize' }
         @{$response->{result}{capabilities} || []},
         'capabilities include sessions.authorize';
@@ -157,7 +157,7 @@ subtest 'sessions_authorize preserves structured error responses' => sub {
       );
 
       is $response->{ok},          0,                      'sessions.authorize fails';
-      is $response->{error}{code}, 'headless_unavailable', 'the auth-agent error response is preserved';
+      is $response->{error}{code}, 'auth.headless_unavailable', 'the auth-agent error response is preserved';
     },
   );
 };

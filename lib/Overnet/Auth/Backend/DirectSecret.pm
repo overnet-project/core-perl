@@ -31,7 +31,7 @@ sub load_signing_key {
     return (
       undef,
       {
-        code    => 'backend_unavailable',
+        code    => 'auth.backend_unavailable',
         message => 'no direct secret is configured for the selected identity',
       }
     );
@@ -42,7 +42,7 @@ sub load_signing_key {
     return (
       undef,
       {
-        code    => 'backend_unavailable',
+        code    => 'auth.backend_unavailable',
         message => "$EVAL_ERROR",
       }
     );

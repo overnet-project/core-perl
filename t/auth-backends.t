@@ -44,7 +44,7 @@ subtest 'direct secret backend preserves compatibility with identity secret fiel
   is $key->pubkey_hex, $fixture_pubkey, 'compatibility secret field still works';
 };
 
-subtest 'direct secret backend reports backend_unavailable when no secret is configured' => sub {
+subtest 'direct secret backend reports auth.backend_unavailable when no secret is configured' => sub {
   my $backend = Overnet::Auth::Backend::DirectSecret->new;
   my ($key, $error) = $backend->load_signing_key(
     identity       => {},
@@ -54,10 +54,10 @@ subtest 'direct secret backend reports backend_unavailable when no secret is con
   ok !defined $key, 'no signing key is returned';
   is_deeply $error,
     {
-    code    => 'backend_unavailable',
+    code    => 'auth.backend_unavailable',
     message => 'no direct secret is configured for the selected identity',
     },
-    'direct_secret backend returns a structured backend_unavailable error';
+    'direct_secret backend returns a structured auth.backend_unavailable error';
 };
 
 subtest 'pass backend uses the first line returned by the command runner' => sub {
@@ -117,20 +117,20 @@ subtest 'pass backend accepts PEM secrets' => sub {
   is $loaded->pubkey_hex, $key->pubkey_hex, 'PEM secret loads through the pass backend';
 };
 
-subtest 'pass backend reports backend_unavailable when no entry is configured' => sub {
+subtest 'pass backend reports auth.backend_unavailable when no entry is configured' => sub {
   my $backend = Overnet::Auth::Backend::Pass->new;
   my ($key, $error) = $backend->load_signing_key(backend_config => {},);
 
   ok !defined $key, 'no signing key is returned';
   is_deeply $error,
     {
-    code    => 'backend_unavailable',
+    code    => 'auth.backend_unavailable',
     message => 'no pass entry is configured for the selected identity',
     },
-    'missing pass entry returns backend_unavailable';
+    'missing pass entry returns auth.backend_unavailable';
 };
 
-subtest 'pass backend reports backend_unavailable when output is empty' => sub {
+subtest 'pass backend reports auth.backend_unavailable when output is empty' => sub {
   my $backend = Overnet::Auth::Backend::Pass->new(
     command_runner => sub {
       return ("\n", undef);
@@ -146,13 +146,13 @@ subtest 'pass backend reports backend_unavailable when output is empty' => sub {
   ok !defined $key, 'no signing key is returned';
   is_deeply $error,
     {
-    code    => 'backend_unavailable',
+    code    => 'auth.backend_unavailable',
     message => 'pass entry overnet-priv-key did not return a usable secret',
     },
-    'empty pass output returns backend_unavailable';
+    'empty pass output returns auth.backend_unavailable';
 };
 
-subtest 'pass backend reports backend_unavailable when output is malformed' => sub {
+subtest 'pass backend reports auth.backend_unavailable when output is malformed' => sub {
   my $backend = Overnet::Auth::Backend::Pass->new(
     command_runner => sub {
       return ("not-a-private-key\n", undef);
@@ -166,13 +166,13 @@ subtest 'pass backend reports backend_unavailable when output is malformed' => s
   );
 
   ok !defined $key, 'no signing key is returned';
-  is $error->{code}, 'backend_unavailable', 'malformed pass output returns backend_unavailable';
+  is $error->{code}, 'auth.backend_unavailable', 'malformed pass output returns auth.backend_unavailable';
   like $error->{message},
     qr/(unable\ to\ read\ key|privkey|No\ such\ file|non-existing\ file|BEGIN)/mx,
     'malformed pass output reports a key-loading failure';
 };
 
-subtest 'pass backend reports backend_unavailable when the command runner fails' => sub {
+subtest 'pass backend reports auth.backend_unavailable when the command runner fails' => sub {
   my $backend = Overnet::Auth::Backend::Pass->new(
     command_runner => sub {
       return (undef, 'pass show failed');
@@ -188,10 +188,10 @@ subtest 'pass backend reports backend_unavailable when the command runner fails'
   ok !defined $key, 'no signing key is returned';
   is_deeply $error,
     {
-    code    => 'backend_unavailable',
+    code    => 'auth.backend_unavailable',
     message => 'pass show failed',
     },
-    'pass backend returns a structured backend_unavailable error';
+    'pass backend returns a structured auth.backend_unavailable error';
 };
 
 done_testing;
