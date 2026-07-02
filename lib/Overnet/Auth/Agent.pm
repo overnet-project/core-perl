@@ -6,19 +6,21 @@ use English qw(-no_match_vars);
 
 use JSON         ();
 use Time::HiRes  qw(time);
-use Scalar::Util qw(blessed);
+use Scalar::Util qw(blessed weaken);
 use Overnet::Authority::Delegation;
+use Overnet::CommandBus;
 
 our $VERSION = '0.001';
 
-has identities      => (is => 'rw', accessor => '_identities');
-has identity_order  => (is => 'rw', accessor => '_identity_order');
-has policies        => (is => 'rw', accessor => '_policies');
-has service_pins    => (is => 'rw', accessor => '_service_pins');
-has sessions        => (is => 'rw', accessor => '_sessions');
-has state_writer    => (is => 'ro', reader   => '_state_writer');
-has next_policy_id  => (is => 'rw', accessor => '_next_policy_id_value');
-has next_session_id => (is => 'rw', accessor => '_next_session_id_value');
+has identities      => (is => 'rw',   accessor => '_identities');
+has identity_order  => (is => 'rw',   accessor => '_identity_order');
+has policies        => (is => 'rw',   accessor => '_policies');
+has service_pins    => (is => 'rw',   accessor => '_service_pins');
+has sessions        => (is => 'rw',   accessor => '_sessions');
+has state_writer    => (is => 'ro',   reader   => '_state_writer');
+has next_policy_id  => (is => 'rw',   accessor => '_next_policy_id_value');
+has next_session_id => (is => 'rw',   accessor => '_next_session_id_value');
+has bus             => (is => 'lazy', init_arg => undef);
 
 no Moo;
 
@@ -118,25 +120,47 @@ sub dispatch {
     return $self->_error_response($id, 'invalid_request', 'method is required');
   }
 
-  my %dispatch = (
-    'agent.info'          => sub { $self->_dispatch_agent_info($request) },
-    'identities.list'     => sub { $self->_dispatch_identities_list($request) },
-    'policies.list'       => sub { $self->_dispatch_policies_list($request) },
-    'policies.grant'      => sub { $self->_dispatch_policies_grant($request) },
-    'policies.revoke'     => sub { $self->_dispatch_policies_revoke($request) },
-    'service_pins.list'   => sub { $self->_dispatch_service_pins_list($request) },
-    'service_pins.set'    => sub { $self->_dispatch_service_pins_set($request) },
-    'service_pins.forget' => sub { $self->_dispatch_service_pins_forget($request) },
-    'sessions.list'       => sub { $self->_dispatch_sessions_list($request) },
-    'sessions.authorize'  => sub { $self->_dispatch_authorize($request) },
-    'sessions.renew'      => sub { $self->_dispatch_renew($request) },
-    'sessions.revoke'     => sub { $self->_dispatch_revoke($request) },
+  if (!($self->bus->has_handler($method))) {
+    return $self->_error_response($id, 'invalid_request', "unsupported method: $method");
+  }
+
+  my $params = ref($request->{params}) eq 'HASH' ? $request->{params} : {};
+
+  return $self->bus->dispatch($method, $params, {request => $request});
+}
+
+sub _build_bus {
+  my ($self) = @_;
+  weaken(my $agent = $self);
+
+  my %method_impls = (
+    'agent.info'          => '_dispatch_agent_info',
+    'identities.list'     => '_dispatch_identities_list',
+    'policies.list'       => '_dispatch_policies_list',
+    'policies.grant'      => '_dispatch_policies_grant',
+    'policies.revoke'     => '_dispatch_policies_revoke',
+    'service_pins.list'   => '_dispatch_service_pins_list',
+    'service_pins.set'    => '_dispatch_service_pins_set',
+    'service_pins.forget' => '_dispatch_service_pins_forget',
+    'sessions.list'       => '_dispatch_sessions_list',
+    'sessions.authorize'  => '_dispatch_authorize',
+    'sessions.renew'      => '_dispatch_renew',
+    'sessions.revoke'     => '_dispatch_revoke',
   );
 
-  my $handler = $dispatch{$method}
-    or return $self->_error_response($id, 'invalid_request', "unsupported method: $method");
+  my $bus = Overnet::CommandBus->new;
+  for my $method (sort keys %method_impls) {
+    my $impl = $method_impls{$method};
+    $bus->register(
+      $method,
+      sub {
+        my (undef, undef, $context) = @_;
+        return $agent->$impl($context->{request});
+      }
+    );
+  }
 
-  return $handler->();
+  return $bus;
 }
 
 sub _dispatch_agent_info {
@@ -1320,6 +1344,10 @@ This module is part of the Overnet Perl implementation.
 =head1 SUBROUTINES/METHODS
 
 =head2 new
+
+Public API entry point.
+
+=head2 bus
 
 Public API entry point.
 
