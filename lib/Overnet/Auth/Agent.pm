@@ -126,7 +126,24 @@ sub dispatch {
 
   my $params = ref($request->{params}) eq 'HASH' ? $request->{params} : {};
 
-  return $self->bus->dispatch($method, $params, {request => $request});
+  my $result;
+  my $error;
+  eval {
+    $result = $self->bus->dispatch($method, $params, {request => $request});
+    1;
+  } or $error = $EVAL_ERROR;
+
+  if ($error) {
+    my $normalized = Overnet::CommandBus->normalize_error($error, code => 'auth.internal_failure');
+    return $self->_error_response($id, $normalized->{code}, $normalized->{message});
+  }
+
+  return {
+    type   => 'response',
+    id     => $id,
+    ok     => JSON::true,
+    result => $result,
+  };
 }
 
 sub _build_bus {
@@ -148,7 +165,8 @@ sub _build_bus {
     'sessions.revoke'     => '_dispatch_revoke',
   );
 
-  my $bus = Overnet::CommandBus->new;
+  my $bus =
+    Overnet::CommandBus->new(middleware => [Overnet::CommandBus->error_normalizer(code => 'auth.internal_failure')],);
   for my $method (sort keys %method_impls) {
     my $impl = $method_impls{$method};
     $bus->register(
@@ -165,26 +183,19 @@ sub _build_bus {
 
 sub _dispatch_agent_info {
   my ($self, $request) = @_;
-  my $id = $request->{id};
 
   return {
-    type   => 'response',
-    id     => $id,
-    ok     => JSON::true,
-    result => {
-      protocol_version => '0.2.0',
-      capabilities     => [
-        'agent.info',      'identities.list',    'policies.list',    'policies.grant',
-        'policies.revoke', 'service_pins.list',  'service_pins.set', 'service_pins.forget',
-        'sessions.list',   'sessions.authorize', 'sessions.renew',   'sessions.revoke',
-      ],
-    },
+    protocol_version => '0.2.0',
+    capabilities     => [
+      'agent.info',      'identities.list',    'policies.list',    'policies.grant',
+      'policies.revoke', 'service_pins.list',  'service_pins.set', 'service_pins.forget',
+      'sessions.list',   'sessions.authorize', 'sessions.renew',   'sessions.revoke',
+    ],
   };
 }
 
 sub _dispatch_identities_list {
   my ($self, $request) = @_;
-  my $id = $request->{id};
 
   my @identities;
   for my $identity_id (@{$self->{identity_order}}) {
@@ -201,40 +212,25 @@ sub _dispatch_identities_list {
     push @identities, \%descriptor;
   }
 
-  return {
-    type   => 'response',
-    id     => $id,
-    ok     => JSON::true,
-    result => {
-      identities => \@identities,
-    },
-  };
+  return {identities => \@identities,};
 }
 
 sub _dispatch_policies_list {
   my ($self, $request) = @_;
 
-  return {
-    type   => 'response',
-    id     => $request->{id},
-    ok     => JSON::true,
-    result => {
-      policies => [map { _policy_descriptor($_) } @{$self->{policies}}],
-    },
-  };
+  return {policies => [map { _policy_descriptor($_) } @{$self->{policies}}],};
 }
 
 sub _dispatch_policies_grant {
   my ($self, $request) = @_;
-  my $id     = $request->{id};
   my $params = $request->{params};
 
   if (!(ref($params) eq 'HASH')) {
-    return $self->_error_response($id, 'protocol.invalid_params', 'params must be an object');
+    CORE::die {code => 'protocol.invalid_params', message => 'params must be an object'};
   }
 
   my $stored = _normalize_policy_input($params->{policy})
-    or return $self->_error_response($id, 'protocol.invalid_params', 'policy must be a valid policy object');
+    or CORE::die {code => 'protocol.invalid_params', message => 'policy must be a valid policy object'};
 
   my ($policy, $persist_error) = $self->_persist_mutation(
     sub {
@@ -245,31 +241,23 @@ sub _dispatch_policies_grant {
     }
   );
   if (!($policy)) {
-    return $self->_error_response($id, @{$persist_error});
+    CORE::die {code => $persist_error->[0], message => $persist_error->[1]};
   }
 
-  return {
-    type   => 'response',
-    id     => $id,
-    ok     => JSON::true,
-    result => {
-      policy => $policy,
-    },
-  };
+  return {policy => $policy,};
 }
 
 sub _dispatch_policies_revoke {
   my ($self, $request) = @_;
-  my $id     = $request->{id};
   my $params = $request->{params};
 
   if (!(ref($params) eq 'HASH')) {
-    return $self->_error_response($id, 'protocol.invalid_params', 'params must be an object');
+    CORE::die {code => 'protocol.invalid_params', message => 'params must be an object'};
   }
 
   my $policy_id = _policy_id_value($params->{policy_id});
   if (!(defined $policy_id)) {
-    return $self->_error_response($id, 'protocol.invalid_params', 'policy_id is required');
+    CORE::die {code => 'protocol.invalid_params', message => 'policy_id is required'};
   }
 
   my ($revoked, $persist_error) = $self->_persist_mutation(
@@ -279,52 +267,39 @@ sub _dispatch_policies_revoke {
     }
   );
   if (!($revoked)) {
-    return $self->_error_response($id, @{$persist_error});
+    CORE::die {code => $persist_error->[0], message => $persist_error->[1]};
   }
 
-  return {
-    type   => 'response',
-    id     => $id,
-    ok     => JSON::true,
-    result => {
-      policy_id => $policy_id,
-    },
-  };
+  return {policy_id => $policy_id,};
 }
 
 sub _dispatch_service_pins_list {
   my ($self, $request) = @_;
 
   return {
-    type   => 'response',
-    id     => $request->{id},
-    ok     => JSON::true,
-    result => {
-      service_pins => [
-        map { {locator => $_, service_identity => _clone_hash($self->{service_pins}{$_}),} }
-        sort keys %{$self->{service_pins}}
-      ],
-    },
+    service_pins => [
+      map { {locator => $_, service_identity => _clone_hash($self->{service_pins}{$_}),} }
+      sort keys %{$self->{service_pins}}
+    ],
   };
 }
 
 sub _dispatch_service_pins_set {
   my ($self, $request) = @_;
-  my $id     = $request->{id};
   my $params = $request->{params};
 
   if (!(ref($params) eq 'HASH')) {
-    return $self->_error_response($id, 'protocol.invalid_params', 'params must be an object');
+    CORE::die {code => 'protocol.invalid_params', message => 'params must be an object'};
   }
 
   my $locator = $params->{locator};
   if (!(defined $locator && !ref($locator) && length($locator))) {
-    return $self->_error_response($id, 'protocol.invalid_params', 'locator is required');
+    CORE::die {code => 'protocol.invalid_params', message => 'locator is required'};
   }
 
   my $service_identity = _normalize_service_identity($params->{service_identity});
   if (!($service_identity)) {
-    return $self->_error_response($id, 'protocol.invalid_params', 'service_identity must be a valid descriptor');
+    CORE::die {code => 'protocol.invalid_params', message => 'service_identity must be a valid descriptor'};
   }
 
   my ($stored, $persist_error) = $self->_persist_mutation(
@@ -334,32 +309,26 @@ sub _dispatch_service_pins_set {
     }
   );
   if (!($stored)) {
-    return $self->_error_response($id, @{$persist_error});
+    CORE::die {code => $persist_error->[0], message => $persist_error->[1]};
   }
 
   return {
-    type   => 'response',
-    id     => $id,
-    ok     => JSON::true,
-    result => {
-      locator          => $locator,
-      service_identity => $stored,
-    },
+    locator          => $locator,
+    service_identity => $stored,
   };
 }
 
 sub _dispatch_service_pins_forget {
   my ($self, $request) = @_;
-  my $id     = $request->{id};
   my $params = $request->{params};
 
   if (!(ref($params) eq 'HASH')) {
-    return $self->_error_response($id, 'protocol.invalid_params', 'params must be an object');
+    CORE::die {code => 'protocol.invalid_params', message => 'params must be an object'};
   }
 
   my $locator = $params->{locator};
   if (!(defined $locator && !ref($locator) && length($locator))) {
-    return $self->_error_response($id, 'protocol.invalid_params', 'locator is required');
+    CORE::die {code => 'protocol.invalid_params', message => 'locator is required'};
   }
 
   my ($forgotten, $persist_error) = $self->_persist_mutation(
@@ -369,65 +338,53 @@ sub _dispatch_service_pins_forget {
     }
   );
   if (!($forgotten)) {
-    return $self->_error_response($id, @{$persist_error});
+    CORE::die {code => $persist_error->[0], message => $persist_error->[1]};
   }
 
-  return {
-    type   => 'response',
-    id     => $id,
-    ok     => JSON::true,
-    result => {
-      locator => $locator,
-    },
-  };
+  return {locator => $locator,};
 }
 
 sub _dispatch_sessions_list {
   my ($self, $request) = @_;
 
   return {
-    type   => 'response',
-    id     => $request->{id},
-    ok     => JSON::true,
-    result => {
-      sessions => [
-        map { _session_descriptor($self->{sessions}{$_}) }
-        sort keys %{$self->{sessions}}
-      ],
-    },
+    sessions => [
+      map { _session_descriptor($self->{sessions}{$_}) }
+      sort keys %{$self->{sessions}}
+    ],
   };
 }
 
 sub _dispatch_authorize {
-  my ($self, $request) = @_;
-  my $id = $request->{id};
+  my ($self,    $request)       = @_;
   my ($context, $context_error) = $self->_authorize_context($request->{params});
   if (!($context)) {
-    return $self->_error_response($id, @{$context_error});
+    CORE::die {code => $context_error->[0], message => $context_error->[1]};
   }
 
   my ($service_pin_state, $service_error) = $self->_service_pin_state($context->{service});
   if (!(defined $service_pin_state)) {
-    return $self->_error_response($id, @{$service_error});
+    CORE::die {code => $service_error->[0], message => $service_error->[1]};
   }
 
   if (!($self->_authorize_allowed($context))) {
-    return $self->_error_response($id, 'auth.headless_unavailable',
-      'approval is required but interactive approval is unavailable');
+    CORE::die {
+      code    => 'auth.headless_unavailable',
+      message => 'approval is required but interactive approval is unavailable'
+    };
   }
 
   my ($returned, $artifact_error) = $self->_authorize_artifacts($context);
   if (!($returned)) {
-    return $self->_error_response($id, @{$artifact_error});
+    CORE::die {code => $artifact_error->[0], message => $artifact_error->[1]};
   }
 
   my ($session_handle, $persist_error) = $self->_persist_authorized_session($context, $service_pin_state);
   if (!($session_handle)) {
-    return $self->_error_response($id, @{$persist_error});
+    CORE::die {code => $persist_error->[0], message => $persist_error->[1]};
   }
 
   return _authorize_response(
-    id                => $id,
     identity_id       => $context->{identity}{identity_id},
     service_pin_state => $service_pin_state,
     artifacts         => $returned,
@@ -556,49 +513,43 @@ sub _persist_authorized_session {
 sub _authorize_response {
   my (%args) = @_;
   return {
-    type   => 'response',
-    id     => $args{id},
-    ok     => JSON::true,
-    result => {
-      identity_id       => $args{identity_id},
-      service_pin_state => $args{service_pin_state},
-      artifacts         => $args{artifacts},
-      session_handle    => $args{session_handle},
-    },
+    identity_id       => $args{identity_id},
+    service_pin_state => $args{service_pin_state},
+    artifacts         => $args{artifacts},
+    session_handle    => $args{session_handle},
   };
 }
 
 sub _dispatch_renew {
   my ($self, $request) = @_;
-  my $id     = $request->{id};
   my $params = $request->{params};
 
   if (!(ref($params) eq 'HASH')) {
-    return $self->_error_response($id, 'protocol.invalid_params', 'params must be an object');
+    CORE::die {code => 'protocol.invalid_params', message => 'params must be an object'};
   }
 
   my $session_handle = _session_handle_id($params->{session_handle});
   if (!(defined $session_handle)) {
-    return $self->_error_response($id, 'protocol.invalid_params', 'session_handle.id is required');
+    CORE::die {code => 'protocol.invalid_params', message => 'session_handle.id is required'};
   }
 
   my $session = $self->{sessions}{$session_handle}
-    or return $self->_error_response($id, 'protocol.invalid_params', 'unknown session_handle');
+    or CORE::die {code => 'protocol.invalid_params', message => 'unknown session_handle'};
 
   if (!($session->{renewable})) {
-    return $self->_error_response($id, 'auth.policy_denied', 'session is not renewable');
+    CORE::die {code => 'auth.policy_denied', message => 'session is not renewable'};
   }
 
   my ($identity, $identity_error) =
     $self->_resolve_identity($session->{identity_id});
   if (!($identity)) {
-    return $self->_error_response($id, @{$identity_error});
+    CORE::die {code => $identity_error->[0], message => $identity_error->[1]};
   }
 
   my ($service_pin_state, $service_error) =
     $self->_service_pin_state($session->{service});
   if (!(defined $service_pin_state)) {
-    return $self->_error_response($id, @{$service_error});
+    CORE::die {code => $service_error->[0], message => $service_error->[1]};
   }
 
   my $approved = $self->_policy_matches(
@@ -610,7 +561,7 @@ sub _dispatch_renew {
   );
 
   if (!$approved) {
-    return $self->_error_response($id, 'auth.policy_denied', 'session no longer matches current policy');
+    CORE::die {code => 'auth.policy_denied', message => 'session no longer matches current policy'};
   }
 
   my @returned;
@@ -623,36 +574,30 @@ sub _dispatch_renew {
       artifact  => $artifact,
     );
     if (!($built)) {
-      return $self->_error_response($id, @{$artifact_error});
+      CORE::die {code => $artifact_error->[0], message => $artifact_error->[1]};
     }
     push @returned, $built;
   }
 
   return {
-    type   => 'response',
-    id     => $id,
-    ok     => JSON::true,
-    result => {
-      identity_id       => $session->{identity_id},
-      service_pin_state => $service_pin_state,
-      artifacts         => \@returned,
-      session_handle    => _clone_hash($session->{session_handle}),
-    },
+    identity_id       => $session->{identity_id},
+    service_pin_state => $service_pin_state,
+    artifacts         => \@returned,
+    session_handle    => _clone_hash($session->{session_handle}),
   };
 }
 
 sub _dispatch_revoke {
   my ($self, $request) = @_;
-  my $id     = $request->{id};
   my $params = $request->{params};
 
   if (!(ref($params) eq 'HASH')) {
-    return $self->_error_response($id, 'protocol.invalid_params', 'params must be an object');
+    CORE::die {code => 'protocol.invalid_params', message => 'params must be an object'};
   }
 
   my $session_handle = _session_handle_id($params->{session_handle});
   if (!(defined $session_handle)) {
-    return $self->_error_response($id, 'protocol.invalid_params', 'session_handle.id is required');
+    CORE::die {code => 'protocol.invalid_params', message => 'session_handle.id is required'};
   }
 
   my ($revoked, $persist_error) = $self->_persist_mutation(
@@ -662,15 +607,10 @@ sub _dispatch_revoke {
     }
   );
   if (!($revoked)) {
-    return $self->_error_response($id, @{$persist_error});
+    CORE::die {code => $persist_error->[0], message => $persist_error->[1]};
   }
 
-  return {
-    type   => 'response',
-    id     => $id,
-    ok     => JSON::true,
-    result => {},
-  };
+  return {};
 }
 
 sub _resolve_identity {

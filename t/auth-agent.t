@@ -197,8 +197,9 @@ subtest 'sessions.authorize reports auth.backend_unavailable for an unknown back
     }
   );
 
-  is $response->{ok},          0,                     'authorize fails';
-  is $response->{error}{code}, 'auth.backend_unavailable', 'unknown backend type is reported as auth.backend_unavailable';
+  is $response->{ok}, 0, 'authorize fails';
+  is $response->{error}{code}, 'auth.backend_unavailable',
+    'unknown backend type is reported as auth.backend_unavailable';
 };
 
 subtest 'sessions.authorize honors an injected backend instance' => sub {
@@ -388,7 +389,7 @@ subtest 'sessions.renew propagates auth.backend_unavailable when the identity ba
     }
   );
 
-  is $renew->{ok},          0,                     'renew fails';
+  is $renew->{ok},          0,                          'renew fails';
   is $renew->{error}{code}, 'auth.backend_unavailable', 'renew surfaces the backend failure';
 };
 
@@ -448,7 +449,7 @@ subtest 'sessions.revoke drops one stored session so later renew fails' => sub {
     }
   );
 
-  is $renew->{ok},          0,                 'renew fails after revoke';
+  is $renew->{ok},          0,                         'renew fails after revoke';
   is $renew->{error}{code}, 'protocol.invalid_params', 'renew reports an unknown session handle';
 };
 
@@ -639,7 +640,7 @@ subtest 'policies.grant enables matching headless authorization until policies.r
     }
   );
 
-  is $after_revoke->{ok},          0,                      'headless authorization fails again after policy revoke';
+  is $after_revoke->{ok},          0, 'headless authorization fails again after policy revoke';
   is $after_revoke->{error}{code}, 'auth.headless_unavailable', 'revoked policy no longer matches';
 };
 
@@ -1011,9 +1012,32 @@ subtest 'authorize and revoke persist session state and roll back on state write
     }
   );
 
-  is $failed->{ok},                 0,                  'failed persistence turns the mutation into an error';
+  is $failed->{ok},                 0,                       'failed persistence turns the mutation into an error';
   is $failed->{error}{code},        'auth.internal_failure', 'state write failure is surfaced';
-  is $policies->{result}{policies}, [],                 'failed persistence rolled the in-memory mutation back';
+  is $policies->{result}{policies}, [],                      'failed persistence rolled the in-memory mutation back';
+};
+
+subtest 'unexpected handler failures surface as auth.internal_failure responses' => sub {
+  my $agent = Overnet::Auth::Agent->new;
+
+  no warnings 'redefine';
+  local *Overnet::Auth::Agent::_dispatch_sessions_list = sub { die "session store exploded\n" };
+  use warnings 'redefine';
+
+  my $response = $agent->dispatch(
+    {
+      type   => 'request',
+      id     => 'internal-failure-1',
+      method => 'sessions.list',
+      params => {},
+    }
+  );
+
+  is $response->{type},           'response',               'unexpected failure still yields a response';
+  is $response->{id},             'internal-failure-1',     'response is correlated to the request';
+  is $response->{ok},             0,                        'unexpected failure is not ok';
+  is $response->{error}{code},    'auth.internal_failure',  'unexpected failure uses auth.internal_failure';
+  is $response->{error}{message}, 'session store exploded', 'failure message is preserved without trailing newline';
 };
 
 done_testing;

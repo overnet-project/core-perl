@@ -198,11 +198,17 @@ Version 0.001.
 
 =head1 DESCRIPTION
 
-This module is the shared execution bus for Overnet dispatch surfaces. A bus
+This module is the execution bus behind the dispatch surfaces that this
+distribution owns: the program service layer and the auth agent. A bus
 instance maps method names to handler code references and routes every
 C<dispatch> call through its middleware pipeline, so cross-cutting concerns
 such as permission checks, logging, and error normalization are implemented
 once as middleware instead of being duplicated at each dispatch site.
+
+This class is internal to the core distribution. Systems outside core
+interact with these dispatch surfaces through the specified protocol
+envelopes and error codes; they never construct or observe the bus. Do not
+depend on this module from other distributions.
 
 Middleware runs in registration order, with the first added middleware
 outermost. Each middleware receives the dispatched method, params, context,

@@ -101,6 +101,17 @@ Keep the implementation aligned with the currently specified core. Do not implem
 
 Relay daemons, relay persistence/sync, deploy packaging, and the relay-heavy IRC gate live in the [relay Perl repository](https://github.com/overnet-project/relay-perl).
 
+### Internal Dispatch Architecture
+
+`Overnet::CommandBus` is internal plumbing for this dist. It is how core implements its own dispatch surfaces (the program service layer and the auth agent), and it is where cross-cutting dispatch concerns such as permission checks and error normalization are implemented once as middleware.
+
+Boundary rules:
+
+- Dists outside `core-perl` MUST NOT depend on `Overnet::CommandBus`. Downstream systems interact with core through the specified protocol surfaces, never by constructing buses.
+- Cross-cutting dispatch behavior reaches programs through the program protocol (they observe the specified envelope and error codes, not the mechanism).
+- The bus belongs on a dispatch surface only when all three hold: it is a command surface (named operations, request-shaped input, uniform response and error envelope); per-operation cross-cutting concerns apply; and the dispatch is neither a protocol state machine nor a performance-critical wire loop.
+- Do not promote the bus into a shared framework on the strength of one additional consumer. If multiple systems grow identical inbound-dispatch needs, design that abstraction deliberately, spec-first.
+
 ## Documentation and Drift Control
 
 The spec is the primary documentation. When code and spec disagree, resolve the disagreement explicitly.
