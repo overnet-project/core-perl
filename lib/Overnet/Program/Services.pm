@@ -70,6 +70,10 @@ sub is_service_method {
   return defined $method && !ref($method) && $SERVICE_METHODS{$method} ? 1 : 0;
 }
 
+sub service_methods {
+  return [sort keys %SERVICE_METHODS];
+}
+
 sub get_config {
   my ($self, %args) = @_;
   return {config => $self->{runtime}->config,};
@@ -1178,6 +1182,10 @@ Public API entry point.
 Public API entry point.
 
 =head2 is_service_method
+
+Public API entry point.
+
+=head2 service_methods
 
 Public API entry point.
 

@@ -202,4 +202,16 @@ subtest 'adapter registry constructor protects adapter table' => sub {
   ok $registry->has('constructor.registry'), 'registry remains usable after constructor override attempt';
 };
 
+subtest 'services bus handlers stay in lockstep with the service method vocabulary' => sub {
+  my $methods = Overnet::Program::Services->service_methods;
+  ok @{$methods}, 'service method vocabulary is not empty';
+
+  my $services = Overnet::Program::Services->new(runtime => Overnet::Program::Runtime->new);
+  is [sort keys %{$services->bus->handlers}], $methods,
+    'every service method has a bus handler and nothing else is registered';
+
+  is [grep { !(Overnet::Program::Services->is_service_method($_)) } @{$methods}], [],
+    'service_methods agrees with is_service_method';
+};
+
 done_testing;
