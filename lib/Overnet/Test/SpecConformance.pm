@@ -19,6 +19,7 @@ our $VERSION = '0.001';
 our @EXPORT_OK = qw(
   run_auth_agent_conformance
   run_core_validator_conformance
+  run_core_provenance_conformance
   run_private_messaging_conformance
   run_irc_adapter_map_conformance
   run_irc_adapter_derived_presence_conformance
@@ -49,6 +50,24 @@ sub run_core_validator_conformance {
       }
     };
   }
+  return;
+}
+
+sub run_core_provenance_conformance {
+  require Overnet::Core::Provenance;
+
+  _run_fixture_family(
+    family => 'provenance',
+    runner => sub {
+      my ($fixture) = @_;
+      my $expected  = $fixture->{expected} || {};
+      my $input     = $fixture->{input}    || {};
+      my $result =
+        Overnet::Core::Provenance::verify_event($input->{event}, $input->{trusted_authority_records},);
+
+      is($result->{outcome}, $expected->{outcome}, "outcome = $expected->{outcome}",);
+    },
+  );
   return;
 }
 
@@ -1694,6 +1713,10 @@ This module is part of the Overnet Perl implementation.
 =head1 SUBROUTINES/METHODS
 
 =head2 run_core_validator_conformance
+
+Public API entry point.
+
+=head2 run_core_provenance_conformance
 
 Public API entry point.
 

@@ -190,6 +190,7 @@ sub _validate_event_content {
   push @errors, _validate_provenance($content->{provenance});
   push @errors, _validate_body($content->{body}, $kind, $context);
   push @errors, _validate_core_delegation($content, $kind, $tag_values);
+  push @errors, _validate_core_adapter_authority($content, $kind, $tag_values);
   return @errors;
 }
 
@@ -315,6 +316,102 @@ sub _validate_core_delegation_body {
   }
   if (defined $body->{expires_at} && (ref $body->{expires_at} || $body->{expires_at} !~ /\A\d+\z/mxs)) {
     push @errors, "Core delegation expires_at must be an integer timestamp";
+  }
+  return @errors;
+}
+
+sub _validate_core_adapter_authority {
+  my ($content, $kind, $tag_values) = @_;
+  if (!(defined $tag_values->{overnet_et} && $tag_values->{overnet_et} eq 'core.adapter_authority')) {
+    return;
+  }
+  my @errors;
+  if ($kind != 37_800) {
+    push @errors, "Adapter authority record must use kind 37800";
+  }
+  push @errors, _validate_authority_provenance($content->{provenance});
+  push @errors, _validate_authority_body($content->{body}, $tag_values);
+  return @errors;
+}
+
+sub _validate_authority_provenance {
+  my ($provenance) = @_;
+  return defined $provenance && ref $provenance eq 'HASH' && ($provenance->{type} // q{}) eq 'native'
+    ? ()
+    : ("Adapter authority record must use native provenance");
+}
+
+sub _validate_authority_body {
+  my ($body, $tag_values) = @_;
+  if (!defined $body || ref $body ne 'HASH') {
+    return;
+  }
+  my @errors;
+  push @errors, _validate_authority_protocol_origin($body, $tag_values);
+  push @errors, _validate_authority_pubkeys($body);
+  push @errors, _validate_authority_origin_match($body);
+  push @errors, _validate_authority_window($body);
+  return @errors;
+}
+
+sub _validate_authority_protocol_origin {
+  my ($body, $tag_values) = @_;
+  my @errors;
+  push @errors, _validate_authority_required_field($body, 'protocol');
+  push @errors, _validate_authority_required_field($body, 'origin');
+  if (_is_non_empty_string($body->{protocol}) && _is_non_empty_string($body->{origin})) {
+    my $expected_oid = "$body->{protocol}:$body->{origin}";
+    if (defined $tag_values->{overnet_oid} && $tag_values->{overnet_oid} ne $expected_oid) {
+      push @errors, "Adapter authority record overnet_oid must equal protocol:origin";
+    }
+  }
+  return @errors;
+}
+
+sub _validate_authority_required_field {
+  my ($body, $field) = @_;
+  if (!exists $body->{$field}) {
+    return ("Adapter authority record missing required $field field");
+  }
+  return _is_non_empty_string($body->{$field})
+    ? ()
+    : ("Adapter authority record $field must be a non-empty string");
+}
+
+sub _validate_authority_pubkeys {
+  my ($body) = @_;
+  if (!exists $body->{pubkeys}) {
+    return ("Adapter authority record missing required pubkeys field");
+  }
+  if (ref $body->{pubkeys} ne 'ARRAY') {
+    return ("Adapter authority record pubkeys must be an array");
+  }
+  for my $pubkey (@{$body->{pubkeys}}) {
+    if (ref $pubkey || !defined $pubkey || $pubkey !~ /\A[0-9a-f]{64}\z/mxs) {
+      return ("Adapter authority record pubkeys must contain only 64-char lowercase hex strings");
+    }
+  }
+  return;
+}
+
+sub _validate_authority_origin_match {
+  my ($body) = @_;
+  if (!exists $body->{origin_match}) {
+    return;
+  }
+  my $match = $body->{origin_match};
+  return (defined $match && !ref $match && ($match eq 'exact' || $match eq 'prefix'))
+    ? ()
+    : ("Adapter authority record origin_match must be exact or prefix");
+}
+
+sub _validate_authority_window {
+  my ($body) = @_;
+  my @errors;
+  for my $field (qw(not_before not_after)) {
+    if (defined $body->{$field} && (ref $body->{$field} || $body->{$field} !~ /\A\d+\z/mxs)) {
+      push @errors, "Adapter authority record $field must be an integer timestamp";
+    }
   }
   return @errors;
 }

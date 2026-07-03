@@ -1,0 +1,48 @@
+{
+   "description" : "A valid adapter authority record (kind 37800, core.adapter_authority) binding an IRC network origin to an authoritative adapter pubkey with prefix matching.",
+   "expected" : {
+      "overnet_valid" : true
+   },
+   "input" : {
+      "content" : "{\"provenance\":{\"type\":\"native\"},\"body\":{\"protocol\":\"irc\",\"origin\":\"irc.libera.chat\",\"origin_match\":\"prefix\",\"pubkeys\":[\"a1b2c3a1b2c3a1b2c3a1b2c3a1b2c3a1b2c3a1b2c3a1b2c3a1b2c3a1b2c3a1b2\"]}}",
+      "created_at" : 1744301100,
+      "id" : "54ca9b4d6f0cfaad17d262db64ac27d2c51c24942d7458ff061abb83140a7484",
+      "kind" : 37800,
+      "pubkey" : "2f889c35573d03a2195d7897886846568eaaff8161475b341c7e4dcb386bfa86",
+      "sig" : "c94f43f93c1601ae79737b100364c723125e50262dee5b92959c10d4b650b8b06090f50064aa251f232e863895c5ad4acdd3eeb38cf82a0a14c0864bd966d264",
+      "tags" : [
+         [
+            "d",
+            "irc:irc.libera.chat"
+         ],
+         [
+            "overnet_v",
+            "0.1.0"
+         ],
+         [
+            "overnet_et",
+            "core.adapter_authority"
+         ],
+         [
+            "overnet_ot",
+            "core.adapter_authority"
+         ],
+         [
+            "overnet_oid",
+            "irc:irc.libera.chat"
+         ],
+         [
+            "v",
+            "0.1.0"
+         ],
+         [
+            "t",
+            "core.adapter_authority"
+         ],
+         [
+            "o",
+            "core.adapter_authority"
+         ]
+      ]
+   }
+}

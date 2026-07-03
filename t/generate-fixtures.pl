@@ -164,7 +164,7 @@ sub _rewritten_tags_for_signing {
   my ($input, $key, $events) = @_;
   my @tags = @{$input->{tags}};
 
-  if ($input->{kind} == 37_800) {
+  if ($input->{kind} == 37_800 && !_is_adapter_authority_event($input)) {
     @tags = _replace_tag_values(\@tags, 'd',           $key->pubkey_hex);
     @tags = _replace_tag_values(\@tags, 'overnet_oid', $key->pubkey_hex);
   }
@@ -279,6 +279,13 @@ sub _is_delegation_event {
   my $event_type = _tag_value($input->{tags}, 'overnet_et');
   return 0 if !defined $event_type;
   return $event_type eq 'core.delegation' ? 1 : 0;
+}
+
+sub _is_adapter_authority_event {
+  my ($input) = @_;
+  my $event_type = _tag_value($input->{tags}, 'overnet_et');
+  return 0 if !defined $event_type;
+  return $event_type eq 'core.adapter_authority' ? 1 : 0;
 }
 
 sub _event_hash {
