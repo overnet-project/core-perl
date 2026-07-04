@@ -126,3 +126,7 @@ Relay daemons, relay sync, deploy packaging, and the heavy IRC release gate now 
 ## Notes
 
 Generated build artifacts and dependency caches are intentionally ignored by git.
+
+## AI Usage
+
+This code was developed in part with AI tooling such as Claude Code and Codex. We want to be upfront about that.
