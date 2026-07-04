@@ -425,7 +425,22 @@ sub _validate_removal_authorization {
   if (!($target_event)) {
     return ($target_error);
   }
+  my @target_crypto_errors = _validate_context_event_crypto($target_event, 'Kind 7801 target event');
+  if (@target_crypto_errors) {
+    return @target_crypto_errors;
+  }
   return _validate_removal_against_target($event, $tag_values, $context, $target_event);
+}
+
+sub _validate_context_event_crypto {
+  my ($event, $label) = @_;
+  my $ok    = eval { $event->validate(); 1 };
+  my $error = $EVAL_ERROR;
+  if (!$ok) {
+    (my $err = $error) =~ s/\ at\ .+\ line\ \d+.*//smx;
+    return ("$label failed Nostr validation: $err");
+  }
+  return;
 }
 
 sub _can_check_removal_authorization {
@@ -505,6 +520,32 @@ sub _validate_delegated_removal {
   my $delegation_event = $args{delegation_event};
   my $errors           = $args{errors};
 
+  my @crypto_errors = _validate_context_event_crypto($delegation_event, 'Delegated removal delegation event');
+  if (@crypto_errors) {
+    push @{$errors}, @crypto_errors;
+    return;
+  }
+
+  if ($delegation_event->kind != 7_800) {
+    push @{$errors}, "Delegated removal delegation event must use kind 7800";
+    return;
+  }
+
+  my $content;
+  my $content_ok = eval { $content = $JSON->decode($delegation_event->content); 1 };
+  if ( !$content_ok
+    || ref $content ne 'HASH'
+    || ref($content->{body}) ne 'HASH') {
+    push @{$errors}, "Invalid delegation event content";
+    return;
+  }
+
+  my $provenance = $content->{provenance};
+  if (!(defined $provenance && ref $provenance eq 'HASH' && ($provenance->{type} // q{}) eq 'native')) {
+    push @{$errors}, "Delegated removal delegation event must use native provenance";
+    return;
+  }
+
   my %delegation_tags;
   for my $tag (@{$delegation_event->tags // []}) {
     if (!(ref $tag eq 'ARRAY' && @{$tag} >= 2)) {
@@ -526,15 +567,6 @@ sub _validate_delegated_removal {
 
   if ($delegation_event->pubkey ne $target_event->pubkey) {
     push @{$errors}, "Delegation must be authored by the same pubkey as the target event";
-    return;
-  }
-
-  my $content;
-  my $content_ok = eval { $content = $JSON->decode($delegation_event->content); 1 };
-  if ( !$content_ok
-    || ref $content ne 'HASH'
-    || ref($content->{body}) ne 'HASH') {
-    push @{$errors}, "Invalid delegation event content";
     return;
   }
 

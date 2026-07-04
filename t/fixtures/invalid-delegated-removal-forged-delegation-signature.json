@@ -1,0 +1,127 @@
+{
+   "context" : {
+      "delegation_event" : {
+         "content" : "{\"provenance\":{\"type\":\"native\"},\"body\":{\"action\":\"remove\",\"delegate_pubkey\":\"a1b2c3a1b2c3a1b2c3a1b2c3a1b2c3a1b2c3a1b2c3a1b2c3a1b2c3a1b2c3a1b2\"}}",
+         "created_at" : 1744300950,
+         "id" : "beef0002beef0002beef0002beef0002beef0002beef0002beef0002beef0002",
+         "kind" : 7800,
+         "pubkey" : "b4c5d6b4c5d6b4c5d6b4c5d6b4c5d6b4c5d6b4c5d6b4c5d6b4c5d6b4c5d6b4c5",
+         "sig" : "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+         "tags" : [
+            [
+               "overnet_v",
+               "0.1.0"
+            ],
+            [
+               "overnet_et",
+               "core.delegation"
+            ],
+            [
+               "overnet_ot",
+               "chat.channel"
+            ],
+            [
+               "overnet_oid",
+               "f47ac10b-58cc-4372-a567-0e02b2c3d479"
+            ]
+         ]
+      },
+      "target_event" : {
+         "content" : "{\"provenance\":{\"type\":\"native\"},\"body\":{\"text\":\"Hello, world!\"}}",
+         "created_at" : 1744300800,
+         "id" : "92257397df99ebd9349f1292e3006768597fec6daf9488b20d6c5d31c053fc16",
+         "kind" : 7800,
+         "pubkey" : "d0a3191f0828abdf345c1f33f92f715957febc429cd0afe76278e3fec984c0ef",
+         "sig" : "6877735de0cf818f81c0c7fa62aefa33a2b9b9712de730d5f698e374eaee88e6eb09cfbfc8a6979703e26afcc17ee43f94d0563c8f7e0f27fa37ae487a4e8adf",
+         "tags" : [
+            [
+               "overnet_v",
+               "0.1.0"
+            ],
+            [
+               "overnet_et",
+               "chat.message"
+            ],
+            [
+               "overnet_ot",
+               "chat.channel"
+            ],
+            [
+               "overnet_oid",
+               "f47ac10b-58cc-4372-a567-0e02b2c3d479"
+            ],
+            [
+               "v",
+               "0.1.0"
+            ],
+            [
+               "t",
+               "chat.message"
+            ],
+            [
+               "o",
+               "chat.channel"
+            ],
+            [
+               "d",
+               "f47ac10b-58cc-4372-a567-0e02b2c3d479"
+            ]
+         ]
+      }
+   },
+   "description" : "Invalid: delegated kind 7801 removal references a delegation event whose signature and id do not verify. The referenced delegation event MUST be a valid Nostr event; a forged delegation does not establish authorization.",
+   "expected" : {
+      "overnet_valid" : false,
+      "reason" : "Delegated removal delegation event failed Nostr validation"
+   },
+   "input" : {
+      "content" : "{\"provenance\":{\"type\":\"native\"},\"body\":{}}",
+      "created_at" : 1744301000,
+      "id" : "cafe0003cafe0003cafe0003cafe0003cafe0003cafe0003cafe0003cafe0003",
+      "kind" : 7801,
+      "pubkey" : "a1b2c3a1b2c3a1b2c3a1b2c3a1b2c3a1b2c3a1b2c3a1b2c3a1b2c3a1b2c3a1b2",
+      "sig" : "cafe0003cafe0003cafe0003cafe0003cafe0003cafe0003cafe0003cafe0003cafe0003cafe0003cafe0003cafe0003cafe0003cafe0003cafe0003cafe0003",
+      "tags" : [
+         [
+            "overnet_v",
+            "0.1.0"
+         ],
+         [
+            "overnet_et",
+            "core.removal"
+         ],
+         [
+            "overnet_ot",
+            "chat.channel"
+         ],
+         [
+            "overnet_oid",
+            "f47ac10b-58cc-4372-a567-0e02b2c3d479"
+         ],
+         [
+            "e",
+            "92257397df99ebd9349f1292e3006768597fec6daf9488b20d6c5d31c053fc16"
+         ],
+         [
+            "overnet_delegate",
+            "beef0002beef0002beef0002beef0002beef0002beef0002beef0002beef0002"
+         ],
+         [
+            "v",
+            "0.1.0"
+         ],
+         [
+            "t",
+            "core.removal"
+         ],
+         [
+            "o",
+            "chat.channel"
+         ],
+         [
+            "d",
+            "f47ac10b-58cc-4372-a567-0e02b2c3d479"
+         ]
+      ]
+   }
+}

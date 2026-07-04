@@ -115,6 +115,7 @@ sub _write_generated_fixture {
   _sign_valid_fixture($fixture, $args{json}, $args{keys}, $args{events});
   _resolve_target_fixture($fixture, $args{file}, $args{events});
   _resolve_delegation_fixture($fixture, $args{file}, $args{events});
+  _resolve_delegation_override($fixture, $args{json}, $args{keys}, $args{paths}{spec_dir});
   _apply_delegate_pubkey_context($fixture, $args{keys});
 
   _write_json_fixture(
@@ -255,6 +256,39 @@ sub _apply_delegate_pubkey_context {
 
   $fixture->{input}{pubkey} = $keys->{delegate}->pubkey_hex;
   delete $fixture->{context}{use_delegate_pubkey};
+  return;
+}
+
+# Builds a validly signed delegation context event whose kind or provenance
+# is deliberately wrong, so fixtures can exercise the re-validation of a
+# referenced delegation event (crypto passes; kind/provenance must still be
+# checked). Signed with the native key so it matches the target event author.
+sub _resolve_delegation_override {
+  my ($fixture, $json, $keys, $spec_dir) = @_;
+  my $override = ref $fixture->{context} eq 'HASH' ? $fixture->{context}{delegation_override} : undef;
+  if (!(ref $override eq 'HASH')) {
+    return;
+  }
+
+  my $template = _read_json_fixture($json, File::Spec->catfile($spec_dir, 'valid-delegation-event.json'));
+  my $input    = $template->{input};
+  my $content  = $json->decode($input->{content});
+  $content->{body}{delegate_pubkey} = $keys->{delegate}->pubkey_hex;
+  if (defined $override->{provenance}) {
+    $content->{provenance} = {type => $override->{provenance}};
+  }
+  my $kind = defined $override->{kind} ? $override->{kind} : $input->{kind};
+
+  my $event = $keys->{native}->create_event(
+    kind       => $kind,
+    content    => $json->encode($content),
+    tags       => $input->{tags},
+    created_at => $input->{created_at},
+  );
+
+  $fixture->{context}{delegation_event} = _event_hash($event);
+  $fixture->{input}{tags} = [_replace_tag_values($fixture->{input}{tags}, 'overnet_delegate', $event->id),];
+  delete $fixture->{context}{delegation_override};
   return;
 }
 
