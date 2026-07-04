@@ -158,13 +158,31 @@ sub _pubkeys_well_formed {
 
 sub _within_window {
   my ($body, $at) = @_;
-  if (!defined $at) {
-    return 1;
-  }
-  if (defined $body->{not_before} && _is_integer($body->{not_before}) && $at < $body->{not_before}) {
+
+  # A declared window bound must be a well-formed integer timestamp. A malformed
+  # bound means the record is not well-formed and cannot be shown to be in
+  # effect, so it is not silently ignored (it tends toward unresolvable).
+  if (exists $body->{not_before} && !_is_integer($body->{not_before})) {
     return 0;
   }
-  if (defined $body->{not_after} && _is_integer($body->{not_after}) && $at > $body->{not_after}) {
+  if (exists $body->{not_after} && !_is_integer($body->{not_after})) {
+    return 0;
+  }
+
+  # A record without a window is in effect regardless of the event's time. A
+  # record that declares a window can only be shown to be in effect when the
+  # event carries a usable timestamp to compare against it.
+  if (!(exists $body->{not_before} || exists $body->{not_after})) {
+    return 1;
+  }
+  if (!_is_integer($at)) {
+    return 0;
+  }
+
+  if (exists $body->{not_before} && $at < $body->{not_before}) {
+    return 0;
+  }
+  if (exists $body->{not_after} && $at > $body->{not_after}) {
     return 0;
   }
   return 1;

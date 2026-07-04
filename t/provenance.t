@@ -78,6 +78,29 @@ is outcome(
 is outcome(adapted_event(pubkey => $ADAPTER), [authority_record(pubkeys => 'not-an-array')]), 'unresolvable',
   'malformed applicable record is unresolvable';
 
+# A malformed validity-window bound is not silently ignored: the record cannot
+# be shown to be in effect, so it is unresolvable rather than authoritative.
+is outcome(adapted_event(pubkey => $ADAPTER), [authority_record(not_before => 'garbage', pubkeys => [$ADAPTER])]),
+  'unresolvable', 'a malformed not_before makes the record unresolvable, not in effect';
+is outcome(adapted_event(pubkey => $ADAPTER), [authority_record(not_after => 'soon', pubkeys => [$ADAPTER])]),
+  'unresolvable', 'a malformed not_after makes the record unresolvable, not in effect';
+
+# A record that declares a window cannot be shown to be in effect without a
+# usable event timestamp to compare against, so the outcome is unresolvable.
+is outcome(
+  {pubkey => $ADAPTER, provenance => {type => 'adapted', protocol => 'irc', origin => 'irc.libera.chat/#overnet'}},
+  [authority_record(not_after => 1_744_400_000, pubkeys => [$ADAPTER])],
+  ),
+  'unresolvable', 'a windowed record is unresolvable when the event has no timestamp';
+
+# Boundary guard: a record without any window is in effect regardless of time,
+# so it stays authoritative even when the event carries no timestamp.
+is outcome(
+  {pubkey => $ADAPTER, provenance => {type => 'adapted', protocol => 'irc', origin => 'irc.libera.chat/#overnet'}},
+  [authority_record(pubkeys => [$ADAPTER])],
+  ),
+  'authoritative', 'an unwindowed record stays authoritative without an event timestamp';
+
 # A custom origin separator is honored.
 is outcome(
   {
