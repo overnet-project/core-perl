@@ -77,10 +77,35 @@ subtest 'load_file returns endpoint and agent config from JSON' => sub {
         action      => 'session.authenticate',
       },
     ],
-    service_pins => {},
-    sessions     => [],
+    service_pins                 => {},
+    sessions                     => [],
+    allow_unattended_autoapprove => 0,
     },
-    'config exposes the agent constructor args';
+    'config exposes the agent constructor args and defaults to fail-closed approval';
+};
+
+subtest 'agent_args carries an explicit unattended-autoapprove opt-in from config' => sub {
+  my $config = Overnet::Auth::Config->new(
+    config => {
+      allow_unattended_autoapprove => JSON::true,
+      identities                   => [
+        {
+          identity_id     => 'default',
+          public_identity => {
+            scheme => 'nostr.pubkey',
+            value  => $fixture_pubkey,
+          },
+        },
+      ],
+    },
+  );
+
+  is $config->agent_args->{allow_unattended_autoapprove}, 1,
+    'a truthy config opt-in becomes a normalized boolean in agent_args';
+
+  my $default = Overnet::Auth::Config->new(config => {});
+  is $default->agent_args->{allow_unattended_autoapprove}, 0,
+    'an absent opt-in normalizes to fail-closed';
 };
 
 subtest 'agent_args can combine static identities with separately loaded mutable state' => sub {

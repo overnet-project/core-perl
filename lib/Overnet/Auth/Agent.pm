@@ -12,15 +12,16 @@ use Overnet::CommandBus;
 
 our $VERSION = '0.001';
 
-has identities      => (is => 'rw',   accessor => '_identities');
-has identity_order  => (is => 'rw',   accessor => '_identity_order');
-has policies        => (is => 'rw',   accessor => '_policies');
-has service_pins    => (is => 'rw',   accessor => '_service_pins');
-has sessions        => (is => 'rw',   accessor => '_sessions');
-has state_writer    => (is => 'ro',   reader   => '_state_writer');
-has next_policy_id  => (is => 'rw',   accessor => '_next_policy_id_value');
-has next_session_id => (is => 'rw',   accessor => '_next_session_id_value');
-has bus             => (is => 'lazy', init_arg => undef);
+has identities                   => (is => 'rw',   accessor => '_identities');
+has identity_order               => (is => 'rw',   accessor => '_identity_order');
+has policies                     => (is => 'rw',   accessor => '_policies');
+has service_pins                 => (is => 'rw',   accessor => '_service_pins');
+has sessions                     => (is => 'rw',   accessor => '_sessions');
+has state_writer                 => (is => 'ro',   reader   => '_state_writer');
+has next_policy_id               => (is => 'rw',   accessor => '_next_policy_id_value');
+has next_session_id              => (is => 'rw',   accessor => '_next_session_id_value');
+has allow_unattended_autoapprove => (is => 'ro',   reader   => '_allow_unattended_autoapprove');
+has bus                          => (is => 'lazy', init_arg => undef);
 
 no Moo;
 
@@ -29,14 +30,15 @@ sub BUILDARGS {
   my %args = _constructor_args_hash(@args);
 
   my $state = {
-    identities      => {},
-    identity_order  => [],
-    policies        => [],
-    service_pins    => {},
-    sessions        => {},
-    state_writer    => $args{state_writer},
-    next_policy_id  => 1,
-    next_session_id => 1,
+    identities                   => {},
+    identity_order               => [],
+    policies                     => [],
+    service_pins                 => {},
+    sessions                     => {},
+    state_writer                 => $args{state_writer},
+    next_policy_id               => 1,
+    next_session_id              => 1,
+    allow_unattended_autoapprove => $args{allow_unattended_autoapprove} ? 1 : 0,
   };
 
   for my $identity (@{$args{identities} || []}) {
@@ -407,14 +409,13 @@ sub _authorize_context {
   }
   return (
     {
-      identity    => $identity,
-      program_id  => $params->{program_id},
-      service     => $params->{service},
-      scope       => $params->{scope},
-      action      => $params->{action},
-      artifacts   => $params->{artifacts},
-      challenge   => $params->{challenge},
-      interactive => exists($params->{interactive}) ? ($params->{interactive} ? 1 : 0) : 1,
+      identity   => $identity,
+      program_id => $params->{program_id},
+      service    => $params->{service},
+      scope      => $params->{scope},
+      action     => $params->{action},
+      artifacts  => $params->{artifacts},
+      challenge  => $params->{challenge},
     },
     undef
   );
@@ -468,7 +469,12 @@ sub _authorize_allowed {
   ) {
     return 1;
   }
-  return $context->{interactive} ? 1 : 0;
+
+  # The agent exposes no approval UI, and a request cannot vouch for its own
+  # approval: a client-supplied "interactive" flag is not evidence that a user
+  # consented. Absent a matching policy, fail closed unless the operator has
+  # explicitly opted this agent into unattended auto-approval.
+  return $self->{allow_unattended_autoapprove} ? 1 : 0;
 }
 
 sub _authorize_artifacts {

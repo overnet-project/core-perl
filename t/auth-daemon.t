@@ -218,7 +218,8 @@ subtest 'daemon persists mutable session and service-pin state to the configured
   _write_config(
     $config_file, $socket_path,
     state_file    => $state_file,
-    with_policies => 0
+    with_policies => 0,
+    unattended    => 1,
   );
   my ($pid, $client) = _start_daemon(
     config_file     => $config_file,
@@ -360,6 +361,11 @@ sub _write_config {
         },
       ],
       policies => \@policies,
+      (
+        $args{unattended}
+        ? (allow_unattended_autoapprove => JSON::true)
+        : ()
+      ),
     }
   ) or die "write $path failed: $!";
   close $fh

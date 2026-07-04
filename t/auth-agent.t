@@ -28,9 +28,91 @@ my $fixture_pubkey = '4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b70407
 
 }
 
+sub _direct_secret_identity {
+  return {
+    identity_id     => 'default',
+    backend_type    => 'direct_secret',
+    backend_config  => {secret => $fixture_secret},
+    public_identity => {
+      scheme => 'nostr.pubkey',
+      value  => $fixture_pubkey,
+    },
+  };
+}
+
+sub _authorize_request {
+  my (%overrides) = @_;
+  my %params = (
+    program_id  => 'irc.bridge',
+    identity_id => 'default',
+    service     => {
+      locators => ['irc://irc.example.test/overnet'],
+    },
+    scope     => 'irc://irc.example.test/overnet',
+    action    => 'session.authenticate',
+    challenge => {
+      type  => 'opaque',
+      value => '6cf8a952df516a8e691c6138496516abe84ccfefa9678f518bb52f70b1ca966f',
+    },
+    artifacts => [
+      {
+        type   => 'nostr.event',
+        params => {
+          kind => 22242,
+          tags => [
+            [relay     => 'irc://irc.example.test/overnet'],
+            [challenge => '6cf8a952df516a8e691c6138496516abe84ccfefa9678f518bb52f70b1ca966f'],
+          ],
+        },
+      },
+    ],
+    %overrides,
+  );
+  return {
+    type   => 'request',
+    id     => 'authorize-approval-1',
+    method => 'sessions.authorize',
+    params => \%params,
+  };
+}
+
+subtest 'sessions.authorize fails closed by default when no policy matches' => sub {
+  my $agent = Overnet::Auth::Agent->new(identities => [_direct_secret_identity()],);
+
+  my $response = $agent->dispatch(_authorize_request());
+
+  is $response->{ok}, 0, 'unattended authorize is denied without a matching policy';
+  is $response->{error}{code}, 'auth.headless_unavailable',
+    'the default agent fails closed rather than signing';
+};
+
+subtest 'sessions.authorize ignores a client-supplied interactive flag' => sub {
+  my $agent = Overnet::Auth::Agent->new(identities => [_direct_secret_identity()],);
+
+  my $response = $agent->dispatch(_authorize_request(interactive => JSON::true));
+
+  is $response->{ok}, 0, 'a client interactive flag does not grant approval';
+  is $response->{error}{code}, 'auth.headless_unavailable',
+    'client-asserted interactivity cannot authorize signing';
+};
+
+subtest 'sessions.authorize allows unattended approval only when the agent opts in' => sub {
+  my $agent = Overnet::Auth::Agent->new(
+    allow_unattended_autoapprove => 1,
+    identities                   => [_direct_secret_identity()],
+  );
+
+  my $response = $agent->dispatch(_authorize_request());
+
+  is $response->{ok}, 1, 'an opted-in agent auto-approves without a policy';
+  is $response->{result}{artifacts}[0]{value}{pubkey}, $fixture_pubkey,
+    'the opted-in authorize still signs with the identity';
+};
+
 subtest 'sessions.authorize uses the direct_secret backend type' => sub {
   my $agent = Overnet::Auth::Agent->new(
-    identities => [
+    allow_unattended_autoapprove => 1,
+    identities                   => [
       {
         identity_id    => 'default',
         backend_type   => 'direct_secret',
@@ -88,7 +170,8 @@ subtest 'sessions.authorize uses the direct_secret backend type' => sub {
 subtest 'sessions.authorize uses the pass backend type' => sub {
   my @seen;
   my $agent = Overnet::Auth::Agent->new(
-    identities => [
+    allow_unattended_autoapprove => 1,
+    identities                   => [
       {
         identity_id    => 'default',
         backend_type   => 'pass',
@@ -150,7 +233,8 @@ subtest 'sessions.authorize uses the pass backend type' => sub {
 
 subtest 'sessions.authorize reports auth.backend_unavailable for an unknown backend type' => sub {
   my $agent = Overnet::Auth::Agent->new(
-    identities => [
+    allow_unattended_autoapprove => 1,
+    identities                   => [
       {
         identity_id     => 'default',
         backend_type    => 'unknown-backend',
@@ -205,7 +289,8 @@ subtest 'sessions.authorize reports auth.backend_unavailable for an unknown back
 subtest 'sessions.authorize honors an injected backend instance' => sub {
   my $backend = t::auth_agent::CountingBackend->new(secret => $fixture_secret);
   my $agent   = Overnet::Auth::Agent->new(
-    identities => [
+    allow_unattended_autoapprove => 1,
+    identities                   => [
       {
         identity_id     => 'default',
         backend         => $backend,
@@ -261,7 +346,8 @@ subtest 'sessions.authorize honors an injected backend instance' => sub {
 subtest 'sessions.authorize invokes the backend for each authorization request' => sub {
   my $backend = t::auth_agent::CountingBackend->new(secret => $fixture_secret);
   my $agent   = Overnet::Auth::Agent->new(
-    identities => [
+    allow_unattended_autoapprove => 1,
+    identities                   => [
       {
         identity_id     => 'default',
         backend         => $backend,
@@ -906,7 +992,8 @@ subtest 'authorize and revoke persist session state and roll back on state write
   my @writes;
   my $fail  = 0;
   my $agent = Overnet::Auth::Agent->new(
-    identities => [
+    allow_unattended_autoapprove => 1,
+    identities                   => [
       {
         identity_id    => 'default',
         backend_type   => 'direct_secret',

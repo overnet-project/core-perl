@@ -43,7 +43,8 @@ subtest 'agent_info discovers the endpoint from OVERNET_AUTH_SOCK' => sub {
 subtest 'sessions_authorize returns a signed auth artifact through the socket client' => sub {
   _with_auth_server(
     agent => Overnet::Auth::Agent->new(
-      identities => [
+      allow_unattended_autoapprove => 1,
+      identities                   => [
         {
           identity_id    => 'default',
           backend_type   => 'direct_secret',
