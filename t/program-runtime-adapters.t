@@ -1,8 +1,13 @@
 use strictures 2;
 use Test2::V0;
+use File::Spec;
+use FindBin;
 
 use Overnet::Program::Runtime;
 use Overnet::Program::Services;
+
+my $IRC_ADAPTER_LIB
+  = File::Spec->rel2abs(File::Spec->catdir($FindBin::Bin, '..', '..', 'adapter-irc-perl', 'lib'));
 
 sub _random_bytes_cb {
   my ($start_ord) = @_;
@@ -232,8 +237,11 @@ subtest 'runtime can instantiate adapters from class definitions' => sub {
 };
 
 subtest 'runtime can load the real IRC adapter implementation path' => sub {
+  plan skip_all => "adapter-irc-perl checkout not found at $IRC_ADAPTER_LIB"
+    unless -d $IRC_ADAPTER_LIB;
+
   my $runtime = Overnet::Program::Runtime->new;
-  my $irc_lib = '/home/_73/p/Overnet/adapter-irc-perl/lib';
+  my $irc_lib = $IRC_ADAPTER_LIB;
 
   ok $runtime->register_adapter_definition(
     adapter_id => 'irc.real',
@@ -264,8 +272,11 @@ subtest 'runtime can load the real IRC adapter implementation path' => sub {
 };
 
 subtest 'services normalize real IRC adapter outputs and support derive operations' => sub {
+  plan skip_all => "adapter-irc-perl checkout not found at $IRC_ADAPTER_LIB"
+    unless -d $IRC_ADAPTER_LIB;
+
   my $runtime = Overnet::Program::Runtime->new;
-  my $irc_lib = '/home/_73/p/Overnet/adapter-irc-perl/lib';
+  my $irc_lib = $IRC_ADAPTER_LIB;
 
   ok $runtime->register_adapter_definition(
     adapter_id => 'irc.real',
@@ -749,13 +760,16 @@ subtest 'unknown adapters and sessions are rejected' => sub {
 };
 
 subtest 'real IRC adapter declares secure secret slots and accepts secret-backed session opens' => sub {
+  plan skip_all => "adapter-irc-perl checkout not found at $IRC_ADAPTER_LIB"
+    unless -d $IRC_ADAPTER_LIB;
+
   my $runtime = Overnet::Program::Runtime->new(
     secrets => {
       'irc-sasl-password' => 'sasl-secret',
     },
     random_bytes_cb => _random_bytes_cb(80),
   );
-  my $irc_lib = '/home/_73/p/Overnet/adapter-irc-perl/lib';
+  my $irc_lib = $IRC_ADAPTER_LIB;
 
   ok $runtime->register_adapter_definition(
     adapter_id => 'irc.real',
