@@ -2,9 +2,8 @@ package Overnet::Auth::Config;
 
 use strictures 2;
 use Moo;
-use Carp         qw(croak);
-use English      qw(-no_match_vars);
-use Scalar::Util qw(blessed);
+use Carp    qw(croak);
+use English qw(-no_match_vars);
 
 use JSON ();
 
@@ -46,14 +45,8 @@ sub BUILDARGS {
     && ref($config->{sessions}) ne 'ARRAY') {
     croak "auth config sessions must be an array\n";
   }
-  if (
-       exists($config->{allow_unattended_autoapprove})
-    && ref($config->{allow_unattended_autoapprove})
-    && !(
-      blessed($config->{allow_unattended_autoapprove})
-      && $config->{allow_unattended_autoapprove}->isa('JSON::PP::Boolean')
-    )
-  ) {
+  if (exists($config->{allow_unattended_autoapprove})
+    && !JSON::is_bool($config->{allow_unattended_autoapprove})) {
     croak "auth config allow_unattended_autoapprove must be a boolean\n";
   }
 

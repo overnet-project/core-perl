@@ -106,6 +106,22 @@ subtest 'agent_args carries an explicit unattended-autoapprove opt-in from confi
   my $default = Overnet::Auth::Config->new(config => {});
   is $default->agent_args->{allow_unattended_autoapprove}, 0,
     'an absent opt-in normalizes to fail-closed';
+
+  my $off = Overnet::Auth::Config->new(config => {allow_unattended_autoapprove => JSON::false},);
+  is $off->agent_args->{allow_unattended_autoapprove}, 0,
+    'an explicit false opt-in stays fail-closed';
+};
+
+subtest 'config rejects a non-boolean unattended-autoapprove setting' => sub {
+  for my $bad ('false', 1, {}) {
+    my $error = eval {
+      Overnet::Auth::Config->new(config => {allow_unattended_autoapprove => $bad},);
+      1;
+    } ? undef : $@;
+
+    like $error, qr/allow_unattended_autoapprove\ must\ be\ a\ boolean/mx,
+      'a non-boolean opt-in value is rejected so a malformed setting cannot silently enable auto-approval';
+  }
 };
 
 subtest 'agent_args can combine static identities with separately loaded mutable state' => sub {
