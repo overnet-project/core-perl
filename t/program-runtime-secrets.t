@@ -133,6 +133,59 @@ subtest 'runtime resolves issued handles only inside the owning audience and bef
   is $error->{code}, 'protocol.invalid_params', 'expired handle is no longer resolvable';
 };
 
+subtest 'abnormal session teardown revokes outstanding secret handles' => sub {
+  my $now     = 1_700_000_000_000;
+  my $runtime = Overnet::Program::Runtime->new(
+    secrets => {
+      'api-token' => 'top-secret',
+    },
+    now_cb               => sub {$now},
+    secret_handle_ttl_ms => 300_000,
+    random_bytes_cb      => _random_bytes_cb(),
+  );
+
+  my $issued = $runtime->issue_secret_handle(
+    session_id => 'session-1',
+    program_id => 'secrets.program',
+    name       => 'api-token',
+    purpose    => 'adapters.open_session:secure.adapter:server_password',
+  );
+  my $handle_id = $issued->{secret_handle}{id};
+
+  my $resolved = $runtime->resolve_secret_handle(
+    session_id  => 'session-1',
+    program_id  => 'secrets.program',
+    handle_id   => $handle_id,
+    method      => 'adapters.open_session',
+    adapter_id  => 'secure.adapter',
+    secret_slot => 'server_password',
+    purpose     => 'adapters.open_session:secure.adapter:server_password',
+  );
+  is $resolved->{value}, 'top-secret', 'handle resolves before teardown';
+
+  # A program that dies without an orderly runtime.shutdown is reaped through
+  # release_session_resources. Outstanding secret handles for the session must
+  # be revoked here, not left resolvable until their TTL expires. The TTL is
+  # long and time does not advance, so revocation is the only thing that can
+  # invalidate the handle.
+  my $released = $runtime->release_session_resources(session_id => 'session-1');
+  is $released->{secret_handles_revoked}, 1, 'teardown reports the revoked handle';
+
+  my $error = _structured_error {
+    $runtime->resolve_secret_handle(
+      session_id  => 'session-1',
+      program_id  => 'secrets.program',
+      handle_id   => $handle_id,
+      method      => 'adapters.open_session',
+      adapter_id  => 'secure.adapter',
+      secret_slot => 'server_password',
+      purpose     => 'adapters.open_session:secure.adapter:server_password',
+    );
+  };
+  is ref($error),    'HASH',                    'revoked handle resolution error is structured';
+  is $error->{code}, 'protocol.invalid_params', 'handle is no longer resolvable after abnormal teardown';
+};
+
 subtest 'services reject invalid or unavailable secrets.get params without name enumeration' => sub {
   my $runtime = Overnet::Program::Runtime->new(
     secrets => {

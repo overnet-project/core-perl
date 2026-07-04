@@ -444,6 +444,7 @@ sub release_session_resources {
     nostr_subscriptions_closed => 0,
     timers_canceled            => 0,
     notifications_cleared      => 0,
+    secret_handles_revoked     => 0,
   );
 
   for my $adapter_session_id (sort keys %{$self->{adapter_sessions}}) {
@@ -490,6 +491,11 @@ sub release_session_resources {
       scalar @{$self->{runtime_notifications}{$session_id} || []};
     delete $self->{runtime_notifications}{$session_id};
   }
+
+  # A session released here may have terminated abnormally (crash, kill, EOF)
+  # without an orderly runtime.shutdown, so revoke its outstanding secret
+  # handles rather than leaving them live until TTL expiry (services spec 5.10).
+  $released{secret_handles_revoked} = $self->revoke_secret_handles_for_session(session_id => $session_id);
 
   return \%released;
 }
