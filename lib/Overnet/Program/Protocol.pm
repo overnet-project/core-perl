@@ -354,6 +354,14 @@ sub feed {
   while (1) {
     my $newline_at = index($self->{_buffer}, "\n");
     if ($newline_at < 0) {
+
+      # No length prefix has terminated yet. A canonical prefix for a frame
+      # within max_frame_size cannot be longer than that value has digits, so
+      # a longer unterminated run can never begin a valid frame. Reject it
+      # rather than buffering an attacker-controlled stream without bound.
+      if (length($self->{_buffer}) > length($self->{max_frame_size})) {
+        croak "Protocol framing error: length prefix exceeds maximum size\n";
+      }
       last;
     }
 

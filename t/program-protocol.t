@@ -115,6 +115,25 @@ subtest 'rejects oversized frames' => sub {
   like dies_with { $protocol->feed($frame) }, qr/frame\ exceeds\ maximum\ size/mx, 'oversized frame is rejected';
 };
 
+subtest 'rejects an unterminated length prefix that exceeds the maximum' => sub {
+  my $protocol = Overnet::Program::Protocol->new(max_frame_size => 1000);
+
+  # A canonical length prefix for a <= 1000-byte frame is at most 4 digits.
+  # A longer run of bytes with no newline can never begin a valid frame, so
+  # it must be rejected rather than buffered without bound.
+  like dies_with { $protocol->feed('1' x 4096) },
+    qr/length\ prefix\ exceeds\ maximum\ size/mx,
+    'an over-long unterminated length prefix is rejected instead of buffered without bound';
+};
+
+subtest 'retains a short partial length prefix awaiting its newline' => sub {
+  my $protocol = Overnet::Program::Protocol->new(max_frame_size => 1000);
+
+  my $messages = $protocol->feed('12');
+  is scalar(@{$messages}), 0, 'no complete frame yet';
+  ok $protocol->buffered_bytes > 0, 'a short in-progress length prefix is still retained';
+};
+
 subtest 'rejects invalid JSON payloads' => sub {
   my $protocol = Overnet::Program::Protocol->new;
   my $frame    = "4\nnope";
