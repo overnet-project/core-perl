@@ -2,6 +2,7 @@ package Overnet::Core::Validator;
 
 use strictures 2;
 use English qw(-no_match_vars);
+use B       ();
 use JSON    ();
 use Net::Nostr::Event;
 
@@ -87,6 +88,12 @@ sub _validate_common_tags {
   for my $tag_name (qw(overnet_v overnet_et overnet_ot overnet_oid)) {
     if (!(defined $tag_values->{$tag_name})) {
       push @errors, "Missing required $tag_name tag";
+    }
+  }
+  for my $tag_name (qw(overnet_et overnet_ot overnet_oid)) {
+    if (defined $tag_values->{$tag_name}
+      && !(!ref($tag_values->{$tag_name}) && length($tag_values->{$tag_name}))) {
+      push @errors, "$tag_name tag must be a non-empty string";
     }
   }
   for my $tag_name (qw(v t o d)) {
@@ -328,6 +335,9 @@ sub _validate_core_adapter_authority {
   my @errors;
   if ($kind != 37_800) {
     push @errors, "Adapter authority record must use kind 37800";
+  }
+  if (!(defined $tag_values->{overnet_ot} && $tag_values->{overnet_ot} eq 'core.adapter_authority')) {
+    push @errors, "Adapter authority record must use overnet_ot value core.adapter_authority";
   }
   push @errors, _validate_authority_provenance($content->{provenance});
   push @errors, _validate_authority_body($content->{body}, $tag_values);
@@ -608,7 +618,18 @@ sub _result {
 
 sub _is_non_empty_string {
   my ($value) = @_;
-  return defined $value && !ref($value) && length($value) ? 1 : 0;
+  if (!defined $value || ref $value) {
+    return 0;
+  }
+
+  # Reject a value that was decoded from JSON as a number where the spec
+  # requires a string: a JSON string carries the POK flag, a JSON number does
+  # not. This is checked before length(), which would coerce the value.
+  if (!(B::svref_2object(\$value)->FLAGS & B::SVp_POK())) {
+    return 0;
+  }
+
+  return length($value) ? 1 : 0;
 }
 
 sub _is_string_array {
