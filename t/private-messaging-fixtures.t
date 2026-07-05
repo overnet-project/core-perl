@@ -3,11 +3,15 @@ use strictures 2;
 use File::Basename qw(dirname);
 use File::Spec;
 use JSON ();
-use Test::More;
+use Test2::V0;
+use Test2::Tools::ClassicCompare qw(is is_deeply);
 
 use Overnet::Core::PrivateMessaging;
 
 my $fixtures_dir = File::Spec->catdir(_spec_root(), 'fixtures', 'private-messaging',);
+
+plan skip_all => "private-messaging fixtures not found at $fixtures_dir"
+  unless -d $fixtures_dir;
 
 opendir my $dh, $fixtures_dir or die "Can't open $fixtures_dir: $!";
 my @fixture_files = sort grep {/\.json\z/mx} readdir $dh;

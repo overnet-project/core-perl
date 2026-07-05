@@ -267,7 +267,16 @@ sub _run_fixture_family {
   my $family = $args{family};
   my $runner = $args{runner};
 
-  for my $path (_fixture_files($family)) {
+  my @paths = _fixture_files($family);
+
+  if (!@paths) {
+    subtest "$family fixtures" => sub {
+      skip_all "no $family fixtures available (spec checkout absent)";
+    };
+    return;
+  }
+
+  for my $path (@paths) {
     my $fixture     = _load_fixture($path);
     my $name        = (File::Spec->splitpath($path))[2];
     my $description = $fixture->{description} || $name;
