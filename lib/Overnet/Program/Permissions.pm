@@ -78,7 +78,13 @@ sub assert_method_allowed {
 
   my $required_permission = $class->required_permission_for_method($method);
   if (!(defined $required_permission)) {
-    return 1;
+    CORE::die {
+      code    => 'runtime.permission_denied',
+      message => "No permission mapping for method $method; failing closed",
+      details => {
+        method => $method,
+      },
+    };
   }
 
   if (
@@ -132,7 +138,9 @@ Public API entry point.
 
 =head2 assert_method_allowed
 
-Public API entry point.
+Public API entry point. Permission enforcement fails closed: a method with
+no permission mapping is rejected with C<runtime.permission_denied> rather
+than dispatched without enforcement.
 
 =head1 DIAGNOSTICS
 

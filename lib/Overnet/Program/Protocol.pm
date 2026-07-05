@@ -123,6 +123,11 @@ sub is_service_request_method {
     && $SERVICE_REQUEST_METHODS{$method} ? 1 : 0;
 }
 
+sub service_request_methods {
+  my @methods = sort keys %SERVICE_REQUEST_METHODS;
+  return @methods;
+}
+
 sub encode_message {
   my ($self, $message) = @_;
   _assert_message_object($message);
@@ -901,6 +906,11 @@ Public API entry point.
 =head2 is_service_request_method
 
 Public API entry point.
+
+=head2 service_request_methods
+
+Public API entry point. Returns the sorted list of baseline service request
+method names.
 
 =head2 encode_message
 

@@ -119,6 +119,7 @@ t/program-fixtures/host-silent-program.pl
 t/program-fixtures/host-truncated-program.pl
 t/program-fixtures/host-version-mismatch-program.pl
 t/program-host.t
+t/program-permissions.t
 t/program-instance.t
 t/program-protocol.t
 t/program-runtime-adapters.t
