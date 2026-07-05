@@ -1,5 +1,6 @@
 use strictures 2;
-use Test::More;
+use Test2::V0;
+use Test2::Tools::ClassicCompare qw(is);
 use JSON           ();
 use File::Basename qw(dirname);
 use File::Spec;
@@ -7,7 +8,7 @@ use FindBin;
 
 use Overnet::Core::ProfileContract;
 
-my $spec_dir     = File::Spec->rel2abs(File::Spec->catdir($FindBin::Bin, '..', '..', '..', 'spec'));
+my $spec_dir     = _spec_root();
 my $fixtures_dir = File::Spec->catdir($spec_dir, 'fixtures', 'profile-contracts');
 
 plan skip_all => "profile contract fixtures not found at $fixtures_dir"
@@ -493,6 +494,18 @@ subtest 'profile event body schema uses JSON Schema draft semantics' => sub {
 };
 
 done_testing;
+
+sub _spec_root {
+  for my $dir (
+    File::Spec->catdir($FindBin::Bin, '..', '..', 'spec'),
+    File::Spec->catdir($FindBin::Bin, '..', '..', '..', 'spec'),
+  ) {
+    my $abs = File::Spec->rel2abs($dir);
+    return $abs if -d $abs;
+  }
+
+  return File::Spec->rel2abs(File::Spec->catdir($FindBin::Bin, '..', '..', 'spec'));
+}
 
 sub _check_result {
   my ($result, $valid, $reason) = @_;
