@@ -42,6 +42,13 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          path: core-perl
+
+      - uses: actions/checkout@v4
+        with:
+          repository: overnet-project/spec
+          path: spec
 
       - uses: shogo82148/actions-setup-perl@v1
         with:
@@ -50,14 +57,15 @@ jobs:
       - uses: actions/cache@v4
         with:
           path: ~/perl5
-          key: perl-${{ matrix.perl }}-${{ hashFiles('Makefile.PL', '.github/workflows/test.yml') }}
+          key: perl-${{ matrix.perl }}-${{ hashFiles('core-perl/Makefile.PL', 'core-perl/.github/workflows/test.yml') }}
 
       - name: Install dependencies
         run: |
-          cpanm --local-lib ~/perl5 --installdeps .
+          cpanm --local-lib ~/perl5 --installdeps ./core-perl
           cpanm --local-lib ~/perl5 --reinstall https://github.com/overnet-project/overnet-perl-style/archive/refs/heads/main.tar.gz
 
       - name: Run tests
+        working-directory: core-perl
         run: |
           prove -r -l -v t/
           prove -r -l -v xt/author/
