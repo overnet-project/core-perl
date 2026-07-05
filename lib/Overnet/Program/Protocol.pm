@@ -659,11 +659,42 @@ sub _validate_runtime_subscription_event_notification {
   if (!(_is_non_empty_string($params->{item_type}))) {
     return (0, 'protocol.invalid_params', 'runtime.subscription_event params.item_type is required');
   }
-  if (!($params->{item_type} eq 'event' || $params->{item_type} eq 'state' || $params->{item_type} eq 'capability')) {
+  if (
+    !(
+         $params->{item_type} eq 'event'
+      || $params->{item_type} eq 'state'
+      || $params->{item_type} eq 'private_message'
+      || $params->{item_type} eq 'capability'
+      || $params->{item_type} eq 'nostr.event'
+    )
+  ) {
     return (0, 'protocol.invalid_params', 'runtime.subscription_event params.item_type is invalid');
   }
   if (!(ref($params->{data}) eq 'HASH')) {
     return (0, 'protocol.invalid_params', 'runtime.subscription_event params.data must be an object');
+  }
+  if ($params->{item_type} eq 'private_message') {
+    my ($ok, $code, $reason) = _validate_subscription_private_message_data($params->{data});
+    if (!$ok) {
+      return (0, $code, $reason);
+    }
+  }
+
+  return (1, undef, undef);
+}
+
+sub _validate_subscription_private_message_data {
+  my ($data) = @_;
+
+  if (ref($data->{transport}) ne 'HASH') {
+    return (0, 'protocol.invalid_params',
+      'runtime.subscription_event private_message data.transport must be an object');
+  }
+  for my $field (qw(private_type object_type object_id)) {
+    if (!(_is_non_empty_string($data->{$field}))) {
+      return (0, 'protocol.invalid_params',
+        "runtime.subscription_event private_message data.$field must be a non-empty string");
+    }
   }
 
   return (1, undef, undef);

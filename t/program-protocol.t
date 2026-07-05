@@ -258,6 +258,112 @@ subtest 'rejects malformed runtime.fatal notifications' => sub {
   like $message, qr/runtime\.fatal\ params\.message\ is\ required/mx, 'validation error identifies missing field';
 };
 
+subtest 'accepts baseline runtime.subscription_event item types' => sub {
+  my $protocol = Overnet::Program::Protocol->new;
+
+  for my $item_type (qw(event state capability)) {
+    my ($ok, $code, $message) = $protocol->validate_message(
+      {
+        type   => 'notification',
+        method => 'runtime.subscription_event',
+        params => {
+          subscription_id => 'sub-1',
+          item_type       => $item_type,
+          data            => {},
+        },
+      }
+    );
+
+    ok $ok, "runtime.subscription_event accepts item_type $item_type"
+      or diag "code=$code message=$message";
+  }
+};
+
+subtest 'accepts runtime.subscription_event private_message item type' => sub {
+  my $protocol = Overnet::Program::Protocol->new;
+  my ($ok, $code, $message) = $protocol->validate_message(
+    {
+      type   => 'notification',
+      method => 'runtime.subscription_event',
+      params => {
+        subscription_id => 'sub-1',
+        item_type       => 'private_message',
+        data            => {
+          transport    => {kind => 1059},
+          private_type => 'chat.message',
+          object_type  => 'chat.channel',
+          object_id    => 'group:abc',
+        },
+      },
+    }
+  );
+
+  ok $ok,               'private_message subscription event is valid';
+  ok !defined $code,    'no error code';
+  ok !defined $message, 'no error message';
+};
+
+subtest 'accepts runtime.subscription_event nostr.event item type' => sub {
+  my $protocol = Overnet::Program::Protocol->new;
+  my ($ok, $code, $message) = $protocol->validate_message(
+    {
+      type   => 'notification',
+      method => 'runtime.subscription_event',
+      params => {
+        subscription_id => 'sub-1',
+        item_type       => 'nostr.event',
+        data            => {id => 'abc', kind => 1},
+      },
+    }
+  );
+
+  ok $ok,               'nostr.event subscription event is valid';
+  ok !defined $code,    'no error code';
+  ok !defined $message, 'no error message';
+};
+
+subtest 'rejects private_message subscription events missing required data' => sub {
+  my $protocol = Overnet::Program::Protocol->new;
+  my ($ok, $code, $message) = $protocol->validate_message(
+    {
+      type   => 'notification',
+      method => 'runtime.subscription_event',
+      params => {
+        subscription_id => 'sub-1',
+        item_type       => 'private_message',
+        data            => {
+          private_type => 'chat.message',
+          object_type  => 'chat.channel',
+          object_id    => 'group:abc',
+        },
+      },
+    }
+  );
+
+  ok !$ok, 'private_message missing transport is invalid';
+  is $code, 'protocol.invalid_params', 'uses invalid params code';
+  like $message, qr/private_message\ data\.transport/mx, 'error identifies missing transport';
+};
+
+subtest 'rejects runtime.subscription_event with unknown item type' => sub {
+  my $protocol = Overnet::Program::Protocol->new;
+  my ($ok, $code, $message) = $protocol->validate_message(
+    {
+      type   => 'notification',
+      method => 'runtime.subscription_event',
+      params => {
+        subscription_id => 'sub-1',
+        item_type       => 'bogus',
+        data            => {},
+      },
+    }
+  );
+
+  ok !$ok, 'unknown item_type is invalid';
+  is $code, 'protocol.invalid_params', 'uses invalid params code';
+  like $message, qr/item_type\ is\ invalid/mx, 'error identifies invalid item_type';
+};
+
 subtest 'rejects malformed responses' => sub {
   my $protocol = Overnet::Program::Protocol->new;
   my ($ok, $code, $message) = $protocol->validate_message(
