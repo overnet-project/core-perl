@@ -62,6 +62,10 @@ jobs:
       - name: Install dependencies
         run: |
           cpanm --local-lib ~/perl5 --installdeps ./core-perl
+          # Net::Nostr::Core ships the NIP-01 signature behavior our fixtures
+          # depend on. Its version floats (unversioned dependency), so force
+          # the latest release rather than reusing an older cached build.
+          cpanm --local-lib ~/perl5 --reinstall Net::Nostr::Core
           cpanm --local-lib ~/perl5 --reinstall https://github.com/overnet-project/overnet-perl-style/archive/refs/heads/main.tar.gz
 
       - name: Run tests
