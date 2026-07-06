@@ -6,10 +6,10 @@
    "input" : {
       "content" : "{\"provenance\":{\"type\":\"native\"},\"body\":{\"text\":\"Hello, world!\"}}",
       "created_at" : 1744300800,
-      "id" : "56b89160c0e28309825d4ed5443c6120315b5663b88d5df86dfd62f710fe3d0f",
+      "id" : "a84c45125c2ccd5cc91a623a8afb804acb150f65146f053774a41271de2db6af",
       "kind" : 7800,
-      "pubkey" : "2f889c35573d03a2195d7897886846568eaaff8161475b341c7e4dcb386bfa86",
-      "sig" : "00512018f5d183381109a3d2cb6a14f3d432d2b184523d485b9881098eb90f10d8405f63ba3bcf52ab8083fdab677599898b65031d44fe879ea3c48697957fe0",
+      "pubkey" : "5a7adb15cdf6ae9bf6b3cff449aa1309242e96460d282d6f08a179f977e0787d",
+      "sig" : "847824fb4e902e4911aee6f21599525f475fbda0ac45c4997fce7673a9545cc856329643db1610e590afdd6a5959d962cabd6da3ff8761b524609df746e3da45",
       "tags" : [
          [
             "overnet_v",

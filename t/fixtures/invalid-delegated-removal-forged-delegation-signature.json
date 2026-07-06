@@ -29,10 +29,10 @@
       "target_event" : {
          "content" : "{\"provenance\":{\"type\":\"native\"},\"body\":{\"text\":\"Hello, world!\"}}",
          "created_at" : 1744300800,
-         "id" : "92257397df99ebd9349f1292e3006768597fec6daf9488b20d6c5d31c053fc16",
+         "id" : "a84c45125c2ccd5cc91a623a8afb804acb150f65146f053774a41271de2db6af",
          "kind" : 7800,
-         "pubkey" : "d0a3191f0828abdf345c1f33f92f715957febc429cd0afe76278e3fec984c0ef",
-         "sig" : "6877735de0cf818f81c0c7fa62aefa33a2b9b9712de730d5f698e374eaee88e6eb09cfbfc8a6979703e26afcc17ee43f94d0563c8f7e0f27fa37ae487a4e8adf",
+         "pubkey" : "5a7adb15cdf6ae9bf6b3cff449aa1309242e96460d282d6f08a179f977e0787d",
+         "sig" : "e7d90694ddad1fa600dba349e715e9242a2c825cc4d76a06f082418e33a9523e95e742d39fdf83a72884facf5d7f91265bcd7f8844655da3f331aaa378293866",
          "tags" : [
             [
                "overnet_v",
@@ -100,7 +100,7 @@
          ],
          [
             "e",
-            "92257397df99ebd9349f1292e3006768597fec6daf9488b20d6c5d31c053fc16"
+            "a84c45125c2ccd5cc91a623a8afb804acb150f65146f053774a41271de2db6af"
          ],
          [
             "overnet_delegate",

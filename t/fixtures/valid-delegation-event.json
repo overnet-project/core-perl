@@ -4,12 +4,12 @@
       "overnet_valid" : true
    },
    "input" : {
-      "content" : "{\n   \"body\" : {\n      \"action\" : \"remove\",\n      \"delegate_pubkey\" : \"4a83c3ebe5e5d4238186a13b9d18d78d357adf4564a551c9901f3bb6d8510a2b\",\n      \"expires_at\" : 1744304600\n   },\n   \"provenance\" : {\n      \"type\" : \"native\"\n   }\n}\n",
+      "content" : "{\n   \"body\" : {\n      \"action\" : \"remove\",\n      \"delegate_pubkey\" : \"499b4b45f75f85791684829d4c669ea9c9b456274060ff0b3c7ce364c86daf06\",\n      \"expires_at\" : 1744304600\n   },\n   \"provenance\" : {\n      \"type\" : \"native\"\n   }\n}\n",
       "created_at" : 1744300950,
-      "id" : "fbf5cf0526cb5e03c46da8f61c939c2659a53ffd6f47977cba12a49b90892f04",
+      "id" : "f2d169fe813c776134073f1d7eb1ea822f4e174e2e9ff31a8ee7723427e9cfe5",
       "kind" : 7800,
-      "pubkey" : "2f889c35573d03a2195d7897886846568eaaff8161475b341c7e4dcb386bfa86",
-      "sig" : "99b42f5a54502577313e3aafc23b25656051823d8625e67531c4f91ee300182b1bbf796432da8787b8807348e4a81a53b7acac35025035e84f18320b08ae1e49",
+      "pubkey" : "5a7adb15cdf6ae9bf6b3cff449aa1309242e96460d282d6f08a179f977e0787d",
+      "sig" : "0f917d9c5d8a0ca081a2d412564aa4db1b3a221c7ee4344901a2e4c91f498c0b7982ad3f829bdb2886bfff3f0789c689ee85e58dd9aa849db181e0b16f38b83e",
       "tags" : [
          [
             "overnet_v",

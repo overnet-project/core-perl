@@ -6,14 +6,14 @@
    "input" : {
       "content" : "{\"provenance\":{\"type\":\"native\"},\"body\":{\"display_name\":\"Alice\",\"bio\":\"Overnet early adopter\"}}",
       "created_at" : 1744300900,
-      "id" : "20cb365034c50f9117726db9721a94128c3999ffaae515943a15765fe98ad87c",
+      "id" : "455a6b63d345dbc1b873af258661befe4ee16962661dd59219982760f3d7d219",
       "kind" : 37800,
-      "pubkey" : "2f889c35573d03a2195d7897886846568eaaff8161475b341c7e4dcb386bfa86",
-      "sig" : "d8eddb403847b0246b861ae97f31c7ddbfb57619f14ef4cb089959dcebe43e45d4f1988e001bc33d1ec401b270aa7466af3234b2055ef298b0c37b11a2bc5e71",
+      "pubkey" : "5a7adb15cdf6ae9bf6b3cff449aa1309242e96460d282d6f08a179f977e0787d",
+      "sig" : "436094841ce06a639f24437745e9dd938ba1ca7bd376e3c8e9172b739770b8a977c666f5bceea52e154b2a9b0c4b4edbb6f3032c5696616ee166ba1ab04c482d",
       "tags" : [
          [
             "d",
-            "2f889c35573d03a2195d7897886846568eaaff8161475b341c7e4dcb386bfa86"
+            "5a7adb15cdf6ae9bf6b3cff449aa1309242e96460d282d6f08a179f977e0787d"
          ],
          [
             "overnet_v",
@@ -29,7 +29,7 @@
          ],
          [
             "overnet_oid",
-            "2f889c35573d03a2195d7897886846568eaaff8161475b341c7e4dcb386bfa86"
+            "5a7adb15cdf6ae9bf6b3cff449aa1309242e96460d282d6f08a179f977e0787d"
          ],
          [
             "v",
