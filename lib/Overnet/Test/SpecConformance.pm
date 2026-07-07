@@ -850,6 +850,11 @@ sub _install_primary_fixture_client {
     socket          => undef,
     peerhost        => $client_spec->{peerhost} || '127.0.0.1',
     peerport        => $client_spec->{peerport} || 6667,
+
+    # A fixture states the presentational host it expects directly, so the
+    # server presents it verbatim rather than deriving a transport-address
+    # cloak (which is exercised by the implementation's own tests).
+    presentational_host => $client_spec->{peerhost} || '127.0.0.1',
   };
 
   if (defined($client_spec->{authority_pubkey}) && !ref($client_spec->{authority_pubkey})) {
@@ -1111,13 +1116,14 @@ sub _add_unregistered_fixture_client {
   my $id = ${$next_client_id_ref};
   ${$next_client_id_ref}++;
   $server->{clients}{$id} = {
-    id              => $id,
-    registered      => 0,
-    joined_channels => {},
-    capabilities    => {},
-    socket          => undef,
-    peerhost        => '127.0.0.1',
-    peerport        => 6667 + $id,
+    id                  => $id,
+    registered          => 0,
+    joined_channels     => {},
+    capabilities        => {},
+    socket              => undef,
+    peerhost            => '127.0.0.1',
+    peerport            => 6667 + $id,
+    presentational_host => '127.0.0.1',
   };
   return;
 }
@@ -1178,7 +1184,8 @@ sub _ensure_stub_client_for_nick {
         $client->{realname} = $opts{realname};
       }
       if (defined $opts{host}) {
-        $client->{peerhost} = $opts{host};
+        $client->{peerhost}            = $opts{host};
+        $client->{presentational_host} = $opts{host};
       }
       if (defined $opts{authority_pubkey}) {
         $client->{authority_pubkey} = $opts{authority_pubkey};
@@ -1190,16 +1197,17 @@ sub _ensure_stub_client_for_nick {
   my $id = ${$next_client_id_ref};
   ${$next_client_id_ref}++;
   $server->{clients}{$id} = {
-    id              => $id,
-    registered      => 1,
-    nick            => $nick,
-    username        => defined($opts{username}) ? $opts{username} : lc($nick),
-    realname        => defined($opts{realname}) ? $opts{realname} : $nick,
-    joined_channels => {},
-    capabilities    => {},
-    socket          => undef,
-    peerhost        => defined($opts{host}) ? $opts{host} : '127.0.0.1',
-    peerport        => 6667 + $id,
+    id                  => $id,
+    registered          => 1,
+    nick                => $nick,
+    username            => defined($opts{username}) ? $opts{username} : lc($nick),
+    realname            => defined($opts{realname}) ? $opts{realname} : $nick,
+    joined_channels     => {},
+    capabilities        => {},
+    socket              => undef,
+    peerhost            => defined($opts{host}) ? $opts{host} : '127.0.0.1',
+    peerport            => 6667 + $id,
+    presentational_host => defined($opts{host}) ? $opts{host} : '127.0.0.1',
     (
       defined($opts{authority_pubkey})
       ? (authority_pubkey => $opts{authority_pubkey})
