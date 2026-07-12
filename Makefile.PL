@@ -47,6 +47,7 @@ WriteMakefile(
         t/auth-fixtures.t
         t/authority-delegation.t
         t/authority-hosted-channel.t
+        t/core-nostr.t
         t/makemaker-metadata.t
         t/manifest-skip-policy.t
         t/profile-contract-oracle.t

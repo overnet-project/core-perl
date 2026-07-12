@@ -59,6 +59,7 @@ t/auth-fixtures.t
 t/authority-delegation.t
 t/authority-hosted-channel.t
 t/command-bus.t
+t/core-nostr.t
 t/fixtures/invalid-adapted-external-identity-not-string.json
 t/fixtures/invalid-adapted-limitations-item-not-string.json
 t/fixtures/invalid-adapted-missing-identity-and-scope.json
