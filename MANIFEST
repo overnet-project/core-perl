@@ -135,4 +135,7 @@ t/program-runtime-tls.t
 t/provenance.t
 t/repo-split.t
 t/spec-conformance-core.t
+t/spec-conformance-irc-adapter.t
+t/spec-conformance-irc-server.t
+t/spec-conformance-unit.t
 t/validator.t
