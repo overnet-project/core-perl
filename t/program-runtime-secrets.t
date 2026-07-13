@@ -483,4 +483,271 @@ subtest 'instance issues secret handles through protocol without returning plain
   is $error->{code}, 'protocol.invalid_params', 'instance shutdown revokes outstanding secret handles';
   };
 
+sub _secrets_error (&) {
+  my ($code) = @_;
+  return eval { $code->(); 1 } ? undef : $@;
+}
+
+subtest 'secret provider construction validates its collaborators' => sub {
+  like(_secrets_error { Overnet::Program::SecretProvider->new('odd') },
+    qr/constructor arguments must be a hash/, 'odd constructor arguments die');
+  like(_secrets_error { Overnet::Program::SecretProvider->new(now_cb => 'junk') },
+    qr/now_cb must be a code reference/, 'now_cb must be code');
+  like(_secrets_error { Overnet::Program::SecretProvider->new(random_bytes_cb => 'junk') },
+    qr/random_bytes_cb must be a code reference/, 'random_bytes_cb must be code');
+  like(_secrets_error { Overnet::Program::SecretProvider->new(secrets => 'junk') },
+    qr/secrets must be an object/, 'secrets must be an object');
+  like(_secrets_error { Overnet::Program::SecretProvider->new(secret_policies => 'junk') },
+    qr/secret_policies must be an object/, 'secret policies must be an object');
+  like(_secrets_error { Overnet::Program::SecretProvider->new(secret_handle_ttl_ms => 0) },
+    qr/secret_handle_ttl_ms/, 'handle TTLs must be positive');
+  like(_secrets_error { Overnet::Program::SecretProvider->new(secrets => {q{} => 'v'}) },
+    qr/secret names must be non-empty strings/, 'secret names must be non-empty');
+  like(_secrets_error { Overnet::Program::SecretProvider->new(secrets => {name => []}) },
+    qr/secret values must be non-empty strings|secret/, 'secret values must be strings');
+  like(
+    _secrets_error {
+      Overnet::Program::SecretProvider->new(secret_policies => {q{} => {}})
+    },
+    qr/secret policy names must be non-empty strings/,
+    'policy names must be non-empty',
+  );
+  like(
+    _secrets_error {
+      Overnet::Program::SecretProvider->new(secret_policies => {name => 'junk'})
+    },
+    qr/secret policy name must be an object/,
+    'policies must be objects',
+  );
+  like(
+    _secrets_error {
+      Overnet::Program::SecretProvider->new(
+        secret_policies => {name => {allowed_session_ids => [q{}]}},
+      )
+    },
+    qr/allowed_session_ids/,
+    'policy allow lists must hold non-empty strings',
+  );
+
+  my $now_source = Overnet::Program::SecretProvider->new(
+    {secrets => {'irc.password' => 'hunter2'}},
+  );
+  ok($now_source->has_secret(name => 'irc.password'), 'has_secret reports stored secrets');
+  ok(!$now_source->has_secret(name => 'absent'),      'has_secret rejects unknown names');
+
+  my $bad_clock = Overnet::Program::SecretProvider->new(now_cb => sub { return 'noon' });
+  like(
+    _secrets_error { $bad_clock->issue_secret_handle(session_id => 's', name => 'x') },
+    qr/now_cb must return an integer millisecond timestamp/,
+    'non-integer clocks croak',
+  );
+};
+
+subtest 'secret handle lifecycle covers policy and expiry checks' => sub {
+  my $now      = 1_000;
+  my $provider = Overnet::Program::SecretProvider->new(
+    now_cb          => sub { return $now },
+    secrets         => {'irc.password' => 'hunter2', 'other' => 'value'},
+    secret_policies => {
+      'irc.password' => {
+        allowed_session_ids => ['session-1'],
+        allowed_program_ids => ['irc.bridge'],
+        allowed_purposes    => ['login'],
+        allowed_methods     => ['adapters.open_session'],
+        allowed_adapter_ids => ['irc'],
+        allowed_secret_slots => ['password'],
+      },
+    },
+    secret_handle_ttl_ms => 500,
+  );
+
+  my %issue_args = (
+    session_id => 'session-1',
+    name       => 'irc.password',
+    program_id => 'irc.bridge',
+    purpose    => 'login',
+  );
+  is(
+    _secrets_error { $provider->issue_secret_handle(%issue_args, name => 'absent') }->{code},
+    'protocol.invalid_params',
+    'unknown secrets refuse to issue',
+  );
+  like(
+    _secrets_error { $provider->issue_secret_handle(%issue_args, session_id => 'other') },
+    qr/./,
+    'sessions outside the allow list refuse to issue',
+  );
+  like(
+    _secrets_error { $provider->issue_secret_handle(%issue_args, program_id => 'other') },
+    qr/./,
+    'programs outside the allow list refuse to issue',
+  );
+  like(
+    _secrets_error { $provider->issue_secret_handle(%issue_args, purpose => 'other') },
+    qr/./,
+    'purposes outside the allow list refuse to issue',
+  );
+
+  my $issued = $provider->issue_secret_handle(%issue_args);
+  my $handle_id = $issued->{secret_handle}{id};
+  ok(defined $handle_id, 'a policy-satisfying issue succeeds');
+
+  my %resolve_args = (
+    session_id  => 'session-1',
+    handle_id   => $handle_id,
+    program_id  => 'irc.bridge',
+    purpose     => 'login',
+    method      => 'adapters.open_session',
+    adapter_id  => 'irc',
+    secret_slot => 'password',
+  );
+  is($provider->resolve_secret_handle(%resolve_args)->{value}, 'hunter2',
+    'a fully-matching resolve returns the secret');
+
+  for my $case (
+    [session_id  => 'other'],
+    [program_id  => 'other'],
+    [program_id  => undef],
+    [purpose     => 'other'],
+    [purpose     => undef],
+    [method      => 'other'],
+    [adapter_id  => 'other'],
+    [secret_slot => 'other'],
+  ) {
+    my ($field, $value) = @{$case};
+    like(
+      _secrets_error {
+        $provider->resolve_secret_handle(%resolve_args, $field => $value, error_param => $field)
+      },
+      qr/./,
+      "a mismatched $field refuses to resolve",
+    );
+  }
+  like(
+    _secrets_error { $provider->resolve_secret_handle(%resolve_args, handle_id => 'absent') },
+    qr/./,
+    'unknown handles refuse to resolve',
+  );
+
+  ok(!$provider->revoke_secret_handle(handle_id => 'absent'), 'revoking unknown handles is a no-op');
+  ok($provider->revoke_secret_handle(handle_id => $handle_id), 'revoking a live handle succeeds');
+  like(
+    _secrets_error { $provider->resolve_secret_handle(%resolve_args) },
+    qr/./,
+    'revoked handles refuse to resolve',
+  );
+
+  my $expiring = $provider->issue_secret_handle(%issue_args);
+  $now += 10_000;
+  like(
+    _secrets_error { $provider->resolve_secret_handle(%resolve_args, handle_id => $expiring->{secret_handle}{id}) },
+    qr/./,
+    'expired handles refuse to resolve',
+  );
+
+  my $rotated_none = $provider->rotate_secret(name => 'other', value => 'new-value');
+  is($rotated_none->{revoked}, 0, 'rotating a secret without handles revokes none');
+  my $before_rotate = $provider->issue_secret_handle(%issue_args);
+  my $rotated       = $provider->rotate_secret(name => 'irc.password', value => 'hunter3');
+  is($rotated->{revoked}, 1, 'rotating a secret revokes its outstanding handles');
+
+  is($provider->revoke_secret_handles_for_session(session_id => 'session-none'), 0,
+    'revoking for an idle session revokes nothing');
+  my $session_handle = $provider->issue_secret_handle(%issue_args);
+  ok($provider->revoke_secret_handles_for_session(session_id => 'session-1') >= 1,
+    'revoking for a session revokes its handles');
+
+  ok(scalar(@{$provider->audit_events}) > 0, 'audit events were recorded');
+};
+
+subtest 'random handle generation validates its sources' => sub {
+  my $fixed = Overnet::Program::SecretProvider->new(
+    secrets         => {name => 'value'},
+    random_bytes_cb => sub { my ($length) = @_; return 'a' x $length },
+  );
+  my $issued = $fixed->issue_secret_handle(session_id => 's', name => 'name');
+  ok(defined $issued->{secret_handle}{id}, 'a deterministic random source issues handles');
+  my $broken_error = _secrets_error {
+    Overnet::Program::SecretProvider->new(
+      secrets         => {name => 'value'},
+      random_bytes_cb => sub { return 'short' },
+    )->issue_secret_handle(session_id => 's', name => 'name');
+  };
+  is(
+    ref($broken_error) eq 'HASH' ? $broken_error->{code} : "$broken_error",
+    'runtime.service_unavailable',
+    'a broken random source is rejected',
+  );
+};
+
+subtest 'resolve policy rows and helper internals' => sub {
+  my $provider = Overnet::Program::SecretProvider->new(
+    secrets         => {'irc.password' => 'hunter2', 'other' => 'value'},
+    secret_policies => {
+      'irc.password' => {
+        allowed_session_ids  => ['session-2'],
+        allowed_program_ids  => ['irc.bridge'],
+        allowed_purposes     => ['login'],
+        allowed_methods      => ['adapters.open_session'],
+        allowed_adapter_ids  => ['irc'],
+        allowed_secret_slots => ['password'],
+      },
+    },
+  );
+
+  my $may_resolve = sub {
+    my (%args) = @_;
+    return $provider->_may_resolve_secret_handle(
+      handle      => {name => 'irc.password', session_id => 'session-2'},
+      session_id  => 'session-2',
+      program_id  => 'irc.bridge',
+      purpose     => 'login',
+      method      => 'adapters.open_session',
+      adapter_id  => 'irc',
+      secret_slot => 'password',
+      %args,
+    );
+  };
+  ok($may_resolve->(), 'a fully matching context may resolve');
+  ok(!$may_resolve->(handle => {name => 'absent', session_id => 'session-2'}),
+    'handles for removed secrets may not resolve');
+  ok(!$may_resolve->(session_id => 'session-3',
+      handle => {name => 'irc.password', session_id => 'session-3'}),
+    'sessions outside the policy allow list may not resolve');
+  ok(!$may_resolve->(program_id => 'ghost'),  'programs outside the allow list may not resolve');
+  ok(!$may_resolve->(purpose    => 'ghost'),  'purposes outside the allow list may not resolve');
+  ok(!$may_resolve->(method     => 'ghost'),  'methods outside the allow list may not resolve');
+
+  ok(!$provider->_matches_allowed_list(allowed => [], value => 'x'),
+    'an empty allow list matches nothing');
+  ok(!$provider->_matches_allowed_list(allowed => ['x'], value => undef),
+    'an undefined value never matches an allow list');
+
+  my $length_error = eval { $provider->_secure_random_bytes(0); 1 } ? undef : $@;
+  like($length_error, qr/length must be a positive integer/, 'random byte lengths are validated');
+
+  my $collider = Overnet::Program::SecretProvider->new(
+    secrets         => {name => 'value'},
+    random_bytes_cb => sub { my ($length) = @_; return 'a' x $length },
+  );
+  ok($collider->issue_secret_handle(session_id => 's', name => 'name'),
+    'the first deterministic handle issues');
+  my $collision_error = eval {
+    $collider->issue_secret_handle(session_id => 's', name => 'name');
+    1;
+  } ? undef : $@;
+  is(ref($collision_error) eq 'HASH' ? $collision_error->{code} : "$collision_error",
+    'runtime.service_unavailable', 'exhausted handle ids report service unavailability');
+
+  my $mixed = Overnet::Program::SecretProvider->new(
+    secrets => {'a.secret' => 'v1', 'b.secret' => 'v2'},
+  );
+  $mixed->issue_secret_handle(session_id => 'session-a', name => 'a.secret');
+  $mixed->issue_secret_handle(session_id => 'session-b', name => 'b.secret');
+  is($mixed->revoke_secret_handles_for_session(session_id => 'session-a'), 1,
+    'revoking a session skips other sessions');
+  is($mixed->rotate_secret(name => 'a.secret', value => 'v3')->{revoked}, 0,
+    'rotating skips handles for other secrets');
+};
+
 done_testing;
