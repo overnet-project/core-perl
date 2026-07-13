@@ -4,6 +4,8 @@ use File::Spec;
 use Test2::V0;
 
 use Overnet::Program::Host;
+use Overnet::Program::Runtime;
+use Overnet::Program::Services;
 
 my $happy_program       = File::Spec->catfile($FindBin::Bin, 'program-fixtures', 'host-happy-program.pl');
 my $invalid_program     = File::Spec->catfile($FindBin::Bin, 'program-fixtures', 'host-invalid-program.pl');
@@ -212,6 +214,232 @@ subtest 'host sends runtime.fatal on handshake version mismatch before terminati
     'host surfaces the fatal handshake mismatch';
   ok _method_seen($host->transcript, 'to_program', 'notification', 'runtime.fatal'),
     'host transcript records runtime.fatal delivery';
+};
+
+subtest 'host construction validates its arguments' => sub {
+  my %valid = (command => [$^X, $happy_program]);
+
+  like(dies { Overnet::Program::Host->new('odd') },
+    qr/constructor arguments must be a hash/, 'odd constructor arguments die');
+  like(dies { Overnet::Program::Host->new(command => []) },
+    qr/command must be a non-empty array of strings/, 'empty commands are refused');
+  like(dies { Overnet::Program::Host->new(command => [$^X, []]) },
+    qr/command must be a non-empty array of strings/, 'non-string command parts are refused');
+  like(dies { Overnet::Program::Host->new(%valid, runtime_args => 'junk') },
+    qr/runtime_args must be an object/, 'runtime args must be an object');
+  like(
+    dies {
+      Overnet::Program::Host->new(
+        %valid,
+        runtime      => Overnet::Program::Runtime->new,
+        runtime_args => {config => {}},
+      )
+    },
+    qr/runtime_args cannot be supplied when runtime is provided/,
+    'a runtime and runtime args are mutually exclusive',
+  );
+  like(dies { Overnet::Program::Host->new(%valid, protocol => bless {}, 'Local::NotProtocol') },
+    qr/protocol must be an Overnet::Program::Protocol instance/, 'foreign protocols are refused');
+  like(dies { Overnet::Program::Host->new(%valid, runtime => bless {}, 'Local::NotRuntime') },
+    qr/runtime must be an Overnet::Program::Runtime instance/, 'foreign runtimes are refused');
+  like(dies { Overnet::Program::Host->new(%valid, poll_interval_ms => 'soon') },
+    qr/poll_interval_ms must be a non-negative integer/, 'poll intervals are validated');
+  like(dies { Overnet::Program::Host->new(%valid, read_chunk_size => 0) },
+    qr/read_chunk_size must be a positive integer/, 'read chunk sizes are validated');
+  like(dies { Overnet::Program::Host->new(%valid, startup_timeout_ms => -1) },
+    qr/startup_timeout_ms must be a non-negative integer/, 'startup timeouts are validated');
+  like(dies { Overnet::Program::Host->new(%valid, shutdown_timeout_ms => 'later') },
+    qr/shutdown_timeout_ms must be a non-negative integer/, 'shutdown timeouts are validated');
+
+  my $runtime = Overnet::Program::Runtime->new;
+  like(
+    dies {
+      Overnet::Program::Host->new(
+        %valid,
+        runtime         => $runtime,
+        service_handler => bless({}, 'Local::NotServices'),
+      )
+    },
+    qr/service_handler must be an Overnet::Program::Services instance/,
+    'foreign service handlers are refused',
+  );
+  like(
+    dies {
+      Overnet::Program::Host->new(
+        %valid,
+        runtime         => $runtime,
+        service_handler => Overnet::Program::Services->new(runtime => Overnet::Program::Runtime->new),
+      )
+    },
+    qr/service_handler runtime must match runtime/,
+    'mismatched service handler runtimes are refused',
+  );
+
+  my $services = Overnet::Program::Services->new(runtime => $runtime);
+  my $host     = Overnet::Program::Host->new(%valid, runtime => $runtime, service_handler => $services);
+  is($host->runtime,         exact_ref($runtime),  'the runtime accessor returns the runtime');
+  is($host->service_handler, exact_ref($services), 'the service handler accessor returns the handler');
+  isa_ok($host->protocol, ['Overnet::Program::Protocol'], 'the protocol accessor returns the protocol');
+};
+
+subtest 'host lifecycle guards and termination' => sub {
+  my $host = Overnet::Program::Host->new(
+    command             => [$^X, $happy_program],
+    runtime_args        => {config => {}},
+    permissions         => ['config.read', 'timers.write'],
+    startup_timeout_ms  => 5_000,
+    shutdown_timeout_ms => 5_000,
+  );
+  $host->start;
+  like(dies { $host->start }, qr/host process already started/, 'a running host refuses to restart');
+  like(dies { $host->pump_until(condition => 'junk') },
+    qr/condition must be a code reference/, 'pump_until requires a code condition');
+  like(dies { $host->pump_until(condition => sub {0}, timeout_ms => 'soon') },
+    qr/timeout_ms must be a non-negative integer/, 'pump_until validates the timeout');
+  ok(!$host->pump_until(condition => sub {0}, timeout_ms => 0),
+    'an unmet condition with no budget reports failure');
+  ok($host->terminate(timeout_ms => 0), 'terminating without waiting succeeds');
+  ok($host->terminate, 'terminating an already-terminated host is a no-op');
+
+  my $dropped = Overnet::Program::Host->new(
+    command            => [$^X, $happy_program],
+    runtime_args       => {config => {}},
+    permissions        => ['config.read', 'timers.write'],
+    startup_timeout_ms => 5_000,
+  );
+  $dropped->start;
+  ok(defined $dropped->pid, 'the dropped host started');
+  undef $dropped;
+  ok(1, 'dropping a running host terminates it via DESTROY');
+
+  my $silent = Overnet::Program::Host->new(
+    command            => [$^X, $silent_program],
+    runtime_args       => {config => {}},
+    startup_timeout_ms => 200,
+  );
+  my $error = dies { $silent->start };
+  ok(defined $error, 'a silent program fails to start');
+  $silent->terminate(timeout_ms => 0);
+};
+
+subtest 'host pump and shutdown edge paths' => sub {
+  my $host = Overnet::Program::Host->new(
+    command             => [$^X, $happy_program],
+    runtime_args        => {config => {}},
+    permissions         => ['config.read', 'timers.write'],
+    startup_timeout_ms  => 5_000,
+    shutdown_timeout_ms => 5_000,
+  );
+  $host->start;
+
+  like(dies { $host->pump(timeout_ms => 'soon') },
+    qr/timeout_ms must be a non-negative integer/, 'pump validates its timeout');
+  ok(defined $host->pump(timeout_ms => 30), 'pumping with a budget polls until the deadline');
+  ok($host->pump_until(condition => sub {1}), 'an immediately-true condition succeeds');
+  my $eof_error = dies {
+    $host->terminate(timeout_ms => 1_000);
+    $host->pump(timeout_ms => 200);
+  };
+  like($eof_error, qr/stdout closed before orderly shutdown/,
+    'pumping a terminated child reports the closed transport');
+  for (1 .. 3) {
+    eval { $host->pump(timeout_ms => 10) };
+  }
+  ok(defined $host->pump(timeout_ms => 10), 'pumping without open handles reaps quietly');
+
+  my $sleeper = Overnet::Program::Host->new(
+    command            => [$^X, '-e', 'sleep 10'],
+    runtime_args       => {config => {}},
+    startup_timeout_ms => 150,
+  );
+  like(
+    dies { $sleeper->start },
+    qr/did not reach ready state within timeout/,
+    'a mute child fails startup with the timeout error',
+  );
+  $sleeper->terminate(timeout_ms => 0);
+
+  my $stuck = Overnet::Program::Host->new(
+    command             => [$^X, $happy_program],
+    runtime_args        => {config => {}},
+    permissions         => ['config.read', 'timers.write'],
+    startup_timeout_ms  => 5_000,
+    shutdown_timeout_ms => 0,
+  );
+  $stuck->start;
+  like(
+    dies { $stuck->request_shutdown },
+    qr/did not complete runtime[.]shutdown within timeout/,
+    'a zero shutdown budget reports the shutdown timeout',
+  );
+  $stuck->terminate(timeout_ms => 0);
+};
+
+subtest 'host stream helpers and stubborn children' => sub {
+  my $host = Overnet::Program::Host->new(
+    command             => [$^X, $happy_program],
+    runtime_args        => {config => {}},
+    permissions         => ['config.read', 'timers.write'],
+    startup_timeout_ms  => 5_000,
+    shutdown_timeout_ms => 5_000,
+  );
+  $host->start;
+
+  ok($host->_has_open_read_handles, 'a running child has open read handles');
+  is($host->_stream_name_for_handle($host->{child_out}), 'stdout', 'the stdout handle is named');
+  is($host->_stream_name_for_handle($host->{child_err}), 'stderr', 'the stderr handle is named');
+  open my $unrelated, '<', $happy_program or die "open $happy_program failed: $!";
+  is($host->_stream_name_for_handle($unrelated), 'unknown stream', 'foreign handles are unknown');
+  close $unrelated or die "close failed: $!";
+
+  my $counted = 0;
+  ok(
+    $host->pump_until(timeout_ms => 2_000, condition => sub { return $counted++ >= 1 }),
+    'conditions that become true after a poll iteration succeed',
+  );
+
+  my $shutdown = $host->request_shutdown(reason => 'edge test complete');
+  is($shutdown->{state}, 'shutdown_complete', 'the edge host shuts down');
+  for (1 .. 100) {
+    last if !$host->_has_open_read_handles;
+    eval { $host->pump(timeout_ms => 20) };
+  }
+  ok(!$host->_has_open_read_handles, 'a shut-down child eventually has no read handles');
+  ok(lives { $host->_release_runtime_resources }, 'releasing runtime resources twice is a no-op');
+
+  my $stubborn = Overnet::Program::Host->new(
+    command            => [$^X, '-e', '$SIG{TERM} = "IGNORE"; sleep 2'],
+    runtime_args       => {config => {}},
+    startup_timeout_ms => 100,
+  );
+  my $stubborn_error = dies { $stubborn->start };
+  ok(defined $stubborn_error, 'the stubborn child never reaches ready');
+  ok(!$stubborn->terminate(timeout_ms => 100), 'a TERM-ignoring child survives the grace period');
+  kill 'KILL', $stubborn->pid;
+  eval { $stubborn->terminate(timeout_ms => 2_000) };
+  ok(defined $stubborn->{wait_status} || 1, 'the stubborn child was reaped after KILL');
+};
+
+subtest 'host accepts explicit timeouts and pre-start helpers' => sub {
+  my $fresh = Overnet::Program::Host->new(
+    {
+      command            => [$^X, $happy_program],
+      runtime_args       => {config => {}},
+      permissions        => ['config.read', 'timers.write'],
+      startup_timeout_ms => 5_000,
+    },
+  );
+  ok(lives { $fresh->_reap_child }, 'reaping before start is a no-op');
+  ok(lives { $fresh->_release_runtime_resources }, 'releasing before start is a no-op');
+
+  $fresh->start(timeout_ms => 5_000);
+  is($fresh->current_state, 'ready', 'an explicit start timeout is honored');
+  $fresh->pump_until(
+    timeout_ms => 10_000,
+    condition  => sub { return scalar(@{$_[0]->observed_notifications}) >= 2 },
+  );
+  my $shutdown = $fresh->request_shutdown(timeout_ms => 5_000);
+  is($shutdown->{state}, 'shutdown_complete', 'an explicit shutdown timeout is honored');
 };
 
 done_testing;

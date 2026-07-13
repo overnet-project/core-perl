@@ -476,4 +476,345 @@ subtest 'malformed program.hello is rejected as invalid params' => sub {
   );
 };
 
+sub _ready_instance {
+  my (%args) = @_;
+  my $instance = Overnet::Program::Instance->new(supported_protocol_versions => ['0.1'], %args,);
+  my $hello    = $instance->process_program_message(
+    Overnet::Program::Protocol::build_program_hello(
+      program_id                  => 'irc.example',
+      supported_protocol_versions => ['0.1'],
+    )
+  );
+  $instance->process_program_message(Overnet::Program::Protocol::build_response_ok(id => $hello->{send}{id}));
+  $instance->process_program_message(Overnet::Program::Protocol::build_program_ready());
+  return $instance;
+}
+
+subtest 'instance construction validates its collaborators' => sub {
+  my %valid = (supported_protocol_versions => ['0.1']);
+  like(dies { Overnet::Program::Instance->new('odd') },
+    qr/constructor arguments must be a hash/, 'odd constructor arguments die');
+  like(dies { Overnet::Program::Instance->new(%valid, protocol => bless {}, 'Local::NotProtocol') },
+    qr/protocol must be an Overnet::Program::Protocol instance/, 'foreign protocols are refused');
+  like(dies { Overnet::Program::Instance->new(supported_protocol_versions => []) },
+    qr/supported_protocol_versions must be a non-empty array/, 'protocol versions are required');
+  like(dies { Overnet::Program::Instance->new(%valid, config => 'junk') },
+    qr/config must be an object/, 'config must be an object');
+};
+
+subtest 'state machine rejections outside the ready state' => sub {
+  my $instance = Overnet::Program::Instance->new(supported_protocol_versions => ['0.1']);
+  is($instance->inflight_request_ids, [], 'a new instance has no inflight requests');
+  like(dies { $instance->drain_runtime_notifications },
+    qr/notifications can only be drained from ready state/, 'draining requires the ready state');
+  like(dies { $instance->request_shutdown },
+    qr/Shutdown can only be requested from ready state/, 'shutdown requires the ready state');
+  like(
+    dies { $instance->process_program_message(Overnet::Program::Protocol::build_response_ok(id => 'x')) },
+    qr/Expected notification in awaiting_hello state/,
+    'responses are rejected before hello',
+  );
+  like(
+    dies {
+      $instance->process_program_message(
+        Overnet::Program::Protocol::build_notification(
+          method => 'program.log',
+          params => {level => 'info', message => 'early'},
+        ),
+      )
+    },
+    qr/Expected program[.]hello notification/,
+    'other notifications are rejected before hello',
+  );
+
+  my $no_versions = Overnet::Program::Instance->new(supported_protocol_versions => ['0.1']);
+  my $refused     = $no_versions->process_program_message(
+    {
+      type   => 'notification',
+      method => 'program.hello',
+      params => {program_id => 'irc.example', supported_protocol_versions => ['9.9']},
+    },
+  );
+  is($refused->{error}{code}, 'protocol.version_mismatch',
+    'a hello without a compatible version is fatal');
+  ok($refused->{fatal}, 'the version mismatch is fatal');
+
+  my $hello_first = Overnet::Program::Instance->new(supported_protocol_versions => ['0.1']);
+  my $hello       = $hello_first->process_program_message(
+    Overnet::Program::Protocol::build_program_hello(
+      program_id                  => 'irc.example',
+      supported_protocol_versions => ['0.1'],
+    )
+  );
+  like(
+    dies {
+      $hello_first->process_program_message(
+        Overnet::Program::Protocol::build_notification(
+          method => 'program.log',
+          params => {level => 'info', message => 'waiting'},
+        ),
+      )
+    },
+    qr/Expected response while awaiting runtime[.]init response/,
+    'notifications are rejected while awaiting the init response',
+  );
+
+  my $failed_init = $hello_first->process_program_message(
+    Overnet::Program::Protocol::build_response_error(
+      id      => $hello->{send}{id},
+      code    => 'program.boom',
+      message => 'exploded',
+    ),
+  );
+  is($hello_first->current_state, 'failed', 'a failed init response fails the instance');
+
+  my $awaiting_ready = Overnet::Program::Instance->new(supported_protocol_versions => ['0.1']);
+  my $ready_hello    = $awaiting_ready->process_program_message(
+    Overnet::Program::Protocol::build_program_hello(
+      program_id                  => 'irc.example',
+      supported_protocol_versions => ['0.1'],
+    )
+  );
+  $awaiting_ready->process_program_message(
+    Overnet::Program::Protocol::build_response_ok(id => $ready_hello->{send}{id}));
+  like(
+    dies {
+      $awaiting_ready->process_program_message(Overnet::Program::Protocol::build_response_ok(id => 'x'))
+    },
+    qr/Expected notification while awaiting program[.]ready/,
+    'responses are rejected while awaiting program.ready',
+  );
+  like(
+    dies {
+      $awaiting_ready->process_program_message(
+        Overnet::Program::Protocol::build_program_hello(
+          program_id                  => 'irc.example',
+          supported_protocol_versions => ['0.1'],
+        ),
+      )
+    },
+    qr/Unexpected notification while awaiting program[.]ready/,
+    'unexpected notifications are rejected while awaiting program.ready',
+  );
+};
+
+subtest 'ready state handles unexpected and service messages' => sub {
+  my $instance = _ready_instance(program_id => 'irc.canonical');
+  is($instance->drain_runtime_notifications, [], 'no service handler drains nothing');
+
+  like(
+    dies {
+      $instance->process_program_message(Overnet::Program::Protocol::build_response_ok(id => 'stray'))
+    },
+    qr/protocol[.]unknown_request_id/,
+    'stray responses are rejected in ready state',
+  );
+
+  my $unavailable = $instance->process_program_message(
+    Overnet::Program::Protocol::build_request(id => 'r-1', method => 'storage.put', params => {}),
+  );
+  is($unavailable->{send}{error}{code}, 'runtime.service_unavailable',
+    'service requests without a handler are refused');
+};
+
+subtest 'shutdown lifecycle handles every message shape' => sub {
+  my $instance = _ready_instance();
+  my $shutdown = $instance->request_shutdown;
+  is($instance->current_state, 'shutdown_requested', 'shutdown was requested');
+  my $shutdown_id = $shutdown->{send}{id};
+
+  is(
+    $instance->process_program_message(
+      Overnet::Program::Protocol::build_notification(
+        method => 'program.log',
+        params => {level => 'info', message => 'closing'},
+      ),
+    )->{observed},
+    'program.log',
+    'log notifications are observed during shutdown',
+  );
+  like(
+    dies {
+      $instance->process_program_message(
+        Overnet::Program::Protocol::build_program_hello(
+          program_id                  => 'irc.example',
+          supported_protocol_versions => ['0.1'],
+        ),
+      )
+    },
+    qr/protocol[.]unknown_method/,
+    'unexpected notifications are rejected during shutdown',
+  );
+  is(
+    $instance->process_program_message(
+      Overnet::Program::Protocol::build_request(id => 'r-9', method => 'storage.put', params => {}),
+    ),
+    {},
+    'requests are ignored during shutdown',
+  );
+  like(
+    dies {
+      $instance->process_program_message(Overnet::Program::Protocol::build_response_ok(id => 'stray'))
+    },
+    qr/protocol[.]unknown_request_id/,
+    'stray responses are rejected during shutdown',
+  );
+
+  $instance->process_program_message(Overnet::Program::Protocol::build_response_ok(id => $shutdown_id));
+  is($instance->current_state, 'shutdown_complete', 'a shutdown response completes the shutdown');
+
+  is(
+    $instance->process_program_message(
+      Overnet::Program::Protocol::build_notification(
+        method => 'program.health',
+        params => {status => 'ok'},
+      ),
+    )->{observed},
+    'program.health',
+    'health notifications are observed after shutdown',
+  );
+  is(
+    $instance->process_program_message(
+      Overnet::Program::Protocol::build_program_hello(
+        program_id                  => 'irc.example',
+        supported_protocol_versions => ['0.1'],
+      ),
+    ),
+    {},
+    'other notifications are ignored after shutdown',
+  );
+  ok(
+    defined $instance->process_program_message(
+      Overnet::Program::Protocol::build_response_ok(id => 'post-shutdown'),
+    ),
+    'responses are tolerated after shutdown',
+  );
+  is(
+    $instance->process_program_message(
+      Overnet::Program::Protocol::build_request(id => 'r-10', method => 'storage.put', params => {}),
+    ),
+    {},
+    'requests are ignored after shutdown',
+  );
+
+  my $failing = _ready_instance();
+  my $failing_shutdown = $failing->request_shutdown;
+  $failing->process_program_message(
+    Overnet::Program::Protocol::build_response_error(
+      id      => $failing_shutdown->{send}{id},
+      code    => 'program.boom',
+      message => 'exploded',
+    ),
+  );
+  is($failing->current_state, 'failed', 'a failed shutdown response fails the instance');
+};
+
+subtest 'ready instances expose accessors and drain runtime notifications' => sub {
+  my $runtime  = Overnet::Program::Runtime->new;
+  my $services = Overnet::Program::Services->new(runtime => $runtime);
+  my $instance = _ready_instance(
+    instance_id     => 'instance-drain',
+    program_id      => 'irc.canonical',
+    permissions     => ['timers.write'],
+    service_handler => $services,
+  );
+
+  is($instance->instance_id, 'instance-drain', 'the instance id accessor reports the id');
+  ok($instance->is_ready, 'ready instances report readiness');
+  ok(!Overnet::Program::Instance->new(supported_protocol_versions => ['0.1'])->is_ready,
+    'new instances are not ready');
+
+  is($instance->drain_runtime_notifications, [], 'an idle runtime drains no notifications');
+
+  my $set = $instance->process_program_message(
+    Overnet::Program::Protocol::build_request(
+      id     => 'req-timer',
+      method => 'timers.schedule',
+      params => {timer_id => 'timer-1', delay_ms => 0},
+    ),
+  );
+  ok($set->{send}{ok}, 'a timer can be scheduled through the instance');
+  my $drained = $instance->drain_runtime_notifications;
+  is(scalar(@{$drained}), 1, 'fired timers drain as notifications');
+  is($drained->[0]{method}, 'runtime.timer_fired', 'the drained notification is a timer firing');
+
+  my $hello_with_metadata = Overnet::Program::Instance->new(supported_protocol_versions => ['0.1']);
+  $hello_with_metadata->process_program_message(
+    {
+      type   => 'notification',
+      method => 'program.hello',
+      params => {
+        program_id                  => 'irc.example',
+        supported_protocol_versions => ['0.1'],
+        metadata                    => {build => 'test'},
+      },
+    },
+  );
+  is($hello_with_metadata->_peer_metadata, {build => 'test'}, 'hello metadata is recorded');
+};
+
+subtest 'failed instances refuse further messages' => sub {
+  my $instance = Overnet::Program::Instance->new({supported_protocol_versions => ['0.1']});
+  $instance->process_program_message(
+    {
+      type   => 'notification',
+      method => 'program.hello',
+      params => {program_id => 'irc.example', supported_protocol_versions => ['9.9']},
+    },
+  );
+  is($instance->current_state, 'failed', 'the version mismatch failed the instance');
+  like(
+    dies {
+      $instance->process_program_message(
+        Overnet::Program::Protocol::build_notification(
+          method => 'program.log',
+          params => {level => 'info', message => 'late'},
+        ),
+      )
+    },
+    qr/Cannot process messages in state failed/,
+    'failed instances refuse further messages',
+  );
+
+  my $runtime  = Overnet::Program::Runtime->new;
+  my $services = Overnet::Program::Services->new(runtime => $runtime);
+  my $ready    = _ready_instance(permissions => ['adapters.use'], service_handler => $services);
+  my $missing  = $ready->process_program_message(
+    Overnet::Program::Protocol::build_request(
+      id     => 'req-missing',
+      method => 'adapters.map_input',
+      params => {adapter_session_id => 'absent', input => {}},
+    ),
+  );
+  ok(!$missing->{send}{ok}, 'requests against unknown adapter sessions fail');
+  ok(defined $missing->{send}{error}{code}, 'the failure carries an error code');
+};
+
+subtest 'explicit config exposes the service handler type guard' => sub {
+  like(
+    dies {
+      Overnet::Program::Instance->new(
+        supported_protocol_versions => ['0.1'],
+        config                      => {},
+        service_handler             => bless({}, 'Local::NotServices'),
+      )
+    },
+    qr/service_handler must be an Overnet::Program::Services instance/,
+    'foreign service handlers are refused when config is explicit',
+  );
+
+  my $runtime  = Overnet::Program::Runtime->new;
+  my $services = Overnet::Program::Services->new(runtime => $runtime);
+  my $ready    = _ready_instance(permissions => ['storage.read'], service_handler => $services);
+  my $refused  = $ready->process_program_message(
+    Overnet::Program::Protocol::build_request(
+      id     => 'req-invalid',
+      method => 'storage.get',
+      params => {key => 'absent'},
+    ),
+  );
+  ok(!$refused->{send}{ok}, 'reading an unknown storage key fails');
+  is($refused->{send}{error}{details}{key}, 'absent', 'the error details identify the missing key');
+};
+
 done_testing;

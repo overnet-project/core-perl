@@ -815,4 +815,67 @@ subtest 'real IRC adapter declares secure secret slots and accepts secret-backed
     'real IRC adapter opens a session with secret handles';
 };
 
+subtest 'adapter session construction and dispatch validation' => sub {
+  require Overnet::Program::AdapterSession;
+
+  {
+
+    package Local::DeriveOnlyAdapter;
+
+    sub new { my ($class) = @_; return bless {}, $class }
+
+    sub derive_presence {
+      my ($self, %args) = @_;
+      return {operation => 'presence', args => \%args};
+    }
+  }
+
+  my %valid = (
+    session_id => 'adapter-session-1',
+    adapter_id => 'mock',
+    adapter    => Local::MockAdapter->new,
+  );
+
+  like(dies { Overnet::Program::AdapterSession->new('odd') },
+    qr/constructor arguments must be a hash/, 'odd constructor arguments die');
+  like(dies { Overnet::Program::AdapterSession->new(%valid, session_id => q{}) },
+    qr/session_id is required/, 'a session id is required');
+  like(dies { Overnet::Program::AdapterSession->new(%valid, adapter_id => q{}) },
+    qr/adapter_id is required/, 'an adapter id is required');
+  like(dies { Overnet::Program::AdapterSession->new(%valid, adapter => 'junk') },
+    qr/adapter is required/, 'an adapter object is required');
+  like(dies { Overnet::Program::AdapterSession->new(%valid, config => 'junk') },
+    qr/config must be an object/, 'session config must be an object');
+  like(dies { Overnet::Program::AdapterSession->new(%valid, program_session_id => q{}) },
+    qr/program_session_id must be a non-empty string/, 'program session ids must be non-empty');
+  like(dies { Overnet::Program::AdapterSession->new(%valid, program_id => q{}) },
+    qr/program_id must be a non-empty string/, 'program ids must be non-empty');
+
+  my $contextual = Overnet::Program::AdapterSession->new(
+    {%valid, program_session_id => 'program-session-9', program_id => 'irc.example'},
+  );
+  my $mapped = $contextual->map_input({command => 'PRIVMSG'});
+  is($mapped->{events}[0]{input}, 'PRIVMSG', 'map_input forwards the input');
+
+  like(dies { $contextual->derive(operation => q{}) },
+    qr/operation is required/, 'derive requires an operation');
+  like(dies { $contextual->derive(operation => 'presence', input => 'junk') },
+    qr/input must be an object/, 'derive input must be an object');
+
+  my $derive_only = Overnet::Program::AdapterSession->new(
+    %valid,
+    adapter            => Local::DeriveOnlyAdapter->new,
+    program_session_id => 'program-session-9',
+    program_id         => 'irc.example',
+  );
+  like(dies { $derive_only->map_input({}) },
+    qr/adapter does not support map_input/, 'adapters without map_input croak');
+  my $derived = $derive_only->derive(operation => 'presence', input => {channel => '#ops'});
+  is($derived->{operation}, 'presence', 'operation-specific derive methods dispatch');
+  is($derived->{args}{program_id}, 'irc.example', 'program context is forwarded to derive methods');
+  like(dies { $derive_only->derive(operation => 'unknown') },
+    qr/adapter does not support derive/, 'underivable operations croak');
+  ok($derive_only->close_session, 'adapters without close_session close trivially');
+};
+
 done_testing;

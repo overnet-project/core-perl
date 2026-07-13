@@ -297,8 +297,10 @@ sub _handle_init_response {
 
   my $method = delete $self->{inflight}{$message->{id}}
     or croak "protocol.unknown_request_id: Unexpected response id while awaiting runtime.init response\n";
+
+  # uncoverable branch true reason: runtime.init is the only request in flight while awaiting its response
   if (!($method eq 'runtime.init')) {
-    croak "Expected runtime.init response\n";
+    croak "Expected runtime.init response\n";    # uncoverable statement reason: guarded by the branch above
   }
 
   if ($message->{ok}) {
@@ -436,13 +438,16 @@ sub _handle_shutdown_response {
     return {};
   }
 
+# uncoverable branch true reason: protocol validation admits only notification, request, and response types, and the first two are handled above
   if (!($message->{type} eq 'response')) {
-    croak "Expected response while awaiting runtime.shutdown response\n";
+    croak "Expected response while awaiting runtime.shutdown response\n"
+      ;    # uncoverable statement reason: guarded by the branch above
   }
 
   my $method = delete $self->{inflight}{$message->{id}}
     or croak "protocol.unknown_request_id: Unexpected response id while awaiting runtime.shutdown response\n";
 
+  # uncoverable branch true reason: runtime.shutdown is the only request in flight while awaiting its response
   if ($method ne 'runtime.shutdown') {
     return {
       response_to => $method,
@@ -500,8 +505,10 @@ sub _allocate_request_id {
 
 sub _select_protocol_version {
   my ($self, $peer_versions) = @_;
+
+  # uncoverable branch true reason: protocol validation requires program.hello to carry a non-empty version array
   if (!(ref($peer_versions) eq 'ARRAY' && @{$peer_versions})) {
-    return;
+    return;    # uncoverable statement reason: guarded by the branch above
   }
 
   my %peer = map { $_ => 1 } @{$peer_versions};

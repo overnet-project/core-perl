@@ -499,11 +499,23 @@ sub _poll_io {
 
   for my $handle (@ready) {
     my $bytes = sysread($handle, my $chunk, $self->{read_chunk_size});
+
+    # uncoverable branch true reason: select reported the handle readable, so sysread fails only under fault injection
     if (!defined $bytes) {
+
+      # uncoverable statement reason: reached only when sysread fails after select
+      # uncoverable branch true reason: reached only when a signal interrupts sysread
+      # uncoverable branch false reason: reached only when sysread fails after select
       if ($OS_ERROR{EINTR}) {
+
+        # uncoverable statement reason: reached only when a signal interrupts sysread
         next;
       }
+
+      # uncoverable statement reason: reached only when sysread fails after select
       my $stream = $self->_stream_name_for_handle($handle);
+
+      # uncoverable statement reason: reached only when sysread fails after select
       croak "Failed to read $stream from child process: $OS_ERROR\n";
     }
 
@@ -587,10 +599,20 @@ sub _send_message {
   my $offset = 0;
   while ($offset < length $frame) {
     my $written = syswrite($self->{child_in}, $frame, length($frame) - $offset, $offset);
+
+    # uncoverable branch true reason: writing to the child stdin pipe fails only under fault injection
     if (!defined $written) {
+
+      # uncoverable statement reason: reached only when syswrite fails
+      # uncoverable branch true reason: reached only when a signal interrupts syswrite
+      # uncoverable branch false reason: reached only when syswrite fails
       if ($OS_ERROR{EINTR}) {
+
+        # uncoverable statement reason: reached only when a signal interrupts syswrite
         next;
       }
+
+      # uncoverable statement reason: reached only when syswrite fails
       croak "Failed to write protocol frame to child process: $OS_ERROR\n";
     }
     $offset += $written;
@@ -628,6 +650,8 @@ sub _close_child_stdin {
     return;
   }
   my $child_in = delete $self->{child_in};
+
+  # uncoverable branch true reason: closing a pipe handle cannot fail here
   close $child_in
     or croak "close child stdin failed: $OS_ERROR";
   return;
@@ -639,6 +663,8 @@ sub _handle_eof {
   if ($self->_is_child_out($handle)) {
     $self->{protocol}->finish;
     my $child_out = delete $self->{child_out};
+
+    # uncoverable branch true reason: closing a pipe handle cannot fail here
     close $child_out
       or croak "close child stdout failed: $OS_ERROR";
     if (!($self->current_state eq 'shutdown_complete')) {
@@ -652,6 +678,8 @@ sub _handle_eof {
 
   if ($self->_is_child_err($handle)) {
     my $child_err = delete $self->{child_err};
+
+    # uncoverable branch true reason: closing a pipe handle cannot fail here
     close $child_err
       or croak "close child stderr failed: $OS_ERROR";
     return;
@@ -776,14 +804,26 @@ sub _drain_child_stderr {
   while ($selector->can_read(0)) {
     my $bytes =
       sysread($self->{child_err}, my $chunk, $self->{read_chunk_size});
+
+    # uncoverable branch true reason: draining stderr fails only under fault injection
     if (!defined $bytes) {
+
+      # uncoverable statement reason: reached only when sysread fails while draining stderr
+      # uncoverable branch true reason: reached only when a signal interrupts sysread
+      # uncoverable branch false reason: reached only when sysread fails while draining stderr
       if ($OS_ERROR{EINTR}) {
+
+        # uncoverable statement reason: reached only when a signal interrupts sysread
         next;
       }
+
+      # uncoverable statement reason: reached only when sysread fails while draining stderr
       last;
     }
     if ($bytes == 0) {
       my $child_err = delete $self->{child_err};
+
+      # uncoverable branch true reason: closing a pipe handle cannot fail here
       close $child_err
         or croak "close child stderr failed: $OS_ERROR";
       last;
