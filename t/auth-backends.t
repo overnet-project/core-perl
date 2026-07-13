@@ -194,4 +194,85 @@ subtest 'pass backend reports auth.backend_unavailable when the command runner f
     'pass backend returns a structured auth.backend_unavailable error';
 };
 
+subtest 'backend types identify the concrete backends' => sub {
+  is(Overnet::Auth::Backend::DirectSecret->backend_type, 'direct_secret', 'direct secret backend type');
+  is(Overnet::Auth::Backend::Pass->backend_type,         'pass',          'pass backend type');
+};
+
+subtest 'direct secret backend falls back through identity secret fields' => sub {
+  my $backend = Overnet::Auth::Backend::DirectSecret->new;
+  my ($key, $error) = $backend->load_signing_key(
+    identity => {
+      private_key => $fixture_secret,
+    },
+  );
+  ok !$error, 'no backend error';
+  is $key->pubkey_hex, $fixture_pubkey, 'the identity private_key field is honored';
+
+  ($key, $error) = $backend->load_signing_key(
+    backend_config => {
+      secret => '/no/such/key.pem',
+    },
+  );
+  ok !defined $key, 'unloadable secrets produce no key';
+  is $error->{code}, 'auth.backend_unavailable', 'unloadable secrets report backend_unavailable';
+};
+
+subtest 'pass backend requires an entry and a usable secret' => sub {
+  my $backend = Overnet::Auth::Backend::Pass->new;
+
+  my ($key, $error) = $backend->load_signing_key(backend_config => {});
+  is $error->{code}, 'auth.backend_unavailable', 'a missing entry is a backend error';
+  like $error->{message}, qr/no\ pass\ entry\ is\ configured/mx, 'the missing entry is reported';
+
+  ($key, $error) = $backend->load_signing_key(
+    backend_config => {
+      entry          => 'overnet/identity',
+      command_runner => sub { return (q{}, undef) },
+    },
+  );
+  like $error->{message}, qr/did\ not\ return\ a\ usable\ secret/mx, 'empty pass output is rejected';
+
+  ($key, $error) = $backend->load_signing_key(
+    backend_config => {
+      entry          => 'overnet/identity',
+      command_runner => sub { return ("not-a-key\nextra metadata\n", undef) },
+    },
+  );
+  is $error->{code}, 'auth.backend_unavailable', 'unloadable pass secrets report backend_unavailable';
+
+  my $instance_runner = Overnet::Auth::Backend::Pass->new(
+    command_runner => sub { return ("$fixture_secret\nextra: metadata\n", undef) },
+  );
+  ($key, $error) = $instance_runner->load_signing_key(backend_config => {entry => 'overnet/identity'});
+  ok !$error, 'the instance-level command runner is used';
+  is $key->pubkey_hex, $fixture_pubkey, 'the first output line is used as the secret';
+};
+
+subtest 'the default pass command runner captures output and failures' => sub {
+  my ($stdout, $error) = Overnet::Auth::Backend::Pass::_default_command_runner(
+    $^X, '-e', 'print "captured\n"',
+  );
+  ok !defined $error, 'successful commands report no error';
+  is $stdout, "captured\n", 'successful commands capture stdout';
+
+  ($stdout, $error) = Overnet::Auth::Backend::Pass::_default_command_runner($^X, '-e', 'exit 3');
+  ok !defined $stdout, 'failing commands produce no output';
+  like $error, qr/exited\ with\ status\ 3/mx, 'failing commands report their exit status';
+};
+
+subtest 'empty-string secrets are treated as missing at every fallback step' => sub {
+  my $backend = Overnet::Auth::Backend::DirectSecret->new;
+  my ($key, $error) = $backend->load_signing_key(
+    backend_config => {secret => q{}},
+    identity       => {private_key => q{}, privkey_secret => q{}},
+  );
+  ok !defined $key, 'no key is loaded from empty secrets';
+  is $error->{code}, 'auth.backend_unavailable', 'empty secrets report backend_unavailable';
+
+  my $pass = Overnet::Auth::Backend::Pass->new;
+  (undef, $error) = $pass->load_signing_key(backend_config => {entry => q{}});
+  like $error->{message}, qr/no\ pass\ entry\ is\ configured/mx, 'empty pass entries are treated as missing';
+};
+
 done_testing;

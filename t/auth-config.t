@@ -217,6 +217,84 @@ subtest 'empty auth config remains valid without a daemon section' => sub {
     'empty config still exposes empty mutable state';
 };
 
+subtest 'constructor and section validation reject malformed configs' => sub {
+  my $build_error = sub {
+    my (@args) = @_;
+    return eval { Overnet::Auth::Config->new(@args); 1 } ? undef : $@;
+  };
+
+  ok !defined $build_error->({config => {}}), 'a single hashref constructor argument is accepted';
+  like $build_error->('odd'), qr/constructor\ arguments\ must\ be\ a\ hash/mx,
+    'odd argument lists are rejected';
+  like $build_error->(config => 'nope'), qr/auth\ config\ must\ be\ an\ object/mx,
+    'non-object configs are rejected';
+  like $build_error->(config => {daemon => []}),
+    qr/daemon\ section\ must\ be\ an\ object/mx, 'non-object daemon sections are rejected';
+  like $build_error->(config => {daemon => {state_file => q{}}}),
+    qr/daemon\.state_file\ must\ be\ a\ string/mx, 'empty state_file values are rejected';
+  like $build_error->(config => {identities => {}}),
+    qr/identities\ must\ be\ an\ array/mx, 'non-array identities are rejected';
+  like $build_error->(config => {policies => {}}),
+    qr/policies\ must\ be\ an\ array/mx, 'non-array policies are rejected';
+  like $build_error->(config => {service_pins => []}),
+    qr/service_pins\ must\ be\ an\ object/mx, 'non-object service pins are rejected';
+  like $build_error->(config => {sessions => {}}),
+    qr/sessions\ must\ be\ an\ array/mx, 'non-array sessions are rejected';
+  like $build_error->(config => {allow_unattended_autoapprove => 'yes'}),
+    qr/allow_unattended_autoapprove\ must\ be\ a\ boolean/mx, 'non-boolean autoapprove is rejected';
+};
+
+subtest 'load_file rejects unusable paths and content' => sub {
+  my $load_error = sub {
+    my (%args) = @_;
+    return eval { Overnet::Auth::Config->load_file(%args); 1 } ? undef : $@;
+  };
+
+  like $load_error->(), qr/path\ is\ required/mx, 'a path is required';
+  like $load_error->(path => File::Spec->catfile(tempdir(CLEANUP => 1), 'missing.json')),
+    qr/open\ .*missing\.json\ failed/mx, 'missing files fail to open';
+
+  my $dir      = tempdir(CLEANUP => 1);
+  my $bad_json = File::Spec->catfile($dir, 'bad.json');
+  _write_raw($bad_json, 'not json');
+  like $load_error->(path => $bad_json), qr/is\ not\ valid\ JSON/mx, 'invalid JSON is rejected';
+
+  my $not_object = File::Spec->catfile($dir, 'array.json');
+  _write_raw($not_object, '[1,2]');
+  like $load_error->(path => $not_object),
+    qr/auth\ config\ must\ decode\ to\ an\ object/mx, 'non-object JSON is rejected';
+};
+
+subtest 'agent_args validates injected mutable state and clones values' => sub {
+  my $config = Overnet::Auth::Config->new(
+    config => {
+      identities                   => [{identity_id => 'default', extras => [undef, 'kept']}],
+      allow_unattended_autoapprove => JSON::true,
+    },
+  );
+
+  my $state_error = sub {
+    my ($state) = @_;
+    return eval { $config->agent_args(state => $state); 1 } ? undef : $@;
+  };
+  like $state_error->('junk'), qr/mutable\ state\ must\ be\ an\ object/mx,
+    'non-object states are rejected';
+  like $state_error->({policies => {}}), qr/state\ policies\ must\ be\ an\ array/mx,
+    'non-array state policies are rejected';
+  like $state_error->({service_pins => []}), qr/state\ service_pins\ must\ be\ an\ object/mx,
+    'non-object state service pins are rejected';
+  like $state_error->({sessions => {}}), qr/state\ sessions\ must\ be\ an\ array/mx,
+    'non-array state sessions are rejected';
+
+  my $args = $config->agent_args(state => {policies => [{policy_id => 'p1'}]});
+  is $args->{allow_unattended_autoapprove}, 1, 'boolean autoapprove flags become plain flags';
+  is_deeply $args->{policies}, [{policy_id => 'p1'}], 'injected state policies are cloned into agent args';
+  is_deeply $args->{identities}[0]{extras}, ['kept'], 'undef entries are elided from cloned arrays';
+
+  my $default_args = $config->agent_args;
+  is_deeply $default_args->{policies}, [], 'agent args default to the config mutable state';
+};
+
 done_testing;
 
 sub _write_json {

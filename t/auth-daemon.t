@@ -7,7 +7,11 @@ use JSON       ();
 use Socket     qw(AF_UNIX PF_UNSPEC SOCK_STREAM);
 use Test2::V0;
 
+use IO::Socket::UNIX;
 use Overnet::Auth::Client;
+use Overnet::Auth::SocketIO;
+use Overnet::Auth::StateStore;
+use Overnet::Program::Protocol;
 use Overnet::Auth::Daemon;
 
 my $fixture_secret = '1111111111111111111111111111111111111111111111111111111111111111';
@@ -262,6 +266,186 @@ subtest 'daemon persists mutable session and service-pin state to the configured
   is $state->{service_pins}{'wss://relay.example.test/auth'}{value},
     ('1' x 64),
     'persisted state includes the first-contact service pin';
+};
+
+subtest 'constructor validation and defaults' => sub {
+  like(
+    dies { Overnet::Auth::Daemon->new('odd') },
+    qr/constructor arguments must be a hash/,
+    'odd constructor arguments die',
+  );
+  like(
+    dies { Overnet::Auth::Daemon->new(config => bless({}, 't::auth_daemon::NotConfig'), endpoint => '/tmp/x.sock') },
+    qr/config must be an Overnet::Auth::Config/,
+    'non-config objects are rejected',
+  );
+  like(
+    dies { Overnet::Auth::Daemon->new() },
+    qr/auth-agent endpoint is required/,
+    'an endpoint is required',
+  );
+  like(
+    dies { Overnet::Auth::Daemon->new(endpoint => '/tmp/x.sock', max_connections => 'many') },
+    qr/max_connections must be a positive integer/,
+    'non-numeric connection limits are rejected',
+  );
+  like(
+    dies { Overnet::Auth::Daemon->new(endpoint => '/tmp/x.sock', agent => bless({}, 't::auth_daemon::NoDispatch')) },
+    qr/agent must support dispatch/,
+    'agents must support dispatch',
+  );
+
+  my $daemon = Overnet::Auth::Daemon->new(
+    {
+      endpoint    => '/tmp/x.sock',
+      socket_mode => oct('0644'),
+      state_file  => '/tmp/state.json',
+    },
+  );
+  is $daemon->_socket_mode, oct('0644'), 'an explicit socket mode is honored';
+  isa_ok $daemon->_state_store, ['Overnet::Auth::StateStore'], 'a state_file arg builds a state store';
+
+  my $default_mode = Overnet::Auth::Daemon->new(endpoint => '/tmp/x.sock');
+  is $default_mode->_socket_mode, oct('0600'), 'the socket mode defaults to 0600';
+  is $default_mode->_state_store, undef, 'no state store is built without a state file';
+
+  my $store  = Overnet::Auth::StateStore->new(path => '/tmp/injected-state.json');
+  my $reused = Overnet::Auth::Daemon->new(endpoint => '/tmp/x.sock', state_store => $store);
+  is $reused->_state_store, exact_ref($store), 'an injected state store is reused';
+};
+
+subtest 'listen socket lifecycle on a real endpoint' => sub {
+  my $dir      = tempdir(CLEANUP => 1);
+  my $endpoint = File::Spec->catfile($dir, 'nested', 'auth.sock');
+
+  my $daemon = Overnet::Auth::Daemon->new(endpoint => $endpoint, max_connections => 1);
+  my $listener = $daemon->_listen_socket;
+  ok $listener, 'a unix listener is created below a new directory';
+  is $daemon->_listen_socket, exact_ref($listener), 'the listener is cached';
+
+  my $client = IO::Socket::UNIX->new(Type => SOCK_STREAM, Peer => $endpoint)
+    or die "connect to $endpoint failed: $!";
+  my $protocol = Overnet::Program::Protocol->new;
+  my $request  = Overnet::Program::Protocol::build_request(
+    id     => 'daemon-run-1',
+    method => 'agent.info',
+    params => {},
+  );
+  Overnet::Auth::SocketIO->write_all(socket => $client, bytes => $protocol->encode_message($request));
+
+  ok $daemon->run, 'the daemon serves the pending connection and stops at the limit';
+  ok !-S $endpoint, 'the endpoint socket is removed on teardown';
+
+  sysread $client, my $raw, 65_536;
+  like $raw, qr/daemon-run-1/, 'the pending client received a response';
+  close $client or die "close failed: $!";
+};
+
+subtest 'listen socket edge and failure paths' => sub {
+  my $dir = tempdir(CLEANUP => 1);
+
+  my $occupied = File::Spec->catfile($dir, 'occupied.sock');
+  open my $plain, '>', $occupied or die "open $occupied failed: $!";
+  close $plain or die "close $occupied failed: $!";
+  like(
+    dies { Overnet::Auth::Daemon->new(endpoint => $occupied)->_listen_socket },
+    qr/already exists and is not a socket/,
+    'a non-socket file at the endpoint is refused',
+  );
+
+  my $stale_path = File::Spec->catfile($dir, 'stale.sock');
+  my $stale = IO::Socket::UNIX->new(Type => SOCK_STREAM, Local => $stale_path, Listen => 1)
+    or die "listen on $stale_path failed: $!";
+  $stale->close or die "close failed: $!";
+  my $reclaimed = Overnet::Auth::Daemon->new(endpoint => $stale_path);
+  ok $reclaimed->_listen_socket, 'a stale socket file is unlinked and reclaimed';
+  $reclaimed->_teardown_socket;
+
+  like(
+    dies {
+      Overnet::Auth::Daemon->new(
+        endpoint       => File::Spec->catfile($dir, 'factory.sock'),
+        listen_factory => sub { return },
+      )->_listen_socket
+    },
+    qr/listen on auth-agent endpoint .* failed/,
+    'a listen factory returning nothing croaks',
+  );
+
+  my $failing_listener = Overnet::Auth::Daemon->new(
+    endpoint       => File::Spec->catfile($dir, 'accept-fail.sock'),
+    listen_factory => sub {
+      return t::auth_daemon::FakeListener->new(queue => []);
+    },
+  );
+  like(
+    dies { $failing_listener->run },
+    qr/accept on auth-agent endpoint failed/,
+    'accept failures croak',
+  );
+
+  my $closed = IO::Socket::UNIX->new(
+    Type   => SOCK_STREAM,
+    Local  => File::Spec->catfile($dir, 'closing.sock'),
+    Listen => 1,
+  ) or die "listen failed: $!";
+  $closed->close or die "close failed: $!";
+  my $torn = Overnet::Auth::Daemon->new(endpoint => File::Spec->catfile($dir, 'closing.sock'));
+  $torn->_current_listen_socket($closed);
+  like(
+    dies { $torn->_teardown_socket },
+    qr/close auth-agent listener socket failed/,
+    'closing an already-closed listener croaks',
+  );
+};
+
+subtest 'a dispatch failure tears the daemon down cleanly' => sub {
+  my $dir      = tempdir(CLEANUP => 1);
+  my $endpoint = File::Spec->catfile($dir, 'crash.sock');
+
+  {
+
+    package t::auth_daemon::CrashingAgent;
+
+    sub new      { my ($class) = @_; return bless {}, $class }
+    sub dispatch { die "agent exploded\n" }
+  }
+
+  my $daemon = Overnet::Auth::Daemon->new(
+    endpoint => $endpoint,
+    agent    => t::auth_daemon::CrashingAgent->new,
+  );
+  my $listener = $daemon->_listen_socket;
+  my $client = IO::Socket::UNIX->new(Type => SOCK_STREAM, Peer => $endpoint)
+    or die "connect failed: $!";
+  my $protocol = Overnet::Program::Protocol->new;
+  Overnet::Auth::SocketIO->write_all(
+    socket => $client,
+    bytes  => $protocol->encode_message(
+      Overnet::Program::Protocol::build_request(id => 'x-1', method => 'agent.info', params => {}),
+    ),
+  );
+
+  like(dies { $daemon->run }, qr/agent exploded/, 'dispatch failures propagate from run');
+  ok !-S $endpoint, 'the endpoint socket is removed after the failure';
+  close $client or die "close failed: $!";
+};
+
+subtest 'empty endpoint and state_file values are treated as unset' => sub {
+  like(
+    dies { Overnet::Auth::Daemon->new(endpoint => q{}) },
+    qr/auth-agent endpoint is required/,
+    'an empty endpoint is treated as missing',
+  );
+  is(
+    Overnet::Auth::Daemon->new(endpoint => '/tmp/x.sock', state_file => q{})->_state_store,
+    undef,
+    'an empty state_file builds no state store',
+  );
+  ok(
+    Overnet::Auth::Daemon->new(endpoint => '/tmp/x.sock')->_teardown_socket,
+    'tearing down without a listener or socket file succeeds',
+  );
 };
 
 done_testing;

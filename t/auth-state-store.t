@@ -82,4 +82,105 @@ subtest 'load_state rejects invalid JSON state objects' => sub {
   like $error, qr/auth\ state\ must\ decode\ to\ an\ object/mx, 'non-object state files are rejected';
 };
 
+subtest 'constructor and load_state reject unusable inputs' => sub {
+  my $build_error = sub {
+    my (@args) = @_;
+    return eval { Overnet::Auth::StateStore->new(@args); 1 } ? undef : $@;
+  };
+  ok !defined $build_error->({path => '/tmp/state.json'}), 'a hashref constructor argument is accepted';
+  like $build_error->('odd'), qr/constructor\ arguments\ must\ be\ a\ hash/mx,
+    'odd argument lists are rejected';
+  like $build_error->(path => q{}), qr/path\ is\ required/mx, 'empty paths are rejected';
+
+  my $dir      = tempdir(CLEANUP => 1);
+  my $bad_json = File::Spec->catfile($dir, 'bad-state.json');
+  open my $fh, '>', $bad_json or die "open $bad_json failed: $!";
+  print {$fh} 'not json' or die "write $bad_json failed: $!";
+  close $fh or die "close $bad_json failed: $!";
+
+  my $store = Overnet::Auth::StateStore->new(path => $bad_json);
+  my $error = eval { $store->load_state; 1 } ? undef : $@;
+  like $error, qr/is\ not\ valid\ JSON/mx, 'invalid JSON state files are rejected';
+};
+
+subtest 'state normalization validates each section' => sub {
+  my $dir   = tempdir(CLEANUP => 1);
+  my $store = Overnet::Auth::StateStore->new(path => File::Spec->catfile($dir, 'state.json'));
+
+  my $save_error = sub {
+    my ($state) = @_;
+    return eval { $store->save_state(state => $state); 1 } ? undef : $@;
+  };
+  like $save_error->({policies => {}}), qr/policies\ must\ be\ an\ array/mx,
+    'non-array policies are rejected';
+  like $save_error->({service_pins => []}), qr/service_pins\ must\ be\ an\ object/mx,
+    'non-object service pins are rejected';
+  like $save_error->({sessions => {}}), qr/sessions\ must\ be\ an\ array/mx,
+    'non-array sessions are rejected';
+};
+
+subtest 'save_state creates missing parent directories and clones values' => sub {
+  my $dir  = tempdir(CLEANUP => 1);
+  my $path = File::Spec->catfile($dir, 'nested', 'deeper', 'state.json');
+
+  my $store = Overnet::Auth::StateStore->new(path => $path);
+  ok $store->save_state(
+    state => {
+      policies => [{policy_id => 'p1', tags => [undef, 'kept']}],
+      sessions => [],
+    },
+    ),
+    'saving into a missing directory succeeds';
+  ok -f $path, 'the state file was created below the new directories';
+
+  my $loaded = $store->load_state;
+  is_deeply $loaded->{policies}[0]{tags}, ['kept'],
+    'undef entries are elided from cloned arrays';
+  is_deeply $loaded->{service_pins}, {}, 'missing sections default to empty containers';
+};
+
+subtest 'filesystem failures surface as croaks' => sub {
+  require IO::Socket::UNIX;
+  my $dir = tempdir(CLEANUP => 1);
+
+  my $dir_store = Overnet::Auth::StateStore->new(path => $dir);
+  my $error = eval { $dir_store->load_state; 1 } ? undef : $@;
+  like $error, qr/close\ .*\ failed/mx, 'reading a directory path fails on close';
+
+  my $socket_path = File::Spec->catfile($dir, 'listener.sock');
+  IO::Socket::UNIX->new(Type => IO::Socket::UNIX::SOCK_STREAM(), Local => $socket_path, Listen => 1)
+    or die "listen on $socket_path failed: $!";
+  my $socket_store = Overnet::Auth::StateStore->new(path => $socket_path);
+  $error = eval { $socket_store->load_state; 1 } ? undef : $@;
+  like $error, qr/open\ .*\ failed/mx, 'unopenable state files fail on open';
+
+  my $dangling = File::Spec->catfile($dir, 'dangling.json');
+  symlink File::Spec->catfile($dir, 'missing-dir', 'x'), "$dangling.tmp.$$"
+    or die "symlink failed: $!";
+  my $dangling_store = Overnet::Auth::StateStore->new(path => $dangling);
+  $error = eval { $dangling_store->save_state(state => {}); 1 } ? undef : $@;
+  like $error, qr/open\ .*\.tmp\.\d+\ failed/mx, 'unwritable temp files fail on open';
+
+  my $full_small = File::Spec->catfile($dir, 'full-small.json');
+  symlink '/dev/full', "$full_small.tmp.$$" or die "symlink failed: $!";
+  $error = eval { Overnet::Auth::StateStore->new(path => $full_small)->save_state(state => {}); 1 } ? undef : $@;
+  like $error, qr/close\ .*\.tmp\.\d+\ failed/mx, 'a full device fails on close';
+
+  my $full_big = File::Spec->catfile($dir, 'full-big.json');
+  symlink '/dev/full', "$full_big.tmp.$$" or die "symlink failed: $!";
+  $error = eval {
+    Overnet::Auth::StateStore->new(path => $full_big)
+      ->save_state(state => {sessions => [{blob => ('x' x 300_000)}]});
+    1;
+  } ? undef : $@;
+  like $error, qr/write\ .*\.tmp\.\d+\ failed/mx, 'a full device fails on buffered writes';
+
+  my $occupied = File::Spec->catdir($dir, 'occupied');
+  mkdir $occupied or die "mkdir $occupied failed: $!";
+  open my $keep, '>', File::Spec->catfile($occupied, 'keep') or die "open keep failed: $!";
+  close $keep or die "close keep failed: $!";
+  $error = eval { Overnet::Auth::StateStore->new(path => $occupied)->save_state(state => {}); 1 } ? undef : $@;
+  like $error, qr/rename\ .*\ failed/mx, 'renames over occupied paths fail';
+};
+
 done_testing;

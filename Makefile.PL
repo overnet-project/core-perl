@@ -36,12 +36,14 @@ WriteMakefile(
         t/00-load-program-runtime.t
         t/auth-agent.t
         t/auth-backends.t
+        t/auth-bridge-irc.t
         t/auth-client.t
         t/auth-cli.t
         t/auth-config.t
         t/auth-daemon-cli.t
         t/auth-daemon.t
         t/auth-readme.t
+        t/auth-socket-io.t
         t/auth-state-store.t
         t/auth-write-all.t
         t/auth-fixtures.t

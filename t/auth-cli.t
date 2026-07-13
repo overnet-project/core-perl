@@ -549,6 +549,175 @@ subtest 'renew and revoke commands wrap session ids as session handles' => sub {
     'renew and revoke wrap the session id as a session_handle object';
 };
 
+subtest 'run handles help, invalid commands, and option errors in-process' => sub {
+  my $ok_response = sub {
+    return {type => 'response', id => 'auth-x', ok => JSON::true, result => {}};
+  };
+  my $client = t::auth_cli::FakeClient->new(
+    responses => {
+      map { $_ => $ok_response->() }
+        qw(
+        identities.list policies.list policies.grant policies.revoke
+        service_pins.list service_pins.set service_pins.forget
+        sessions.list sessions.authorize sessions.renew sessions.revoke
+        )
+    },
+  );
+
+  my $help = Overnet::Auth::CLI->run(argv => ['--help']);
+  is $help->{exit_code}, 0, 'a leading --help exits successfully';
+  like $help->{output}, qr/Usage:/, 'a leading --help prints usage';
+
+  my $late_help = Overnet::Auth::CLI->run(argv => ['identities', '--help'], client => $client);
+  is $late_help->{exit_code}, 0, '--help after a command exits successfully';
+
+  my $no_command = Overnet::Auth::CLI->run(argv => [], client => $client);
+  is $no_command->{exit_code}, 1, 'a missing command exits with an error';
+  like $no_command->{output}, qr/Usage:/, 'a missing command prints usage';
+
+  like dies { Overnet::Auth::CLI->run(argv => ['bogus'], client => $client) },
+    qr/Usage:/, 'unknown commands croak with usage';
+  like dies { Overnet::Auth::CLI->run(argv => ['identities', 'extra'], client => $client) },
+    qr/unexpected positional arguments: extra/, 'unexpected positional arguments croak';
+
+  my $factory_sock;
+  my $factory_result = Overnet::Auth::CLI->run(
+    argv           => ['identities', '--auth-sock', '/tmp/example.sock'],
+    client_factory => sub {
+      my (%options) = @_;
+      $factory_sock = $options{auth_sock};
+      return $client;
+    },
+  );
+  is $factory_result->{exit_code}, 0,                   'client factories are used';
+  is $factory_sock,                '/tmp/example.sock', 'client factories receive the parsed options';
+
+  isa_ok(
+    Overnet::Auth::CLI::_client(options => {auth_sock => '/tmp/example.sock'}),
+    ['Overnet::Auth::Client'],
+    'without a factory an endpoint-configured client is constructed',
+  );
+  isa_ok(
+    Overnet::Auth::CLI::_client(options => {}),
+    ['Overnet::Auth::Client'],
+    'without options a default client is constructed',
+  );
+};
+
+subtest 'command option validation croaks with actionable messages' => sub {
+  my $client = t::auth_cli::FakeClient->new(responses => {});
+  my $run    = sub {
+    my (@argv) = @_;
+    return dies { Overnet::Auth::CLI->run(argv => \@argv, client => $client) };
+  };
+
+  like $run->('authorize'), qr/--program-id is required/, 'authorize requires a program id';
+  like $run->('authorize', '--program-id', 'p'), qr/--scope is required/, 'authorize requires a scope';
+  like $run->('authorize', '--program-id', 'p', '--scope', 's'),
+    qr/--action is required/, 'authorize requires an action';
+  like $run->('authorize', '--program-id', 'p', '--scope', 's', '--action', 'a'),
+    qr/--service-locator is required/, 'authorize requires a service locator';
+  like $run->(
+    'authorize', '--program-id', 'p', '--scope', 's', '--action', 'a',
+    '--service-locator', 'irc://x', '--artifact-json', '{}', '--challenge-type', 'opaque',
+    ),
+    qr/--challenge-type and --challenge-value are required together/,
+    'challenge options must appear together';
+  like $run->(
+    'authorize', '--program-id', 'p', '--scope', 's', '--action', 'a', '--service-locator', 'irc://x',
+    ),
+    qr/--artifact-json or --artifact-file is required/, 'authorize requires artifacts';
+  like $run->(
+    'authorize', '--program-id', 'p', '--scope', 's', '--action', 'a',
+    '--service-locator', 'irc://x', '--artifact-json', 'not json',
+    ),
+    qr/--artifact-json did not contain valid JSON/, 'artifact JSON must parse';
+  like $run->(
+    'authorize', '--program-id', 'p', '--scope', 's', '--action', 'a',
+    '--service-locator', 'irc://x', '--artifact-json', '[1]',
+    ),
+    qr/--artifact-json must decode to an object/, 'artifact JSON must be an object';
+  like $run->(
+    'authorize', '--program-id', 'p', '--scope', 's', '--action', 'a',
+    '--service-locator', 'irc://x', '--artifact-file', '/no/such/artifact.json',
+    ),
+    qr/open .*artifact[.]json failed/, 'missing artifact files croak';
+  like $run->(
+    'authorize', '--program-id', 'p', '--scope', 's', '--action', 'a',
+    '--service-locator', 'irc://x', '--artifact-json', '{}', '--service-identity-value', 'v',
+    ),
+    qr/--service-identity-scheme and --service-identity-value are required together/,
+    'a service identity value alone is refused';
+  like $run->(
+    'authorize', '--program-id', 'p', '--scope', 's', '--action', 'a',
+    '--service-locator', 'irc://x', '--artifact-json', '{}', '--service-identity-display', 'd',
+    ),
+    qr/--service-identity-scheme and --service-identity-value are required together/,
+    'a service identity display alone is refused';
+
+  like $run->('policy-grant'), qr/--identity-id is required/, 'policy-grant requires an identity id';
+  like $run->('policy-grant', '--identity-id', 'i'),
+    qr/--program-id is required/, 'policy-grant requires a program id';
+  like $run->('policy-grant', '--identity-id', 'i', '--program-id', 'p'),
+    qr/--scope is required/, 'policy-grant requires a scope';
+  like $run->('policy-grant', '--identity-id', 'i', '--program-id', 'p', '--scope', 's'),
+    qr/--action is required/, 'policy-grant requires an action';
+  like $run->('policy-revoke'), qr/--policy-id is required/, 'policy-revoke requires a policy id';
+
+  like $run->('renew'),  qr/--session-id is required/, 'renew requires a session id';
+  like $run->('revoke'), qr/--session-id is required/, 'revoke requires a session id';
+
+  like $run->('service-pin-set'), qr/--service-locator is required/, 'service-pin-set requires a locator';
+  like $run->('service-pin-set', '--service-locator', 'a', '--service-locator', 'b'),
+    qr/exactly one --service-locator is required/, 'service-pin-set refuses multiple locators';
+  like $run->('service-pin-set', '--service-locator', 'a'),
+    qr/--service-identity-scheme and --service-identity-value are required/,
+    'service-pin-set requires a service identity';
+  like $run->('service-pin-forget'), qr/--service-locator is required/,
+    'service-pin-forget requires a locator';
+};
+
+subtest 'responses render compactly, with errors, and with optional fields elided' => sub {
+  my $client = t::auth_cli::FakeClient->new(
+    responses => {
+      'sessions.authorize'  => {type => 'response', id => 'auth-1', ok => JSON::true, result => {}},
+      'sessions.renew'      => {type => 'response', id => 'auth-2', ok => JSON::false},
+      'service_pins.forget' => {type => 'response', id => 'auth-3', ok => JSON::true},
+    },
+  );
+
+  my $authorized = Overnet::Auth::CLI->run(
+    argv => [
+      'authorize',         '--program-id', 'p', '--scope', 's', '--action', 'a',
+      '--service-locator', 'irc://x',      '--artifact-json', '{"type":"opaque"}',
+      '--service-identity-scheme', 'nostr.pubkey', '--service-identity-value', ('b' x 64),
+      '--no-pretty',
+    ],
+    client => $client,
+  );
+  is $authorized->{exit_code}, 0, 'authorize without identity or challenge succeeds';
+  unlike $authorized->{output}, qr/\n\s+"ok"/, 'compact rendering omits pretty indentation';
+  my $authorize_call = $client->calls->[0];
+  ok !exists $authorize_call->{params}{identity_id}, 'the identity id is omitted when not supplied';
+  ok !exists $authorize_call->{params}{challenge},   'the challenge is omitted when not supplied';
+  ok !exists $authorize_call->{params}{service}{service_identity}{display},
+    'the service identity display is omitted when not supplied';
+  is $authorize_call->{params}{interactive}, JSON::true, 'interactive defaults to true';
+
+  my $failed = Overnet::Auth::CLI->run(argv => ['renew', '--session-id', 'sess-9'], client => $client);
+  is $failed->{exit_code}, 1, 'failed responses exit non-zero';
+  is JSON::decode_json($failed->{output}), {ok => JSON::false, error => {}},
+    'failed responses render an error envelope even without error details';
+  is $client->calls->[1]{params}{interactive}, JSON::true, 'renew defaults to interactive';
+
+  my $forgotten = Overnet::Auth::CLI->run(
+    argv   => ['service-pin-forget', '--service-locator', 'irc://x'],
+    client => $client,
+  );
+  is JSON::decode_json($forgotten->{output}), {ok => JSON::true, result => {}},
+    'successful responses render an empty result when the agent omits one';
+};
+
 subtest 'client CLI script exists and prints help' => sub {
   ok -f $script, 'auth client script exists'
     or BAIL_OUT('auth client script is required');
