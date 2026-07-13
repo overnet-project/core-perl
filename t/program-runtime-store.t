@@ -443,4 +443,34 @@ subtest 'services normalize unstructured handler failures' => sub {
   is $error->{message}, 'storage backend exploded', 'failure message is preserved without trailing newline';
 };
 
+sub _store_error (&) {
+  my ($code) = @_;
+  return eval { $code->(); 1 } ? undef : $@;
+}
+
+subtest 'store validation rejects malformed inputs' => sub {
+  my $store = Overnet::Program::Store->new({});
+  like(_store_error { Overnet::Program::Store->new('odd') }, qr/constructor arguments must be a hash/, 'odd constructor arguments die');
+
+  like(_store_error { $store->has_document(key => q{}) },    qr/key is required/, 'has_document requires a key');
+  like(_store_error { $store->put_document(key => q{}) },    qr/key is required/, 'put_document requires a key');
+  like(_store_error { $store->put_document(key => 'k', value => 'junk') }, qr/value must be an object/, 'put_document requires an object value');
+  like(_store_error { $store->get_document(key => q{}) },    qr/key is required/, 'get_document requires a key');
+  like(_store_error { $store->get_document(key => 'nope') }, qr/Unknown key: nope/, 'get_document rejects unknown keys');
+  like(_store_error { $store->delete_document(key => q{}) }, qr/key is required/, 'delete_document requires a key');
+  like(_store_error { $store->delete_document(key => 'nope') }, qr/Unknown key: nope/, 'delete_document rejects unknown keys');
+  like(_store_error { $store->list_documents(prefix => []) }, qr/prefix must be a string/, 'list_documents requires a scalar prefix');
+
+  like(_store_error { $store->append_event(stream => q{}) }, qr/stream is required/,
+    'append_event requires a stream');
+  like(_store_error { $store->append_event(stream => 's', event => 'junk') }, qr/event must be an object/, 'append_event requires an object event');
+  like(_store_error { $store->read_events(stream => q{}) }, qr/stream is required/,
+    'read_events requires a stream');
+  like(_store_error { $store->read_events(stream => 's', after_offset => 'soon') },
+    qr/after_offset must be an integer/, 'after_offset must be an integer');
+  like(_store_error { $store->read_events(stream => 's', limit => -1) },
+    qr/limit must be a non-negative integer/, 'limit must be a non-negative integer');
+  is_deeply($store->read_events(stream => 'empty')->{entries}, [], 'reading an unknown stream returns nothing');
+};
+
 done_testing;

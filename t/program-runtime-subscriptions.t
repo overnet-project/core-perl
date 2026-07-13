@@ -9,6 +9,7 @@ use Overnet::Program::Protocol;
 use Overnet::Program::Runtime;
 use Overnet::Program::Services;
 use Overnet::Core::Nostr;
+use Overnet::Program::Subscription;
 
 sub _load_fixture_input {
   my ($name) = @_;
@@ -345,6 +346,87 @@ subtest 'instance drains runtime.subscription_event notifications' => sub {
   is $capability_notifications->[0]{params}{data}{name},
     'adapter.irc.presence',
     'capability notification includes payload';
+};
+
+subtest 'subscription construction and matching edge paths' => sub {
+  my %valid = (
+    session_id      => 'session-1',
+    subscription_id => 'sub-1',
+  );
+
+  like(dies { Overnet::Program::Subscription->new('odd') },
+    qr/constructor arguments must be a hash/, 'odd constructor arguments die');
+  like(dies { Overnet::Program::Subscription->new(%valid, session_id => q{}) },
+    qr/session_id is required/, 'a session id is required');
+  like(dies { Overnet::Program::Subscription->new(%valid, subscription_id => q{}) },
+    qr/subscription_id is required/, 'a subscription id is required');
+  like(dies { Overnet::Program::Subscription->new(%valid, query => 'junk') },
+    qr/query must be an object/, 'queries must be objects');
+
+  my $open = Overnet::Program::Subscription->new({%valid});
+  is($open->query, {}, 'the query accessor clones the query');
+  ok(!$open->matches(item_type => ['ref']), 'reference item types never match');
+  ok($open->matches(item_type => 'anything'), 'an empty query matches every item type');
+
+  my $keyed = Overnet::Program::Subscription->new(%valid, query => {overnet_et => 'note'});
+  ok(!$keyed->matches(item_type => 'timer'), 'non-content item types never match keyed queries');
+
+  my $kind_query = Overnet::Program::Subscription->new(
+    %valid,
+    query => {kind => 1_059, overnet_et => 'note'},
+  );
+  ok(!$kind_query->matches(item_type => 'private_message', data => 'junk'),
+    'private messages need object data');
+  ok(
+    !$kind_query->matches(item_type => 'private_message', data => {transport => 'junk'}),
+    'private message kinds need a transport object',
+  );
+  ok(
+    !$kind_query->matches(
+      item_type => 'private_message',
+      data      => {transport => {kind => 1}, private_type => 'note'},
+    ),
+    'mismatched private message kinds never match',
+  );
+  ok(
+    !$kind_query->matches(
+      item_type => 'private_message',
+      data      => {transport => {kind => 1_059}, private_type => 'other'},
+    ),
+    'mismatched private type fields never match',
+  );
+  ok(
+    $kind_query->matches(
+      item_type => 'private_message',
+      data      => {transport => {kind => 1_059}, private_type => 'note'},
+    ),
+    'matching private messages match',
+  );
+
+  ok(!$kind_query->matches(item_type => 'event', event => 'junk'),
+    'events must be Net::Nostr::Event objects');
+
+  my $key   = Overnet::Core::Nostr->generate_key;
+  my $event = Overnet::Core::Nostr->event_from_wire(
+    $key->sign_event_hash(
+      event => {
+        kind       => 1_059,
+        created_at => 1,
+        content    => q{},
+        tags       => [['overnet_et', 'note'], ['overnet_ot', 'channel']],
+      },
+    ),
+  );
+  ok(
+    $kind_query->matches(item_type => 'event', event => $event->{event}),
+    'matching events match',
+  );
+  my $wrong_kind = Overnet::Program::Subscription->new(%valid, query => {kind => 1});
+  ok(!$wrong_kind->matches(item_type => 'event', event => $event->{event}),
+    'mismatched event kinds never match');
+  my $wrong_tag = Overnet::Program::Subscription->new(%valid, query => {overnet_et => 'other'});
+  ok(!$wrong_tag->matches(item_type => 'event', event => $event->{event}),
+    'mismatched overnet tags never match');
 };
 
 done_testing;

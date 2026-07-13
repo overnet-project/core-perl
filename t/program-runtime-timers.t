@@ -273,4 +273,51 @@ subtest 'instance drains runtime.timer_fired notifications' => sub {
   is scalar @{$instance->drain_runtime_notifications}, 0, 'cancelled timer produces no runtime notification';
 };
 
+sub _timer_error (&) {
+  my ($code) = @_;
+  return eval { $code->(); 1 } ? undef : $@;
+}
+
+subtest 'timer construction and helpers validate their inputs' => sub {
+  my %valid = (
+    session_id => 'session-1',
+    timer_id   => 'timer-1',
+    due_at_ms  => 1_000,
+  );
+
+  like(_timer_error { Overnet::Program::Timer->new('odd') },
+    qr/constructor arguments must be a hash/, 'odd constructor arguments die');
+  like(_timer_error { Overnet::Program::Timer->new(%valid, session_id => q{}) },
+    qr/session_id is required/, 'a session id is required');
+  like(_timer_error { Overnet::Program::Timer->new(%valid, timer_id => q{}) },
+    qr/timer_id is required/, 'a timer id is required');
+  like(_timer_error { Overnet::Program::Timer->new(%valid, due_at_ms => 'soon') },
+    qr/due_at_ms must be an integer/, 'due_at_ms must be an integer');
+  like(_timer_error { Overnet::Program::Timer->new(%valid, repeat_ms => 0) },
+    qr/repeat_ms must be a positive integer/, 'repeat_ms must be positive');
+  like(_timer_error { Overnet::Program::Timer->new(%valid, payload => 'junk') },
+    qr/payload must be an object/, 'payloads must be objects');
+
+  my $timer = Overnet::Program::Timer->new({%valid, payload => {note => 'hi'}});
+  is_deeply($timer->payload, {note => 'hi'}, 'payloads round-trip through the accessor');
+  my $bare = Overnet::Program::Timer->new(%valid);
+  is($bare->payload, undef, 'timers without a payload return none');
+
+  like(_timer_error { $bare->is_due(now_ms => 'soon') },
+    qr/now_ms must be an integer/, 'is_due requires an integer time');
+  like(_timer_error { $bare->advance_after_fire },
+    qr/Timer is not repeating/, 'advance_after_fire requires a repeating timer');
+  like(_timer_error { $bare->advance_after_fire_until_after(now_ms => 1) },
+    qr/Timer is not repeating/, 'advance_after_fire_until_after requires a repeating timer');
+  like(_timer_error { $bare->build_notification_params(fired_at => 'soon') },
+    qr/fired_at must be an integer/, 'notification params require an integer time');
+
+  my $repeating = Overnet::Program::Timer->new(%valid, repeat_ms => 250);
+  like(
+    _timer_error { $repeating->advance_after_fire_until_after(now_ms => 'soon') },
+    qr/now_ms must be an integer/,
+    'catch-up advancement requires an integer time',
+  );
+};
+
 done_testing;

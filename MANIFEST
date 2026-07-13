@@ -114,6 +114,7 @@ t/generate-fixtures.pl
 t/makemaker-metadata.t
 t/manifest-skip-policy.t
 t/private-messaging-fixtures.t
+t/program-adapter-registry.t
 t/profile-contract-oracle.t
 t/profile-contract.t
 t/program-fixtures/host-happy-program.pl

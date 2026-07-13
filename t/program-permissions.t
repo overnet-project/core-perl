@@ -92,4 +92,33 @@ subtest 'every baseline service method has a permission mapping' => sub {
   }
 };
 
+subtest 'permission helpers reject malformed inputs' => sub {
+  like(
+    error_from { Overnet::Program::Permissions->required_permission_for_method(q{}) },
+    qr/method is required/,
+    'empty method names croak',
+  );
+  like(
+    error_from { Overnet::Program::Permissions->has_permission(permissions => 'junk', permission => 'x') },
+    qr/permissions must be an array/,
+    'non-array permission lists croak',
+  );
+  like(
+    error_from { Overnet::Program::Permissions->has_permission(permissions => [], permission => q{}) },
+    qr/permission is required/,
+    'empty permission names croak',
+  );
+  ok(
+    Overnet::Program::Permissions->has_permission(
+      permissions => [undef, ['ref'], 'storage.write'],
+      permission  => 'storage.write',
+    ),
+    'malformed granted entries are skipped while matching',
+  );
+  ok(
+    !Overnet::Program::Permissions->has_permission(permission => 'storage.write'),
+    'a missing permission list grants nothing',
+  );
+};
+
 done_testing;

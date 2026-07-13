@@ -54,6 +54,7 @@ WriteMakefile(
         t/manifest-skip-policy.t
         t/profile-contract-oracle.t
         t/profile-contract.t
+        t/program-adapter-registry.t
         t/program-host.t
         t/program-instance.t
         t/program-protocol.t
