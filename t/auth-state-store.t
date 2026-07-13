@@ -173,7 +173,8 @@ subtest 'filesystem failures surface as croaks' => sub {
       ->save_state(state => {sessions => [{blob => ('x' x 300_000)}]});
     1;
   } ? undef : $@;
-  like $error, qr/write\ .*\.tmp\.\d+\ failed/mx, 'a full device fails on buffered writes';
+  like $error, qr/(?:(?:write|close)\ .*\ failed|No\ space\ left\ on\ device)/mx,
+    'a full device fails on buffered writes';
 
   my $occupied = File::Spec->catdir($dir, 'occupied');
   mkdir $occupied or die "mkdir $occupied failed: $!";

@@ -367,11 +367,13 @@ subtest 'host pump and shutdown edge paths' => sub {
     shutdown_timeout_ms => 0,
   );
   $stuck->start;
+  kill 'STOP', $stuck->pid;
   like(
     dies { $stuck->request_shutdown },
     qr/did not complete runtime[.]shutdown within timeout/,
     'a zero shutdown budget reports the shutdown timeout',
   );
+  kill 'CONT', $stuck->pid;
   $stuck->terminate(timeout_ms => 0);
 };
 
