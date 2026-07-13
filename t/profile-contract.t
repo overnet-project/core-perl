@@ -493,7 +493,101 @@ subtest 'profile event body schema uses JSON Schema draft semantics' => sub {
   }
 };
 
+subtest 'document and set structural guards' => sub {
+  my $not_object = Overnet::Core::ProfileContract::validate_contract('junk');
+  ok !$not_object->{valid}, 'non-object contracts are invalid';
+  is $not_object->{errors}[0], 'profile_contract.document_not_object',
+    'the non-object rejection is reported';
+
+  my $not_array = Overnet::Core::ProfileContract::validate_contract_set('junk');
+  ok !$not_array->{valid}, 'non-array contract sets are invalid';
+  is $not_array->{errors}[0], 'profile_contract_set.contracts_not_array',
+    'the non-array rejection is reported';
+
+  my $broken_set = Overnet::Core::ProfileContract::validate_contract_set([{}]);
+  ok !$broken_set->{valid}, 'sets containing invalid contracts are invalid';
+
+  my $event_context = Overnet::Core::ProfileContract::validate_profile_event(
+    event     => {kind => 7800, tags => [], content => '{}'},
+    contracts => [{}],
+  );
+  ok !$event_context->{valid}, 'events cannot validate against an invalid contract set';
+};
+
+subtest 'event selection and wire decoding edge paths' => sub {
+  my $chat = _contract(
+    'com.example.chat',
+    object_types => {
+      'com.example.chat.channel' => _object_type(),
+    },
+    event_types => {
+      'com.example.chat.message' => _event_type(object_type => 'com.example.chat.channel'),
+    },
+  );
+  my $duplicate = _contract(
+    'com.example.chatdup',
+    object_types => {
+      'com.example.chatdup.channel' => _object_type(),
+    },
+    event_types => {
+      'com.example.chat.message' => _event_type(object_type => 'com.example.chatdup.channel'),
+    },
+  );
+
+  my $event_for = sub {
+    my (%args) = @_;
+    return {
+      kind    => 7800,
+      tags    => [
+        ['overnet_v', '0.1.0'],
+        ['overnet_et', 'com.example.chat.message'],
+        ['overnet_ot', $args{object_type} // 'com.example.chat.channel'],
+        ['overnet_oid', 'chan-1'],
+        ['v', '0.1.0'], ['t', 'com.example.chat.message'],
+        ['o',  $args{object_type} // 'com.example.chat.channel'],
+        ['d', 'chan-1'],
+        ['short'],
+      ],
+      content => $args{content} // JSON::encode_json({body => {}}),
+    };
+  };
+
+  my $ambiguous = Overnet::Core::ProfileContract::validate_profile_event(
+    event     => $event_for->(),
+    contracts => [$chat, $duplicate],
+  );
+  ok !$ambiguous->{valid}, 'an event type defined by two contracts is ambiguous';
+
+  my $bad_json = Overnet::Core::ProfileContract::validate_profile_event(
+    event     => $event_for->(content => 'not json'),
+    contracts => [$chat],
+  );
+  ok !$bad_json->{valid}, 'events with undecodable content are invalid';
+
+  {
+
+    package t::profile_contract::EventObject;
+
+    sub new { my ($class, %args) = @_; return bless {%args}, $class }
+    sub kind    { my ($self) = @_; return $self->{kind} }
+    sub tags    { my ($self) = @_; return $self->{tags} }
+    sub content { my ($self) = @_; return $self->{content} }
+  }
+  my $wrapped = Overnet::Core::ProfileContract::validate_profile_event(
+    event     => t::profile_contract::EventObject->new(%{$event_for->()}),
+    contracts => [$chat],
+  );
+  ok $wrapped->{valid}, 'blessed events with accessors validate';
+
+  ok Overnet::Core::ProfileContract::_is_json_number(5),      'integers are JSON numbers';
+  ok Overnet::Core::ProfileContract::_is_json_number(5.5),    'floats are JSON numbers';
+  ok !Overnet::Core::ProfileContract::_is_json_number('5'),   'strings are not JSON numbers';
+  ok !Overnet::Core::ProfileContract::_is_json_number(undef), 'undef is not a JSON number';
+  ok !Overnet::Core::ProfileContract::_is_json_number([]),    'references are not JSON numbers';
+};
+
 done_testing;
+
 
 sub _spec_root {
   for my $dir (

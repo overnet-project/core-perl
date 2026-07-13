@@ -2,6 +2,7 @@ use strictures 2;
 
 use Test2::V0;
 
+use JSON ();
 use Overnet::Core::Provenance;
 
 my $ADAPTER = 'a1b2c3d4' x 8;
@@ -130,4 +131,79 @@ is outcome(
   ),
   'authoritative', 'wire content is decoded for event and record';
 
+subtest 'malformed events, records, and windows' => sub {
+  is outcome('junk', []), 'not_applicable', 'non-object events are not applicable';
+  is outcome({pubkey => $ADAPTER, provenance => {type => 'adapted', protocol => q{}, origin => 'o'}}, []),
+    'unverified', 'an empty protocol is unverified';
+  is outcome({pubkey => $ADAPTER, provenance => {type => 'adapted', protocol => 'irc', origin => q{}}}, []),
+    'unverified', 'an empty origin is unverified';
+
+  my $content_event = {
+    pubkey     => $ADAPTER,
+    created_at => 1,
+    content    => JSON::encode_json(
+      {provenance => {type => 'adapted', protocol => 'irc', origin => 'irc.libera.chat/#overnet'}},
+    ),
+  };
+  is outcome($content_event, [authority_record(pubkeys => [$ADAPTER])]), 'authoritative',
+    'provenance can be carried in JSON content';
+  is outcome({pubkey => $ADAPTER, content => 'not json'},  []), 'not_applicable',
+    'invalid JSON content is not applicable';
+  is outcome({pubkey => $ADAPTER, content => ['ref']},     []), 'not_applicable',
+    'reference content is not applicable';
+  is outcome({pubkey => $ADAPTER, content => '"scalar"'},  []), 'not_applicable',
+    'non-object JSON content is not applicable';
+
+  my $event = adapted_event(pubkey => $ADAPTER);
+  is outcome($event, ['junk']), 'unverified', 'non-object records never apply';
+  is outcome($event, [{body => 'junk'}]), 'unverified', 'records without a body object never apply';
+  my $content_record = {
+    content => JSON::encode_json(
+      {body => {protocol => 'irc', origin => 'irc.libera.chat', origin_match => 'prefix', pubkeys => [$ADAPTER]}},
+    ),
+  };
+  is outcome($event, [$content_record]), 'authoritative',
+    'record bodies can be carried in JSON content';
+  is outcome($event, [authority_record(origin => q{}, pubkeys => [$ADAPTER])]),
+    'unverified', 'records with empty origins never apply';
+  is outcome(
+    adapted_event(pubkey => $ADAPTER, origin => 'irc.libera.chat'),
+    [authority_record(pubkeys => [$ADAPTER])],
+    ),
+    'authoritative', 'an exact origin match applies';
+
+  is outcome(
+    $event,
+    [authority_record(origin => 'irc.libera.chat/#overnet', origin_match => 'fuzzy', pubkeys => [$ADAPTER])],
+    ),
+    'unresolvable', 'malformed origin_match values are unresolvable';
+  is outcome($event, [authority_record(origin_match => 'fuzzy', pubkeys => [$ADAPTER])]),
+    'unverified', 'records that never match the origin stay unverified';
+  my $no_match_record =
+    {body => {protocol => 'irc', origin => 'irc.libera.chat/#overnet', pubkeys => [$ADAPTER]}};
+  is outcome($event, [$no_match_record]), 'authoritative',
+    'records without origin_match default to exact matching';
+  is outcome($event, [authority_record(pubkeys => 'junk')]),
+    'unresolvable', 'non-array pubkey lists are unresolvable';
+  is outcome($event, [authority_record(pubkeys => ['short'])]),
+    'unresolvable', 'malformed pubkey entries are unresolvable';
+  is outcome($event, [authority_record(pubkeys => [$ADAPTER], not_before => 2_000_000_000)]),
+    'unresolvable', 'records not yet in effect are unresolvable';
+  is outcome($event, [authority_record(pubkeys => [$ADAPTER], not_after => 1)]),
+    'unresolvable', 'expired records are unresolvable';
+  is outcome($event, [authority_record(pubkeys => [$ADAPTER], not_before => 'soon')]),
+    'unresolvable', 'malformed window bounds are unresolvable';
+  is outcome(
+    {%{$event}, created_at => 'yesterday'},
+    [authority_record(pubkeys => [$ADAPTER], not_before => 1)],
+    ),
+    'unresolvable', 'windowed records need a usable event timestamp';
+  is outcome(
+    $event,
+    [authority_record(pubkeys => [$ADAPTER]), authority_record(pubkeys => [])],
+    ),
+    'unresolvable', 'conflicting records are unresolvable';
+};
+
 done_testing;
+
