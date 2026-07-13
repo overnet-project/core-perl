@@ -128,6 +128,7 @@ t/program-instance.t
 t/program-protocol.t
 t/program-runtime-adapters.t
 t/program-runtime-config.t
+t/program-runtime-edges.t
 t/program-runtime-construction.t
 t/program-runtime-emission.t
 t/program-runtime-private-messaging.t
@@ -136,6 +137,7 @@ t/program-runtime-store.t
 t/program-runtime-subscriptions.t
 t/program-runtime-timers.t
 t/program-runtime-tls.t
+t/program-services-dispatch.t
 t/provenance.t
 t/repo-split.t
 t/spec-conformance-core.t

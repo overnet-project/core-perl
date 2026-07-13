@@ -89,6 +89,7 @@ is(
         t/program-protocol.t
         t/program-runtime-config.t
         t/program-runtime-construction.t
+        t/program-runtime-edges.t
         t/program-runtime-emission.t
         t/program-runtime-private-messaging.t
         t/program-runtime-secrets.t
@@ -96,6 +97,7 @@ is(
         t/program-runtime-subscriptions.t
         t/program-runtime-timers.t
         t/program-runtime-tls.t
+        t/program-services-dispatch.t
         t/repo-split.t
         t/validator.t
       )
