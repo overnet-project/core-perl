@@ -289,10 +289,38 @@ subtest 'agent_args validates injected mutable state and clones values' => sub {
   my $args = $config->agent_args(state => {policies => [{policy_id => 'p1'}]});
   is $args->{allow_unattended_autoapprove}, 1, 'boolean autoapprove flags become plain flags';
   is_deeply $args->{policies}, [{policy_id => 'p1'}], 'injected state policies are cloned into agent args';
-  is_deeply $args->{identities}[0]{extras}, ['kept'], 'undef entries are elided from cloned arrays';
+  is_deeply $args->{identities}[0]{extras}, [undef, 'kept'],
+    'undef entries are preserved in cloned arrays';
 
   my $default_args = $config->agent_args;
   is_deeply $default_args->{policies}, [], 'agent args default to the config mutable state';
+};
+
+subtest 'JSON null values anywhere in the config survive cloning' => sub {
+  my $config = eval {
+    Overnet::Auth::Config->new(
+      config => {
+        description => undef,
+        daemon      => {endpoint => '/tmp/auth.sock', socket_mode => undef},
+        identities  => [{identity_id => 'default', display_name => undef}],
+        sessions    => [{session_handle => {id => 'sess-1'}, service => undef}],
+      },
+    );
+  };
+  is $@, '', 'a config containing nulls constructs without dying';
+  is_deeply $config->identities, [{identity_id => 'default', display_name => undef}],
+    'null identity fields are preserved without shifting hash keys';
+  is_deeply $config->mutable_state->{sessions},
+    [{session_handle => {id => 'sess-1'}, service => undef}],
+    'null session fields are preserved without shifting hash keys';
+  is $config->endpoint, '/tmp/auth.sock', 'sibling keys of a null value keep their values';
+
+  my $dir       = tempdir(CLEANUP => 1);
+  my $null_file = File::Spec->catfile($dir, 'null.json');
+  _write_raw($null_file, '{"daemon":{"endpoint":"/tmp/auth.sock"},"note":null}');
+  my $loaded = eval { Overnet::Auth::Config->load_file(path => $null_file) };
+  is $@, '', 'a config file containing a JSON null loads without dying';
+  is $loaded->endpoint, '/tmp/auth.sock', 'the loaded config still exposes its endpoint';
 };
 
 done_testing;

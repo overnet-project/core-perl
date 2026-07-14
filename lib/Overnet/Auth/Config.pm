@@ -150,7 +150,7 @@ sub mutable_state {
 sub _clone {
   my ($value) = @_;
   if (!(defined $value)) {
-    return;
+    return $value;
   }
   if (!(ref($value))) {
     return $value;

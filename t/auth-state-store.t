@@ -134,9 +134,31 @@ subtest 'save_state creates missing parent directories and clones values' => sub
   ok -f $path, 'the state file was created below the new directories';
 
   my $loaded = $store->load_state;
-  is_deeply $loaded->{policies}[0]{tags}, ['kept'],
-    'undef entries are elided from cloned arrays';
+  is_deeply $loaded->{policies}[0]{tags}, [undef, 'kept'],
+    'undef entries are preserved in cloned arrays';
   is_deeply $loaded->{service_pins}, {}, 'missing sections default to empty containers';
+};
+
+subtest 'JSON null values round-trip through save and load' => sub {
+  my $dir   = tempdir(CLEANUP => 1);
+  my $path  = File::Spec->catfile($dir, 'state.json');
+  my $store = Overnet::Auth::StateStore->new(path => $path);
+
+  my $saved = eval {
+    $store->save_state(
+      state => {
+        sessions => [{session_handle => {id => 'sess-1'}, service => undef, scope => 's'}],
+      },
+    );
+  };
+  is $@, '', 'saving state containing undef hash values does not die';
+  ok $saved, 'the save succeeds';
+
+  my $loaded = eval { $store->load_state };
+  is $@, '', 'loading state containing JSON nulls does not die';
+  is_deeply $loaded->{sessions},
+    [{session_handle => {id => 'sess-1'}, service => undef, scope => 's'}],
+    'null values are preserved without shifting hash keys';
 };
 
 subtest 'filesystem failures surface as croaks' => sub {

@@ -1183,7 +1183,7 @@ sub _created_at {
 sub _clone_hash {
   my ($value) = @_;
   if (!(defined $value)) {
-    return;
+    return $value;
   }
   if (!(ref($value))) {
     return $value;

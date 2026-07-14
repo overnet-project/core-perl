@@ -818,6 +818,44 @@ subtest 'policies.list and sessions.list expose stored auth state' => sub {
     'sessions.list returns stored sessions';
 };
 
+subtest 'sessions.list tolerates seeded sessions with missing fields' => sub {
+  my $agent = Overnet::Auth::Agent->new(
+    sessions => [
+      {
+        session_handle => {id => 'sess-1'},
+        identity_id    => 'default',
+        program_id     => 'irc.bridge',
+        scope          => 'irc://irc.example.test/overnet',
+        action         => 'session.authenticate',
+      },
+    ],
+  );
+
+  my $sessions = $agent->dispatch(
+    {
+      type   => 'request',
+      id     => 'sessions-list-sparse-1',
+      method => 'sessions.list',
+      params => {},
+    }
+  );
+
+  is $sessions->{ok}, 1, 'sessions.list succeeds for a session without a service field';
+  is $sessions->{result}{sessions},
+    [
+    {
+      session_handle => {id => 'sess-1'},
+      identity_id    => 'default',
+      program_id     => 'irc.bridge',
+      service        => undef,
+      scope          => 'irc://irc.example.test/overnet',
+      action         => 'session.authenticate',
+      renewable      => 0,
+    },
+    ],
+    'the missing service field is reported as undef without shifting descriptor keys';
+};
+
 subtest 'service_pins.set, service_pins.list, and service_pins.forget manage pinned service identities' => sub {
   my $agent = Overnet::Auth::Agent->new;
 
