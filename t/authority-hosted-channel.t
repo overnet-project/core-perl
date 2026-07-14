@@ -161,6 +161,14 @@ subtest 'group event helpers tolerate malformed events' => sub {
   };
   is $from_event->(event => {tags => []}), undef, 'a network is required';
   is $from_event->(network => 'a', event => 'junk'), undef, 'non-event inputs are refused';
+  is $from_event->(network => 'a', event => {tags => 'junk'}), undef,
+    'hash events with non-array tags are refused';
+  is $from_event->(network => 'a', event => {}), undef,
+    'hash events without tags are refused';
+  is $from_event->(network => 'a', event => [['d', 'irc-61-2361']]), undef,
+    'array reference events are refused';
+  is $from_event->(network => 'a', event => \'junk'), undef,
+    'scalar reference events are refused';
 
   {
 
@@ -189,6 +197,12 @@ subtest 'group event helpers tolerate malformed events' => sub {
 
   ok !Overnet::Authority::HostedChannel::group_event_is_tombstoned(event => undef),
     'missing events are not tombstoned';
+  ok !Overnet::Authority::HostedChannel::group_event_is_tombstoned(event => {tags => 'junk'}),
+    'hash events with non-array tags are not tombstoned';
+  ok !Overnet::Authority::HostedChannel::group_event_is_tombstoned(
+    event => [['status', 'tombstoned']],
+    ),
+    'array reference events are not tombstoned';
   ok !Overnet::Authority::HostedChannel::group_event_is_tombstoned(
     event => {tags => [['short'], ['status', 'active']]},
     ),

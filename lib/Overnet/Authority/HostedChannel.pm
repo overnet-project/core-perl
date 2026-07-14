@@ -1,6 +1,8 @@
 package Overnet::Authority::HostedChannel;
 
 use strictures 2;
+use Scalar::Util qw(blessed);
+
 use Net::Nostr::Group ();
 
 our $VERSION = '0.001';
@@ -227,7 +229,7 @@ sub _event_tags {
   if (ref($event) eq 'HASH' && ref($event->{tags}) eq 'ARRAY') {
     return $event->{tags};
   }
-  if (ref($event) && $event->can('tags')) {
+  if (blessed($event) && $event->can('tags')) {
     return $event->tags;
   }
   return;
