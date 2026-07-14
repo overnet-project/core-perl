@@ -135,6 +135,20 @@ subtest 'harness stores published events per channel' => sub {
   Overnet::Test::SpecConformance::IRCServerHarness::_store_published_event($server, 'junk');
   ok(!keys %{$server->{_spec_authoritative_channels}}, 'nothing was stored for a non-hash event');
 
+  my $junk_publish;
+  ok(
+    lives {
+      $junk_publish = $server->_request(method => 'nostr.publish_event', params => {event => 'junk'});
+    },
+    'publishing a non-hash event does not die',
+  );
+  ok($junk_publish->{accepted}, 'non-hash events are still accepted');
+  ok(!exists $junk_publish->{event_id}, 'non-hash events carry no event id');
+
+  my $missing_publish = $server->_request(method => 'nostr.publish_event', params => {});
+  ok($missing_publish->{accepted},         'publishing without an event is accepted');
+  ok(!exists $missing_publish->{event_id}, 'publishing without an event carries no event id');
+
   my $unresolvable = {kind => 1, created_at => 1, content => q{}, tags => []};
   ok($server->_request(method => 'nostr.publish_event', params => {event => $unresolvable})->{accepted},
     'events without a channel binding are accepted');
@@ -219,6 +233,34 @@ subtest 'harness nostr filter matching' => sub {
     {event => {kind => 37_800}, state => [{kind => 37_800}]},
     'state-kind events normalize into the state list',
   );
+  is(
+    Overnet::Test::SpecConformance::IRCServerHarness::_normalize_adapter_result_for_harness(
+      {events => [{kind => 9}], extra => 1},
+    ),
+    {events => [{kind => 9}], extra => 1},
+    'results that already carry an events list are returned verbatim',
+  );
+};
+
+subtest 'channel cache refresh tolerates an empty authoritative event set' => sub {
+  my ($server) = _harness(
+    server_view => {adapter_config => {authority_profile => 'nip29', group_host => 'groups.example'}},
+    client      => {registered => 1, nick => 'alice'},
+  );
+
+  ok(!$server->_authority_relay_enabled, 'sanity: the authority relay is disabled');
+
+  my $events;
+  ok(
+    lives { $events = $server->_refresh_authoritative_nip29_channel_cache('#ops') },
+    'refreshing a channel with no stored events does not die',
+  );
+  is($events, [], 'the refresh reports an empty event set');
+
+  my $canonical = $server->_canonical_channel_name('#ops');
+  my $cache     = $server->{authoritative_channel_cache}{$canonical};
+  is($cache->{events}, [], 'the cache stores the empty event set');
+  ok(exists $cache->{view} && !defined $cache->{view}, 'the cached view is undef when nothing can be derived');
 };
 
 subtest 'harness delegates to the real server when the relay is enabled' => sub {

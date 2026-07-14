@@ -88,24 +88,22 @@ sub assert_method_allowed {
   }
 
   if (
-    $class->has_permission(
+    !$class->has_permission(
       permissions => $permissions,
       permission  => $required_permission,
     )
   ) {
-    return 1;
+    CORE::die {
+      code    => 'runtime.permission_denied',
+      message => "Permission denied for method $method",
+      details => {
+        method              => $method,
+        required_permission => $required_permission,
+      },
+    };
   }
 
-  CORE::die {
-    code    => 'runtime.permission_denied',
-    message => "Permission denied for method $method",
-    details => {
-      method              => $method,
-      required_permission => $required_permission,
-    },
-  };
-
-  return;
+  return 1;
 }
 
 1;

@@ -144,9 +144,10 @@ sub _request_publish_nostr_event {
   my ($self, $params) = @_;
   my $event = $params->{event};
   _store_published_event($self, $event);
+  my $event_id = ref($event) eq 'HASH' ? $event->{id} : undef;
   return {
     accepted => JSON::true,
-    (defined($event->{id}) ? (event_id => $event->{id}) : ()),
+    (defined($event_id) ? (event_id => $event_id) : ()),
   };
 }
 
@@ -206,9 +207,6 @@ sub _normalize_adapter_result_for_harness {
       $normalized{events} = [$result->{event}];
     }
   }
-  if (exists $result->{events}) {
-    $normalized{events} = $result->{events};
-  }
   return {%{$result}, %normalized,};
 }
 
@@ -229,9 +227,10 @@ sub _refresh_authoritative_nip29_channel_cache {
   }
   my $canonical = $self->_canonical_channel_name($channel);
   my $events    = $self->_read_authoritative_nip29_events($canonical, %args);
+  my $view      = $self->_derive_authoritative_channel_view_from_events($canonical, $events);
   $self->{authoritative_channel_cache}{$canonical} = {
     events => $events,
-    view   => $self->_derive_authoritative_channel_view_from_events($canonical, $events),
+    view   => $view,
   };
   return $events;
 }
