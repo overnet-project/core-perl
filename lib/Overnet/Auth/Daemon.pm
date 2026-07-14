@@ -2,8 +2,9 @@ package Overnet::Auth::Daemon;
 
 use strictures 2;
 use Moo;
-use Carp    qw(croak);
-use English qw(-no_match_vars);
+use Carp         qw(croak);
+use English      qw(-no_match_vars);
+use Scalar::Util qw(blessed);
 
 use File::Basename qw(dirname);
 use File::Path     qw(make_path);
@@ -68,7 +69,7 @@ sub _daemon_config {
   if (!(defined $config)) {
     $config = Overnet::Auth::Config->new(config => {});
   }
-  if (!(ref($config) && $config->isa('Overnet::Auth::Config'))) {
+  if (!(blessed($config) && $config->isa('Overnet::Auth::Config'))) {
     croak "config must be an Overnet::Auth::Config\n";
   }
   return $config;
@@ -129,7 +130,7 @@ sub _daemon_max_connections {
 sub _daemon_agent {
   my ($config, $state_store, %args) = @_;
   my $agent = $args{agent} || _build_daemon_agent($config, $state_store);
-  if (!(ref($agent) && $agent->can('dispatch'))) {
+  if (!(blessed($agent) && $agent->can('dispatch'))) {
     croak "agent must support dispatch\n";
   }
   return $agent;

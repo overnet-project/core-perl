@@ -443,6 +443,9 @@ subtest 'server constructor and socket read edge paths' => sub {
   like $error, qr/agent\ is\ required/mx, 'servers require an agent';
   $error = eval { Overnet::Auth::Server->new('odd'); 1 } ? undef : $@;
   like $error, qr/constructor\ arguments\ must\ be\ a\ hash/mx, 'odd constructor arguments die';
+  $error = eval { Overnet::Auth::Server->new(agent => {}); 1 } ? undef : $@;
+  like $error, qr/agent\ is\ required/mx,
+    'unblessed agent references are rejected with the intended croak';
 
   my $server = Overnet::Auth::Server->new(agent => Overnet::Auth::Agent->new);
   $error = eval { $server->serve_socket(undef); 1 } ? undef : $@;

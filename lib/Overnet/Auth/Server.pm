@@ -2,8 +2,9 @@ package Overnet::Auth::Server;
 
 use strictures 2;
 use Moo;
-use Carp    qw(croak);
-use English qw(-no_match_vars);
+use Carp         qw(croak);
+use English      qw(-no_match_vars);
+use Scalar::Util qw(blessed);
 
 use Overnet::Program::Protocol;
 use Overnet::Auth::SocketIO;
@@ -18,7 +19,7 @@ no Moo;
 sub BUILDARGS {
   my ($class, @args) = @_;
   my %args = _constructor_args_hash(@args);
-  if (!(ref($args{agent}) && $args{agent}->can('dispatch'))) {
+  if (!(blessed($args{agent}) && $args{agent}->can('dispatch'))) {
     croak "agent is required\n";
   }
 

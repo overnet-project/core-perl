@@ -280,6 +280,11 @@ subtest 'constructor validation and defaults' => sub {
     'non-config objects are rejected',
   );
   like(
+    dies { Overnet::Auth::Daemon->new(config => {}, endpoint => '/tmp/x.sock') },
+    qr/config must be an Overnet::Auth::Config/,
+    'unblessed config references are rejected with the intended croak',
+  );
+  like(
     dies { Overnet::Auth::Daemon->new() },
     qr/auth-agent endpoint is required/,
     'an endpoint is required',
@@ -293,6 +298,11 @@ subtest 'constructor validation and defaults' => sub {
     dies { Overnet::Auth::Daemon->new(endpoint => '/tmp/x.sock', agent => bless({}, 't::auth_daemon::NoDispatch')) },
     qr/agent must support dispatch/,
     'agents must support dispatch',
+  );
+  like(
+    dies { Overnet::Auth::Daemon->new(endpoint => '/tmp/x.sock', agent => {}) },
+    qr/agent must support dispatch/,
+    'unblessed agent references are rejected with the intended croak',
   );
 
   my $daemon = Overnet::Auth::Daemon->new(
