@@ -36,8 +36,8 @@ sub BUILDARGS {
   my $protocol                    = $args{protocol}                    || Overnet::Program::Protocol->new;
   my $supported_protocol_versions = $args{supported_protocol_versions} || ['0.1'];
   my $program_id                  = $args{program_id};
-  my $instance_id                 = $args{instance_id}        || 'instance-1';
-  my $runtime_program_id          = $args{runtime_program_id} || 'overnet.runtime';
+  my $instance_id                 = $args{instance_id}        // 'instance-1';
+  my $runtime_program_id          = $args{runtime_program_id} // 'overnet.runtime';
   my $service_handler             = $args{service_handler};
   my $config                      = _config_from_args(\%args, $service_handler);
 

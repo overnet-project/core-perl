@@ -500,6 +500,16 @@ subtest 'instance construction validates its collaborators' => sub {
     qr/supported_protocol_versions must be a non-empty array/, 'protocol versions are required');
   like(dies { Overnet::Program::Instance->new(%valid, config => 'junk') },
     qr/config must be an object/, 'config must be an object');
+  like(dies { Overnet::Program::Instance->new(%valid, instance_id => q{}) },
+    qr/instance_id is required/, 'explicitly empty instance ids are refused');
+  like(dies { Overnet::Program::Instance->new(%valid, runtime_program_id => q{}) },
+    qr/runtime_program_id is required/, 'explicitly empty runtime program ids are refused');
+
+  my $zero_ids = Overnet::Program::Instance->new(%valid, instance_id => '0', runtime_program_id => '0');
+  is($zero_ids->instance_id, '0', 'a literal 0 instance id is preserved, not replaced by the default');
+
+  my $defaulted = Overnet::Program::Instance->new(%valid, instance_id => undef, runtime_program_id => undef);
+  is($defaulted->instance_id, 'instance-1', 'undef instance ids fall back to the default');
 };
 
 subtest 'state machine rejections outside the ready state' => sub {
