@@ -46,6 +46,33 @@ sub _expect {
   return;
 }
 
+sub _shutdown_and_exit {
+  my ($message) = @_;
+  _send_message(
+    Overnet::Program::Protocol::build_response_ok(id => $message->{id}));
+  print STDERR "fixture done\n";
+  exit 0;
+}
+
+# Wait for the response to a specific in-flight request. Shutdown can legitimately
+# interleave a pending program request -- the runtime is not obligated to answer
+# in-flight requests once it begins tearing down -- so treat an interleaved
+# runtime.shutdown request as an orderly stop rather than a protocol violation,
+# and ignore async notifications that arrive while we await the reply.
+sub _await_response {
+  my ($id) = @_;
+  while (1) {
+    my $message = _next_message();
+    my $type    = $message->{type} || q{};
+    if ($type eq 'request' && ($message->{method} || q{}) eq 'runtime.shutdown') {
+      _shutdown_and_exit($message);
+    }
+    next if $type eq 'notification';
+    _expect($message, 'response', undef, $id);
+    return $message;
+  }
+}
+
 _send_message(
   Overnet::Program::Protocol::build_program_hello(
     program_id                  => 'fixture.host.program',
@@ -81,8 +108,7 @@ _send_message(
     method => 'config.get',
   )
 );
-my $config_response = _next_message();
-_expect($config_response, 'response', undef, 'fixture-config');
+my $config_response = _await_response('fixture-config');
 die "config.get failed\n" unless $config_response->{ok};
 print STDERR "fixture config: " . ($config_response->{result}{config}{name} || '') . "\n";
 
@@ -97,8 +123,7 @@ _send_message(
     },
   )
 );
-my $timer_response = _next_message();
-_expect($timer_response, 'response', undef, 'fixture-timer');
+my $timer_response = _await_response('fixture-timer');
 die "timers.schedule failed\n" unless $timer_response->{ok};
 
 while (1) {
