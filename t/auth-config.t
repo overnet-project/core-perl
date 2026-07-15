@@ -84,6 +84,22 @@ subtest 'load_file returns endpoint and agent config from JSON' => sub {
     'config exposes the agent constructor args and defaults to fail-closed approval';
 };
 
+subtest 'daemon accessors return the configured daemon values' => sub {
+  my $config = Overnet::Auth::Config->new(
+    config => {
+      daemon => {
+        endpoint    => '/run/overnet-auth.sock',
+        socket_mode => '0600',
+        state_file  => '/var/lib/overnet/auth-state.json',
+      },
+    },
+  );
+
+  is $config->endpoint,    '/run/overnet-auth.sock',            'endpoint reflects the daemon section';
+  is $config->socket_mode, '0600',                              'socket_mode reflects the daemon section';
+  is $config->state_file,  '/var/lib/overnet/auth-state.json',  'state_file reflects the daemon section';
+};
+
 subtest 'agent_args carries an explicit unattended-autoapprove opt-in from config' => sub {
   my $config = Overnet::Auth::Config->new(
     config => {
@@ -251,6 +267,10 @@ subtest 'load_file rejects unusable paths and content' => sub {
   };
 
   like $load_error->(), qr/path\ is\ required/mx, 'a path is required';
+  like $load_error->(path => q{}), qr/path\ is\ required/mx,
+    'an empty-string path is rejected, not opened as an empty filename';
+  like $load_error->(path => ['not', 'a', 'path']), qr/path\ is\ required/mx,
+    'a reference path is rejected instead of being treated as a filename';
   like $load_error->(path => File::Spec->catfile(tempdir(CLEANUP => 1), 'missing.json')),
     qr/open\ .*missing\.json\ failed/mx, 'missing files fail to open';
 
