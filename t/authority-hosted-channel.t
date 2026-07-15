@@ -209,4 +209,81 @@ subtest 'group event helpers tolerate malformed events' => sub {
     'non-tombstone status tags are ignored';
 };
 
+subtest 'guard operators are pinned against boolean mutation' => sub {
+
+  # authoritative_group_id network guard: a reference network must be rejected,
+  # not stringified through unpack() into a bogus group id.
+  is Overnet::Authority::HostedChannel::authoritative_group_id(network => [], channel => '#x'),
+    undef, 'a reference network is refused rather than stringified into a group id';
+
+  {
+
+    package t::hosted_channel::OverloadStr;
+
+    use overload '""' => sub { $_[0]->{string} }, fallback => 1;
+    sub new { my ($class, $string) = @_; return bless {string => $string}, $class }
+  }
+  my $over_network  = t::hosted_channel::OverloadStr->new('a');
+  my $over_group_id = t::hosted_channel::OverloadStr->new('irc-61-2361');
+
+  # channel_name_from_group_id network guard is a real gate, not merely the
+  # downstream decoded-network equality check: an overloaded object that
+  # stringifies to the decoded network is still refused because a network must
+  # be a plain scalar.
+  is Overnet::Authority::HostedChannel::channel_name_from_group_id(
+    network  => $over_network,
+    group_id => 'irc-61-2361',
+    ),
+    undef, 'an overloaded network object is refused even when it stringifies to the decoded network';
+
+  # channel_name_from_group_id group_id guard: an overloaded object that
+  # stringifies to a well-formed id is still refused because a group id must be
+  # a plain scalar, not a reference.
+  is Overnet::Authority::HostedChannel::channel_name_from_group_id(
+    network  => 'a',
+    group_id => $over_group_id,
+    ),
+    undef, 'an overloaded group_id object is refused even when it stringifies to a valid id';
+
+  # irc_mask_matches value guard: an empty value must never match. Without the
+  # length() requirement an empty value would match a bare wildcard mask.
+  ok !Overnet::Authority::HostedChannel::irc_mask_matches(mask => '*', value => ''),
+    'an empty value never matches, even against a bare wildcard mask';
+
+  # resolve_nip29_group_binding group_host guard: the host must be a defined,
+  # non-reference, non-empty scalar.
+  my (undef, undef, $ref_host_error) = Overnet::Authority::HostedChannel::resolve_nip29_group_binding(
+    session_config => {group_host => []},
+    network        => 'a',
+    target         => '#x',
+  );
+  like $ref_host_error, qr/requires session_config[.]group_host/,
+    'a reference group_host is refused, not treated as a usable host';
+
+  my (undef, undef, $empty_host_error) = Overnet::Authority::HostedChannel::resolve_nip29_group_binding(
+    session_config => {group_host => q{}},
+    network        => 'a',
+    target         => '#x',
+  );
+  like $empty_host_error, qr/requires session_config[.]group_host/,
+    'an empty group_host is refused because a non-empty host is required';
+
+  # resolve_nip29_group_binding fallback: a configured binding that resolves to
+  # an empty group id must fall back to the deterministic id, not be accepted or
+  # rejected as-is.
+  my (undef, $fallback_group_id) = Overnet::Authority::HostedChannel::resolve_nip29_group_binding(
+    session_config => {group_host => 'g', channel_groups => {'#x' => q{}}},
+    network        => 'a',
+    target         => '#x',
+  );
+  is $fallback_group_id,
+    Overnet::Authority::HostedChannel::authoritative_group_id(network => 'a', channel => '#x'),
+    'an empty configured binding falls back to the deterministic group id';
+
+  # group_event_is_tombstoned tag guard: a non-array tag entry must be skipped,
+  # not dereferenced as an array.
+  is Overnet::Authority::HostedChannel::group_event_is_tombstoned(event => {tags => ['junk']}),
+    0, 'non-array tag entries are tolerated rather than dereferenced';
+};
+
 done_testing;
